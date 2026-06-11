@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CICC Domain Monitoring Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #f8fafc;
+        }
+        .modal { transition: opacity 0.3s ease; }
+        body.modal-active { overflow-x: hidden; overflow-y: hidden !important; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Para sa custom checkbox */
+        .custom-checkbox:checked + div {
+            background-color: #4f46e5;
+            border-color: #4f46e5;
+        }
+        .custom-checkbox:checked + div svg {
+            display: block;
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased flex h-screen overflow-hidden bg-slate-50">
+
+    <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col hidden md:flex transition-all duration-300 z-20 shadow-xl">
+        <div class="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/50">
+            <div class="bg-indigo-500/20 p-1.5 rounded border border-indigo-500/30 mr-3">
+                <i class="fas fa-shield-halved text-indigo-400 text-lg"></i>
+            </div>
+            <span class="font-bold text-lg tracking-wide text-white">CICC <span class="text-indigo-400 font-medium">Portal</span></span>
+        </div>
+        
+        <div class="p-4 flex-1 overflow-y-auto space-y-1">
+            <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 mt-2">Main Reports</p>
+            
+            <button onclick="switchTab('domain')" id="btn-domain" class="w-full flex items-center gap-3 px-3 py-2.5 bg-indigo-600/10 text-indigo-400 rounded-lg border border-indigo-500/20 transition-colors group">
+                <i class="fas fa-globe w-5 text-center"></i>
+                <span class="font-medium text-sm">Domain Verification</span>
+            </button>
+            
+            <button onclick="switchTab('payment')" id="btn-payment" class="w-full flex items-center gap-3 px-3 py-2.5 text-slate-500 hover:bg-slate-800 hover:text-slate-100 rounded-lg border border-transparent transition-colors group">
+                <i class="fas fa-credit-card w-5 text-center group-hover:text-slate-300"></i>
+                <span class="font-medium text-sm">Payment Gateway</span>
+            </button>
+            
+            <button onclick="switchTab('influencer')" id="btn-influencer" class="w-full flex items-center gap-3 px-3 py-2.5 text-slate-500 hover:bg-slate-800 hover:text-slate-100 rounded-lg border border-transparent transition-colors group">
+                <i class="fas fa-users w-5 text-center group-hover:text-slate-300"></i>
+                <span class="font-medium text-sm">Influencer Report</span>
+            </button>
+        </div>
+    </aside>
+
+    <div class="flex-1 flex flex-col h-screen overflow-hidden relative">
+        
+        <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 z-10 shadow-sm">
+            <div class="flex items-center gap-3">
+                <button class="md:hidden text-slate-500 hover:text-slate-700">
+                    <i class="fas fa-bars text-xl"></i>
+                </button>
+                <h2 class="text-lg font-bold text-slate-800 hidden sm:block">Domain Verification Report</h2>
+            </div>
+            
+            <div class="flex items-center gap-6">
+                <div class="hidden md:flex flex-col text-right">
+                    <span class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Live System Time</span>
+                    <span id="live-timestamp" class="text-xs text-slate-700 font-medium font-mono">Loading...</span>
+                </div>
+                <div class="h-6 w-px bg-slate-200 hidden md:block"></div>
+                <div class="flex items-center gap-2 bg-emerald-50 border border-emerald-200 py-1 px-3 rounded-full">
+                    <span class="relative flex h-2 w-2">
+                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span class="text-[10px] font-bold text-emerald-600 tracking-wide uppercase">Sheets Synced</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="flex-1 overflow-y-auto bg-slate-50 relative p-4 sm:p-6 lg:p-8">
+            
+            <div id="tab-domain" class="max-w-7xl mx-auto space-y-6 block">
+                
+                <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-900">Domain Verification Report</h1>
+                        <p class="text-sm text-slate-500 mt-1">Multi-Team Operation Syncing to Google Sheets</p>
+                    </div>
+                    
+                    <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+                        
+                        <!-- 1. BATCH MULTI-SELECT WITH CHECKBOXES AND SELECT ALL -->
+                        <div class="relative w-full sm:w-56" id="batch-dropdown-container">
+                            <button onclick="toggleBatchDropdown()" class="flex items-center justify-between w-full border border-slate-200 rounded-lg px-4 py-2.5 bg-white text-sm text-slate-700 shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                                <div class="flex items-center gap-2 truncate">
+                                    <i class="fas fa-folder-open text-slate-400"></i> 
+                                    <span id="batch-dropdown-text" class="truncate font-medium">Loading Batches...</span>
+                                </div>
+                                <i class="fas fa-chevron-down text-slate-400 text-xs ml-2"></i>
+                            </button>
+                            <!-- Dropdown Menu -->
+                            <div id="batch-dropdown-menu" class="hidden absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg flex flex-col">
+                                <!-- Select All / Clear All Buttons -->
+                                <div class="flex justify-between items-center p-2 border-b border-slate-100 bg-slate-50 rounded-t-lg">
+                                    <button onclick="selectAllBatches()" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors px-2 py-1 rounded hover:bg-indigo-50">Select All</button>
+                                    <div class="w-px h-3 bg-slate-300"></div>
+                                    <button onclick="unselectAllBatches()" class="text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors px-2 py-1 rounded hover:bg-slate-200">Clear All</button>
+                                </div>
+                                <!-- Listahan ng batches na nai-scroll -->
+                                <div id="batch-checkbox-list" class="p-2 space-y-1 overflow-y-auto max-h-64">
+                                    <!-- Ang mga checkboxes ay ilalagay dito ng JS -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 2. TEAM SORTER DROPDOWN -->
+                        <div class="relative w-full sm:w-48">
+                            <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                                <i class="fas fa-users text-slate-400"></i>
+                            </div>
+                            <select id="team-sorter-dropdown" onchange="setSubTab(this.value)" class="block w-full pl-10 pr-10 py-2.5 text-sm border-slate-200 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-white text-slate-700 font-medium appearance-none cursor-pointer transition-all">
+                                <!-- Options will be generated dynamically by JS -->
+                            </select>
+                            <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                                <i class="fas fa-sort text-slate-400 text-xs"></i>
+                            </div>
+                        </div>
+
+                        <button class="bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-all flex items-center gap-2 whitespace-nowrap">
+                            <i class="fas fa-file-pdf text-red-500"></i> Export
+                        </button>
+                        <button id="btn-add-domain" onclick="openCrudModal('add')" class="hidden bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm shadow-indigo-200 transition-all flex items-center gap-2 whitespace-nowrap">
+                            <i class="fas fa-plus"></i> Add Domain
+                        </button>
+                    </div>
+                </div>
+
+                <!-- PILL BUTTONS FOR TEAMS -->
+                <div id="sub-tabs-container" class="flex items-center gap-2 overflow-x-auto pb-4 border-b border-slate-200 mt-6">
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow">
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <i class="fas fa-globe text-slate-500 text-xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Targets</p>
+                            <p id="card-total-targets" class="text-2xl font-bold text-slate-800">0</p>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow">
+                        <div class="bg-red-50 p-3 rounded-xl border border-red-100">
+                            <i class="fas fa-ban text-red-500 text-xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Blocked</p>
+                            <p id="card-total-blocked" class="text-2xl font-bold text-slate-800">0</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow">
+                        <div class="bg-emerald-50 p-3 rounded-xl border border-emerald-100">
+                            <i class="fas fa-check text-emerald-500 text-xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Still Accessible</p>
+                            <p id="card-still-accessible" class="text-2xl font-bold text-slate-800">0</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow">
+                        <div class="bg-amber-50 p-3 rounded-xl border border-amber-100">
+                            <i class="fas fa-users text-amber-500 text-xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Teams</p>
+                            <p id="card-active-teams" class="text-2xl font-bold text-slate-800">0 / 0</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI BOX -->
+                <div class="relative overflow-hidden bg-slate-900 rounded-2xl shadow-lg border border-slate-700 flex-1 mt-2">
+                    <div class="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 rounded-full bg-indigo-500/10 blur-3xl"></div>
+                    <div class="absolute bottom-0 left-0 -ml-16 -mb-16 w-64 h-64 rounded-full bg-blue-500/10 blur-3xl"></div>
+                    
+                    <div class="relative p-6 sm:p-8 flex flex-col md:flex-row gap-6 items-start w-full">
+                        <div class="bg-white/10 p-3 rounded-xl border border-white/10 backdrop-blur-sm shrink-0">
+                            <i class="fas fa-wand-magic-sparkles text-indigo-300 text-2xl"></i>
+                        </div>
+                        <div class="w-full">
+                            <div class="flex items-center justify-between mb-2">
+                                <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+                                    AI Executive Summary 
+                                    <span class="text-[10px] bg-indigo-500/30 text-indigo-200 py-0.5 px-2 rounded-full border border-indigo-500/50 uppercase tracking-wide">Manual Run</span>
+                                </h2>
+                                <button onclick="refreshAISummary()" class="text-xs bg-indigo-600/30 hover:bg-indigo-600/60 text-indigo-100 px-3 py-1.5 rounded-md border border-indigo-500/30 transition-all flex items-center gap-1.5 shadow-sm active:scale-95">
+                                    <i class="fas fa-sync-alt"></i> Generate AI Insight
+                                </button>
+                            </div>
+                            <div id="ai-executive-summary" class="text-slate-300 text-sm leading-relaxed w-full">
+    Click the "Generate AI Insight" button to analyze the current network compliance for this tab.
+</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden mt-4">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-slate-200">
+                            <thead class="bg-slate-50/80">
+                                <tr>
+                                    <th scope="col" class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Assigned Team</th>
+                                    <th scope="col" class="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Target Domain</th>
+                                    <th scope="col" class="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-100/50">
+                                        <div>PLDT Network</div>
+                                        <div class="text-[10px] text-indigo-600 font-normal mt-0.5"><i class="fas fa-user-shield"></i> Team PLDT</div>
+                                    </th>
+                                    <th scope="col" class="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                        <div>Globe Telecom</div>
+                                        <div class="text-[10px] text-indigo-600 font-normal mt-0.5"><i class="fas fa-user-shield"></i> Team GLOBE</div>
+                                    </th>
+                                    <th scope="col" class="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-100/50">
+                                        <div>Converge ICT</div>
+                                        <div class="text-[10px] text-indigo-600 font-normal mt-0.5"><i class="fas fa-user-shield"></i> Team CONVERGE</div>
+                                    </th>
+                                    <th scope="col" class="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                        <div>DITO Telco</div>
+                                        <div class="text-[10px] text-indigo-600 font-normal mt-0.5"><i class="fas fa-user-shield"></i> Team DITO</div>
+                                    </th>
+                                    <th scope="col" class="px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Analysis</th>
+                                    <th id="th-actions" scope="col" class="hidden px-6 py-4 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-body" class="divide-y divide-slate-100 bg-white">
+                                </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="bg-slate-50 px-6 py-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div class="flex items-center gap-4">
+                            <span class="text-xs text-slate-500">Showing rows dynamically...</span>
+                            <div class="h-4 w-px bg-slate-300 hidden sm:block"></div>
+                            <div class="flex items-center gap-2">
+                                <label for="rows-per-page" class="text-xs text-slate-500 font-medium">Rows per page:</label>
+                                <select id="rows-per-page" class="text-xs border-slate-300 rounded py-1 pl-2 pr-6 text-slate-700 bg-white focus:ring-indigo-500 focus:border-indigo-500 shadow-sm cursor-pointer">
+                                    <option value="20" selected>20</option>
+                                    <option value="50">50</option>
+                                    <option value="100">100</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="flex gap-1 shadow-sm">
+                            <button class="px-3 py-1.5 border border-slate-300 rounded-l text-xs font-medium text-slate-400 bg-slate-50 cursor-not-allowed" disabled>
+                                <i class="fas fa-chevron-left mr-1"></i> Prev
+                            </button>
+                            <button class="px-3 py-1.5 border-y border-slate-300 text-xs font-bold text-indigo-600 bg-indigo-50 pointer-events-none">
+                                1
+                            </button>
+                            <button class="px-3 py-1.5 border border-slate-300 rounded-r text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 hover:text-indigo-600 transition-colors">
+                                Next <i class="fas fa-chevron-right ml-1"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+            </div> 
+            
+            <div id="tab-payment" class="max-w-7xl mx-auto space-y-6 hidden absolute top-0 left-0 w-full p-4 sm:p-6 lg:p-8">
+                <div>
+                    <h1 class="text-2xl font-bold text-slate-900">Payment Gateway Report</h1>
+                    <p class="text-sm text-slate-500 mt-1">Monitoring for GCash, Maya, and Bank gateways of flagged entities.</p>
+                </div>
+            </div>
+
+            <div id="tab-influencer" class="max-w-7xl mx-auto space-y-6 hidden absolute top-0 left-0 w-full p-4 sm:p-6 lg:p-8">
+                <div>
+                    <h1 class="text-2xl font-bold text-slate-900">Influencer Report</h1>
+                    <p class="text-sm text-slate-500 mt-1">Social media tracking for entities promoting illegal activities.</p>
+                </div>
+            </div>
+
+        </main>
+    </div> 
+    
+    <!-- Modals -->
+    <div id="proofModal" class="modal opacity-0 pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+        <div class="modal-overlay absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onclick="closeModal()"></div>
+        <div class="modal-container relative bg-white w-full max-w-4xl mx-auto rounded-2xl shadow-2xl overflow-hidden transform transition-all">
+            <div class="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+                <div><h3 class="text-lg font-bold text-slate-800">Screenshot Evidence</h3></div>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 bg-slate-100 hover:bg-slate-200 p-2 rounded-full transition-colors"><i class="fas fa-times text-lg"></i></button>
+            </div>
+            <div class="p-6 bg-slate-100">
+                <div class="bg-white border shadow-sm rounded-lg overflow-hidden h-[60vh] flex flex-col relative">
+                    <div class="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white relative">
+                        <div class="text-slate-300 mb-6 relative z-10"><i class="fas fa-solid fa-file-circle-xmark text-6xl"></i></div>
+                        <h3 class="text-2xl text-slate-700 font-semibold mb-2 relative z-10">This site can't be reached</h3>
+                        <div class="mt-8 bg-slate-50 border border-slate-200 rounded p-3 text-left w-full max-w-md relative z-10">
+                            <p class="text-xs text-slate-500 font-mono flex items-center gap-2"><i class="fas fa-circle-info text-slate-400"></i> Error Code: <span id="modal-error" class="font-bold text-slate-700">ERR_CONNECTION_TIMED_OUT</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white px-6 py-4 border-t border-slate-100 flex justify-end items-center">
+                <button class="bg-slate-800 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors" onclick="closeModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="aiModal" class="modal opacity-0 pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+        <div class="modal-overlay absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onclick="closeAiModal()"></div>
+        <div class="modal-container relative bg-white w-full max-w-2xl mx-auto rounded-2xl shadow-2xl overflow-hidden transform transition-all">
+            <div class="bg-indigo-900 px-6 py-4 border-b border-indigo-800 flex justify-between items-center text-white">
+                <div class="flex items-center gap-3"><i class="fas fa-robot text-indigo-300 text-xl"></i><div><h3 class="text-lg font-bold">AI Multi-Provider Analysis</h3></div></div>
+                <button onclick="closeAiModal()" class="text-indigo-300 hover:text-white bg-indigo-800 hover:bg-indigo-700 p-2 rounded-full transition-colors"><i class="fas fa-times text-lg"></i></button>
+            </div>
+            <div class="p-6 bg-slate-50 min-h-[250px] max-h-[60vh] overflow-y-auto">
+                <div id="ai-loading" class="flex flex-col items-center justify-center py-8"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-4"></div><p class="text-sm text-slate-500">Analyzing combined operator signatures...</p></div>
+                <div id="ai-content" class="hidden space-y-4"><div class="bg-white p-5 rounded-lg border border-slate-200 shadow-sm"><div id="ai-assessment" class="text-sm text-slate-700 leading-relaxed"></div></div></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="crudModal" class="modal opacity-0 pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+        <div class="modal-overlay absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onclick="closeCrudModal()"></div>
+        <div class="modal-container relative bg-white w-full max-w-md mx-auto rounded-2xl shadow-2xl overflow-hidden transform transition-all">
+            <div class="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+                <div><h3 id="crud-modal-title" class="text-lg font-bold text-slate-800">Add Target</h3></div>
+                <button onclick="closeCrudModal()" class="text-slate-400 hover:text-slate-600 bg-slate-100 hover:bg-slate-200 p-2 rounded-full"><i class="fas fa-times text-lg"></i></button>
+            </div>
+            <div class="p-6 bg-white space-y-4">
+                <input type="hidden" id="crud-id-input">
+                <div><label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Domain Name</label><input type="text" id="crud-domain-input" class="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"></div>
+                <div><label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Team</label><input type="text" id="crud-team-input" class="w-full border border-slate-300 bg-slate-100 text-slate-500 rounded-lg px-4 py-2.5 text-sm" readonly></div>
+            </div>
+            <div class="bg-slate-50 px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+                <button onclick="closeCrudModal()" class="px-4 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-200">Cancel</button>
+                <button onclick="saveDomain()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg text-sm font-medium">Save Target</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN JAVASCRIPT -->
+    <script>
+        // System Time
+        function updateTime() {
+            const options = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' };
+            document.getElementById('live-timestamp').textContent = new Date().toLocaleDateString('en-PH', options);
+        }
+        setInterval(updateTime, 1000); updateTime(); 
+
+        // Modals Functions
+        function openModal(domain, isp, time, errorCode) {
+            document.getElementById('modal-error').textContent = errorCode;
+            const modal = document.getElementById('proofModal');
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+            document.body.classList.add('modal-active');
+        }
+        function closeModal() { document.getElementById('proofModal').classList.add('opacity-0', 'pointer-events-none'); document.body.classList.remove('modal-active'); }
+        function closeAiModal() { document.getElementById('aiModal').classList.add('opacity-0', 'pointer-events-none'); document.body.classList.remove('modal-active'); }
+        
+        function analyzeDomain(domain, pldt, globe, converge, dito) {
+            document.getElementById('ai-loading').classList.remove('hidden');
+            document.getElementById('ai-content').classList.add('hidden');
+            document.getElementById('aiModal').classList.remove('opacity-0', 'pointer-events-none');
+            document.body.classList.add('modal-active');
+            setTimeout(() => {
+                document.getElementById('ai-assessment').innerHTML = `Domain <strong>${domain}</strong> analysis complete.<br><br>• PLDT: ${pldt || 'No Data'}<br>• Globe: ${globe || 'No Data'}<br>• Converge: ${converge || 'No Data'}<br>• DITO: ${dito || 'No Data'}`;
+                document.getElementById('ai-loading').classList.add('hidden');
+                document.getElementById('ai-content').classList.remove('hidden');
+            }, 1000);
+        }
+
+        // Side Navigation Logic
+        function switchTab(tabName) {
+            ['domain', 'payment', 'influencer'].forEach(id => {
+                document.getElementById('tab-' + id).classList.add('hidden');
+                document.getElementById('tab-' + id).classList.remove('block');
+                const btn = document.getElementById('btn-' + id);
+                btn.classList.remove("bg-indigo-600/10", "text-indigo-400", "border-indigo-500/20");
+                btn.classList.add("text-slate-500", "border-transparent");
+                btn.querySelector('i').classList.remove('text-indigo-400');
+                btn.querySelector('i').classList.add('group-hover:text-slate-300');
+            });
+            document.getElementById('tab-' + tabName).classList.remove('hidden');
+            document.getElementById('tab-' + tabName).classList.add('block');
+            const activeBtn = document.getElementById('btn-' + tabName);
+            activeBtn.classList.add("bg-indigo-600/10", "text-indigo-400", "border-indigo-500/20");
+            activeBtn.querySelector('i').classList.add('text-indigo-400');
+        }
+
+        // ================= DYNAMIC DATA, FILTERING & CRUD =================
+        const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR3K5YB5nqttUfHtI1V9B1gti1siC25MUK9T357kh3XMjIYB4xF_nMe73z7jPEy8zlwcRanvuXphIKC/pub?gid=1872978586&single=true&output=csv';
+
+        let database = [];
+        let currentSubTab = 'All Teams';
+        let teams = ['All Teams', 'Team 001', 'Team 002', 'TCG Batch', 'Kyle Batch', "OM's Batch"];
+        
+        let availableBatches = [];
+        let selectedBatchesGlobal = [];
+
+        window.onload = () => {
+            renderSubTabsAndDropdown();
+            fetchGoogleSheetData();
+            setInterval(fetchGoogleSheetData, 10000); 
+        };
+
+        // Custom Batch Dropdown Logic
+        function toggleBatchDropdown() {
+            document.getElementById('batch-dropdown-menu').classList.toggle('hidden');
+        }
+
+        document.addEventListener('click', function(event) {
+            const container = document.getElementById('batch-dropdown-container');
+            if (container && !container.contains(event.target)) {
+                document.getElementById('batch-dropdown-menu').classList.add('hidden');
+            }
+        });
+
+        // Piliin Lahat ng Batch
+        function selectAllBatches() {
+            const checkboxes = document.querySelectorAll('.batch-checkbox');
+            checkboxes.forEach(cb => cb.checked = true);
+            updateSelectedBatches();
+        }
+
+        // Tanggalin Lahat ng Batch
+        function unselectAllBatches() {
+            const checkboxes = document.querySelectorAll('.batch-checkbox');
+            checkboxes.forEach(cb => cb.checked = false);
+            updateSelectedBatches();
+        }
+
+        // 1. Fetching Data & Auto-Detect Batches
+        async function fetchGoogleSheetData() {
+            try {
+                const response = await fetch(CSV_URL);
+                const csvText = await response.text();
+                const rows = csvText.split('\n');
+                let newDatabase = [];
+                
+                for (let i = 1; i < rows.length; i++) {
+                    if (rows[i].trim() === '') continue;
+                    const cols = rows[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+                    if(cols[0] && cols[1]) {
+                        newDatabase.push({
+                            id: cols[0].replace(/"/g, '').trim(), 
+                            domain: cols[1].replace(/"/g, '').trim(),
+                            team: cols[2] ? cols[2].replace(/"/g, '').trim() : 'Unassigned',
+                            pldtStatus: cols[3] ? cols[3].replace(/"/g, '').trim() : '',
+                            pldtProof: cols[4] ? cols[4].replace(/"/g, '').trim() : '',
+                            globeStatus: cols[5] ? cols[5].replace(/"/g, '').trim() : '',
+                            globeProof: cols[6] ? cols[6].replace(/"/g, '').trim() : '',
+                            convergeStatus: cols[7] ? cols[7].replace(/"/g, '').trim() : '',
+                            convergeProof: cols[8] ? cols[8].replace(/"/g, '').trim() : '',
+                            ditoStatus: cols[9] ? cols[9].replace(/"/g, '').trim() : '',
+                            ditoProof: cols[10] ? cols[10].replace(/"/g, '').trim() : ''
+                        });
+                    }
+                }
+                database = newDatabase;
+
+                // DYNAMIC BATCH EXTRACTION
+                const uniqueBatches = [...new Set(database.map(row => (row.id || '').toUpperCase()))].filter(b => b !== '');
+                
+                if (uniqueBatches.join(',') !== availableBatches.join(',')) {
+                    availableBatches = uniqueBatches;
+                    
+                    if (selectedBatchesGlobal.length === 0) {
+                        selectedBatchesGlobal = [...availableBatches];
+                    } else {
+                        const newB = uniqueBatches.filter(b => !availableBatches.includes(b));
+                        selectedBatchesGlobal.push(...newB);
+                    }
+                    renderBatchDropdown();
+                }
+
+                applyFilters(); 
+            } catch (error) { console.error("Error:", error); }
+        }
+
+        // Auto-Generate ng Batch Dropdown UI
+        function renderBatchDropdown() {
+            const container = document.getElementById('batch-checkbox-list');
+            if (!container) return;
+
+            if (availableBatches.length === 0) {
+                container.innerHTML = '<div class="text-xs text-center text-slate-400 py-2">No batches found</div>';
+                return;
+            }
+
+            container.innerHTML = availableBatches.map(batch => {
+                const isChecked = selectedBatchesGlobal.includes(batch) ? 'checked' : '';
+                return `
+                <label class="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-md cursor-pointer transition-colors">
+                    <input type="checkbox" class="batch-checkbox w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" value="${batch}" ${isChecked} onchange="updateSelectedBatches()">
+                    <span class="text-sm text-slate-700 font-medium">${batch}</span>
+                </label>
+                `;
+            }).join('');
+        }
+
+        function updateSelectedBatches() {
+            const checkboxes = document.querySelectorAll('.batch-checkbox:checked');
+            selectedBatchesGlobal = Array.from(checkboxes).map(cb => cb.value);
+            applyFilters();
+        }
+
+        // 2. Rendering Sub Tabs & Syncing Team Dropdown
+        function renderSubTabsAndDropdown() {
+            const container = document.getElementById('sub-tabs-container');
+            if (container) {
+                container.innerHTML = teams.map(team => {
+                    const isActive = team === currentSubTab;
+                    const activeClass = "bg-slate-800 text-white shadow-sm";
+                    const inactiveClass = "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200";
+                    const safeTeamName = team.replace(/'/g, "\\'");
+                    return `<button onclick="setSubTab('${safeTeamName}')" class="px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${isActive ? activeClass : inactiveClass}">${team}</button>`;
+                }).join('') + '<div class="h-4 w-px bg-slate-300 mx-2"></div><button onclick="addTeamSection()" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 px-4 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"><i class="fas fa-plus"></i> Add Section</button>';
+            }
+
+            const dropdown = document.getElementById('team-sorter-dropdown');
+            if (dropdown) {
+                dropdown.innerHTML = teams.map(team => `<option value="${team.replace(/'/g, "\\'")}" ${team === currentSubTab ? 'selected' : ''}>${team}</option>`).join('');
+            }
+        }
+
+        function addTeamSection() {
+            const newSection = prompt("Enter the name of the new Team or Batch (e.g., 'Team 003'):");
+            if (newSection && newSection.trim() !== "") {
+                const cleanName = newSection.trim();
+                if (!teams.includes(cleanName)) {
+                    teams.push(cleanName);
+                    setSubTab(cleanName); 
+                }
+            }
+        }
+
+        // 3. Changing Active Team
+        function setSubTab(team) {
+            currentSubTab = team;
+            renderSubTabsAndDropdown();
+            applyFilters();
+
+            const btnAdd = document.getElementById('btn-add-domain');
+            const thActions = document.getElementById('th-actions');
+            if (btnAdd && thActions) {
+                if (team === 'All Teams') {
+                    btnAdd.classList.add('hidden');
+                    thActions.classList.add('hidden');
+                } else {
+                    btnAdd.classList.remove('hidden');
+                    thActions.classList.remove('hidden');
+                }
+            }
+            document.getElementById('ai-executive-summary').innerHTML = 'Click the "Generate AI Insight" button to analyze the current network compliance for this tab.';
+        }
+
+        // 4. BATCH & TEAM FILTER LOGIC (EXACT MATCH FIX)
+        function applyFilters() {
+            const batchText = document.getElementById('batch-dropdown-text');
+            if (batchText) {
+                if (selectedBatchesGlobal.length === 0) batchText.textContent = "No Batch Selected";
+                else if (selectedBatchesGlobal.length === availableBatches.length) batchText.textContent = "All Batches";
+                else batchText.textContent = selectedBatchesGlobal.map(b => b.charAt(0) + b.slice(1).toLowerCase()).join(', ');
+            }
+
+            const filteredData = database.filter(row => {
+                const rowIdString = (row.id || '').toUpperCase();
+                // Ginamit ang EXACT MATCH (.includes sa array, hindi string partial match)
+                const matchBatch = selectedBatchesGlobal.length === 0 ? false : selectedBatchesGlobal.includes(rowIdString);
+                
+                const matchTeam = currentSubTab === 'All Teams' ? true : row.team === currentSubTab;
+                return matchBatch && matchTeam;
+            });
+
+            updateMetrics(filteredData);
+            renderTableHTML(filteredData);
+        }
+
+        // 5. Updating the Table UI
+        function renderTableHTML(filteredData) {
+            const tbody = document.getElementById('table-body');
+            if (!tbody) return;
+
+            tbody.innerHTML = filteredData.map(row => {
+                let badgeClass = "bg-indigo-50 text-indigo-700 border-indigo-100";
+                if(row.team === 'TCG Batch') badgeClass = "bg-emerald-50 text-emerald-700 border-emerald-100";
+                else if(row.team.includes('Batch')) badgeClass = "bg-amber-50 text-amber-700 border-amber-100";
+                
+                return `
+                <tr class="hover:bg-slate-50/50 transition-colors">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border ${badgeClass}">${row.team}</span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center gap-3">
+                            <div class="h-8 w-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500 text-xs shadow-inner"><i class="fas fa-link"></i></div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-900">${row.domain}</p>
+                                <p class="text-[11px] text-slate-400 font-mono">ID: ${row.id}</p>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-center bg-slate-50/30">${getBadgeHtml(row.pldtStatus, row.pldtProof)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-center">${getBadgeHtml(row.globeStatus, row.globeProof)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-center bg-slate-50/30">${getBadgeHtml(row.convergeStatus, row.convergeProof)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-center">${getBadgeHtml(row.ditoStatus, row.ditoProof)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-center">
+                        <button onclick="analyzeDomain('${row.domain}', '${row.pldtStatus}', '${row.globeStatus}', '${row.convergeStatus}', '${row.ditoStatus}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-200 px-3 py-1.5 rounded text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center mx-auto gap-1 shadow-sm"><i class="fas fa-brain"></i> Analyze</button>
+                    </td>
+                    ${currentSubTab !== 'All Teams' ? `
+                    <td class="px-6 py-4 whitespace-nowrap text-center">
+                        <div class="flex items-center justify-center gap-3">
+                            <button onclick="openCrudModal('edit', '${row.id}')" class="text-slate-400 hover:text-indigo-600 transition-colors" title="Edit Domain"><i class="fas fa-edit"></i></button>
+                            <button onclick="deleteDomain('${row.id}')" class="text-slate-400 hover:text-red-600 transition-colors" title="Delete Domain"><i class="fas fa-trash-alt"></i></button>
+                        </div>
+                    </td>` : ''}
+                </tr>`;
+            }).join('');
+            
+            if(filteredData.length === 0) {
+                const colCount = currentSubTab === 'All Teams' ? 7 : 8;
+                tbody.innerHTML = `<tr><td colspan="${colCount}" class="text-center py-8 text-slate-500">No domains match the selected filters.</td></tr>`;
+            }
+        }
+
+        // Metrics and AI Logic
+        function updateMetrics(filteredData) {
+            document.getElementById('card-total-targets').textContent = filteredData.length;
+            let blockedCount = 0, accessCount = 0;
+            filteredData.forEach(row => {
+                const statuses = [row.pldtStatus, row.globeStatus, row.convergeStatus, row.ditoStatus].map(s => (s || '').toLowerCase());
+                if (statuses.some(s => s.includes('access'))) accessCount++;
+                else if (statuses.some(s => s.includes('block'))) blockedCount++;
+            });
+            document.getElementById('card-total-blocked').textContent = blockedCount;
+            document.getElementById('card-still-accessible').textContent = accessCount;
+
+            const totalDefinedTeams = teams.filter(t => t !== 'All Teams').length || 1;
+            const uniqueActiveTeams = new Set(database.filter(d => d.team).map(d => d.team)).size;
+            document.getElementById('card-active-teams').textContent = `${uniqueActiveTeams} / ${totalDefinedTeams}`;
+        }
+
+        
+        function getBadgeHtml(status, proofLink) {
+            if (!status || status === '') {
+                return `<span class="text-[11px] font-medium text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">Pending</span>`;
+            }
+            
+            let colorClass = "bg-slate-50 text-slate-700 border-slate-200";
+            let icon = "";
+            let statusLower = status.toLowerCase();
+            
+            // DYNAMIC STATUS COLORS (Block, Active, Redirected)
+            if (statusLower.includes('block')) { 
+                colorClass = "bg-red-50 text-red-700 border-red-200"; 
+                icon = `<span class="w-1.5 h-1.5 rounded-full bg-red-500 inline-block mr-1"></span>`; 
+            } 
+            else if (statusLower.includes('access') || statusLower.includes('active')) { 
+                colorClass = "bg-emerald-50 text-emerald-700 border-emerald-200"; 
+                icon = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block mr-1"></span>`; 
+            }
+            else if (statusLower.includes('redirect')) {
+                colorClass = "bg-amber-50 text-amber-700 border-amber-200";
+                icon = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block mr-1"></span>`;
+            }
+
+            let badgeHtml = `<span class="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-bold tracking-wide border ${colorClass} uppercase">${icon}${status}</span>`;
+            
+            // HYPERLINK EXTRACTOR (Naghahanap ng " | " para paghiwalayin ang Petsa at Link)
+            if (proofLink && proofLink.includes('|')) {
+                let parts = proofLink.split('|');
+                let timestampText = parts[0].trim();
+                let actualLink = parts[1].trim();
+                
+                badgeHtml += `<br><a href="${actualLink}" target="_blank" class="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold inline-flex items-center mt-1.5 gap-1 transition-colors underline decoration-indigo-300 underline-offset-2"><i class="fas fa-external-link-alt"></i> ${timestampText}</a>`;
+            } 
+            else if (proofLink && proofLink.startsWith('http')) {
+                badgeHtml += `<br><a href="${proofLink}" target="_blank" class="text-[10px] text-indigo-500 hover:text-indigo-700 font-medium inline-block mt-1.5"><i class="fas fa-external-link-alt mr-1"></i>View Proof</a>`;
+            } 
+            else if (proofLink && proofLink.trim() !== '') {
+                badgeHtml += `<br><span class="text-[10px] text-slate-400 font-medium font-mono block mt-1 bg-slate-100/80 px-1 py-0.5 rounded border border-slate-200/50 inline-block">${proofLink}</span>`;
+            }
+            
+            return badgeHtml;
+        }
+
+       function refreshAISummary() {
+    const summaryElement = document.getElementById('ai-executive-summary');
+    summaryElement.innerHTML = `<span class="animate-pulse text-indigo-300"><i class="fas fa-spinner fa-spin mr-2"></i>Generating detailed AI analysis...</span>`;
+    
+    setTimeout(() => {
+        const filteredData = database.filter(row => {
+            const rowIdString = (row.id || '').toUpperCase();
+            const matchBatch = selectedBatchesGlobal.length === 0 ? false : selectedBatchesGlobal.includes(rowIdString);
+            const matchTeam = currentSubTab === 'All Teams' ? true : row.team === currentSubTab;
+            return matchBatch && matchTeam;
+        });
+
+        if (!filteredData || filteredData.length === 0) {
+            summaryElement.innerHTML = `No data currently synced for <strong class="text-white">${currentSubTab}</strong>.`;
+            return;
+        }
+
+        // 1. KUNIN ANG CURRENT DATE AT TIME
+        const now = new Date();
+        const timestamp = now.toLocaleString('en-US', { 
+            month: 'short', day: '2-digit', year: 'numeric', 
+            hour: '2-digit', minute: '2-digit', hour12: true 
+        });
+
+        // 2. KUNIN ANG SELECTED BATCHES
+        const batchText = selectedBatchesGlobal.length === 0 ? "No Batch Selected" : 
+                          selectedBatchesGlobal.length === availableBatches.length ? "All Batches" : 
+                          selectedBatchesGlobal.map(b => b.charAt(0) + b.slice(1).toLowerCase()).join(', ');
+
+        // 3. DETAILED ISP CALCULATIONS AT TRACKING LISTS
+        let stats = {
+            pldt: { block: 0, active: 0, redirect: 0 },
+            globe: { block: 0, active: 0, redirect: 0 },
+            converge: { block: 0, active: 0, redirect: 0 },
+            dito: { block: 0, active: 0, redirect: 0 }
+        };
+        const totalDomains = filteredData.length;
+        
+        let redirectedList = {}; // <-- Listahan ng mga Tumakas
+        let activeList = {};     // <-- Listahan ng mga Buhay pa
+
+        filteredData.forEach(row => {
+            let redirectedISPs = [];
+            let activeISPs = [];
+            
+            const categorize = (isp, status) => {
+                const s = (status || '').toLowerCase();
+                if (s.includes('block')) {
+                    stats[isp].block++;
+                } else if (s.includes('redirect')) {
+                    stats[isp].redirect++;
+                    redirectedISPs.push(isp.toUpperCase());
+                } else if (s.includes('active') || s.includes('access')) {
+                    stats[isp].active++;
+                    activeISPs.push(isp.toUpperCase());
+                }
+            };
+            
+            categorize('pldt', row.pldtStatus);
+            categorize('globe', row.globeStatus);
+            categorize('converge', row.convergeStatus);
+            categorize('dito', row.ditoStatus);
+            
+            // I-save ang domains sa kani-kanilang listahan kung may tumama
+            if (redirectedISPs.length > 0) redirectedList[row.domain] = redirectedISPs;
+            if (activeISPs.length > 0) activeList[row.domain] = activeISPs;
+        });
+
+        const getRates = (isp) => {
+            return {
+                block: totalDomains > 0 ? ((stats[isp].block / totalDomains) * 100).toFixed(1) : 0,
+                active: totalDomains > 0 ? ((stats[isp].active / totalDomains) * 100).toFixed(1) : 0,
+                redirect: totalDomains > 0 ? ((stats[isp].redirect / totalDomains) * 100).toFixed(1) : 0
+            };
+        };
+
+        const pldt = getRates('pldt');
+        const globe = getRates('globe');
+        const converge = getRates('converge');
+        const dito = getRates('dito');
+
+        const totalBlocks = stats.pldt.block + stats.globe.block + stats.converge.block + stats.dito.block;
+        const overallRate = totalDomains > 0 ? ((totalBlocks / (totalDomains * 4)) * 100).toFixed(1) : 0;
+
+        let insight = overallRate >= 80 ? "<span class='text-emerald-400'>showing highly aligned block implementation.</span>" : 
+                      overallRate > 0 ? "<span class='text-amber-400'>showing moderate to poor compliance. Coordination needed.</span>" : 
+                      "<span class='text-red-400'>with no blocks successfully implemented yet.</span>";
+
+        // FUNCTION PARA GUMAWA NG ISP CARD
+        const createIspCard = (ispName, rates, counts) => `
+            <div class="bg-slate-900 p-3 rounded-lg border border-slate-700/50 flex flex-col hover:border-indigo-500/50 transition-colors h-full">
+                <span class="text-slate-400 text-[10px] uppercase font-bold mb-1 flex items-center justify-between">${ispName} <i class="fas fa-network-wired opacity-50"></i></span>
+                
+                <span class="text-xl font-bold ${rates.block < 50 ? 'text-red-400' : 'text-emerald-400'}">${rates.block}%</span>
+                <span class="text-[10px] text-slate-500 mb-3">${counts.block} / ${totalDomains} blocked</span>
+                
+                <div class="mt-auto pt-2 border-t border-slate-800 space-y-1.5">
+                    <div class="flex justify-between items-center text-[10px]">
+                        <span class="text-emerald-500 font-semibold"><i class="fas fa-globe mr-1"></i>Active</span>
+                        <span class="text-slate-400 font-mono">${counts.active} <span class="text-slate-500 ml-1">(${rates.active}%)</span></span>
+                    </div>
+                    <div class="flex justify-between items-center text-[10px]">
+                        <span class="text-amber-500 font-semibold"><i class="fas fa-share mr-1"></i>Redirected</span>
+                        <span class="text-slate-400 font-mono">${counts.redirect} <span class="text-slate-500 ml-1">(${rates.redirect}%)</span></span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // ================= GUMAWA NG HTML PARA SA MGA LISTAHAN =================
+        let activeHtml = '';
+        const activeKeys = Object.keys(activeList);
+        if (activeKeys.length > 0) {
+            activeHtml = `
+            <div class="bg-slate-900/40 p-4 rounded-xl border border-emerald-500/20 flex flex-col h-full">
+                <strong class="block mb-3 text-emerald-400 text-[10px] uppercase tracking-wider">
+                    <i class="fas fa-globe-americas mr-1"></i> Still Accessible / Active (${activeKeys.length} Domains)
+                </strong>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-2">
+                    ${activeKeys.map(dom => `
+                        <div class="bg-slate-800/50 p-2 rounded border border-slate-700/50 flex flex-col shrink-0">
+                            <span class="text-xs font-bold text-white mb-0.5"><i class="fas fa-circle text-emerald-500 mr-1.5 text-[8px] animate-pulse"></i>${dom}</span>
+                            <span class="text-[9px] text-slate-400">Detected on: ${activeList[dom].join(', ')}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            `;
+        }
+
+        let redirectedHtml = '';
+        const redirectedKeys = Object.keys(redirectedList);
+        if (redirectedKeys.length > 0) {
+            redirectedHtml = `
+            <div class="bg-slate-900/40 p-4 rounded-xl border border-amber-500/20 flex flex-col h-full">
+                <strong class="block mb-3 text-amber-400 text-[10px] uppercase tracking-wider">
+                    <i class="fas fa-share mr-1"></i> Flagged as Redirected (${redirectedKeys.length} Domains)
+                </strong>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-2">
+                    ${redirectedKeys.map(dom => `
+                        <div class="bg-slate-800/50 p-2 rounded border border-slate-700/50 flex flex-col shrink-0">
+                            <span class="text-xs font-bold text-white mb-0.5"><i class="fas fa-share text-amber-500 mr-1.5 text-[10px]"></i>${dom}</span>
+                            <span class="text-[9px] text-slate-400">Detected on: ${redirectedList[dom].join(', ')}</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="mt-3 text-[9px] text-slate-500 italic border-t border-slate-800 pt-2">
+                    * Note: Final destination URLs are securely logged in the 'REDIRECTED DOMAINS' Sheet tab.
+                </div>
+            </div>
+            `;
+        }
+
+        // Pinagsamang mga box (Kung mayroong active o redirected, i-didisplay sa grid layout)
+        let issueBoxesHtml = '';
+        if (activeKeys.length > 0 || redirectedKeys.length > 0) {
+            issueBoxesHtml = `
+                <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    ${activeHtml}
+                    ${redirectedHtml}
+                </div>
+            `;
+        }
+        // =========================================================================
+
+        // 4. I-BUILD YUNG UI
+        summaryElement.innerHTML = `
+            <div class="mb-4 flex flex-wrap gap-4 border-b border-slate-700/50 pb-3">
+                <span class="text-slate-400 text-xs">🕒 REPORT GENERATED: <strong class="text-indigo-300">${timestamp}</strong></span>
+                <span class="text-slate-400 text-xs">📁 TARGET BATCH: <strong class="text-indigo-300">${batchText}</strong></span>
+                <span class="text-slate-400 text-xs">👥 ASSIGNED TEAM: <strong class="text-indigo-300">${currentSubTab}</strong></span>
+            </div>
+            
+            <p class="mb-4 text-slate-300 text-sm">
+                Based on the latest automated run, overall network compliance across all ISPs stands at <strong class="text-white text-lg">${overallRate}%</strong>, ${insight} A total of <strong class="text-white">${totalDomains} target domains</strong> were analyzed.
+            </p>
+
+            <div class="bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+                <strong class="block mb-3 text-white text-xs uppercase tracking-wider">📊 ISP COMPLIANCE BREAKDOWN:</strong>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    ${createIspCard('PLDT', pldt, stats.pldt)}
+                    ${createIspCard('GLOBE', globe, stats.globe)}
+                    ${createIspCard('CONVERGE', converge, stats.converge)}
+                    ${createIspCard('DITO', dito, stats.dito)}
+                </div>
+            </div>
+
+            ${issueBoxesHtml}
+        `;
+    }, 800);
+}
+
+
+        // CRUD
+        function openCrudModal(mode, id = null) {
+            document.getElementById('crud-team-input').value = currentSubTab; 
+            if (mode === 'add') {
+                document.getElementById('crud-modal-title').textContent = 'Add New Target';
+                document.getElementById('crud-domain-input').value = '';
+            } else {
+                document.getElementById('crud-modal-title').textContent = 'Edit Target';
+                document.getElementById('crud-domain-input').value = database.find(d => d.id === id).domain;
+            }
+            document.getElementById('crudModal').classList.remove('opacity-0', 'pointer-events-none');
+            document.body.classList.add('modal-active');
+        }
+        function closeCrudModal() { document.getElementById('crudModal').classList.add('opacity-0', 'pointer-events-none'); document.body.classList.remove('modal-active'); }
+        function saveDomain() { alert("Simulating Cloud Save..."); closeCrudModal(); }
+        function deleteDomain(id) { alert("Simulating Cloud Delete..."); }
+
+        
+
+    </script>
+</body>
+</html>
