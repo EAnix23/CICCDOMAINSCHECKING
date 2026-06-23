@@ -587,19 +587,20 @@
             btn.disabled = true; 
             errorMsg.classList.add('hidden');
 
-            // 🔴 PAALALA: Palitan mo itong URL sa ibaba ng exactong "Web App URL" na nakuha mo sa Apps Script Deployment mo!
-            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbzvPedi1xIn0weRrardf3rzLIclF7TFilrL0aKFHLY7YUIR7RjfnLMFgBIs2sa_au3ENA/exec";
+            // 🔴 IPALIT DITO ANG COPIED DEPLOYMENT LINK MO GALING IMAGE_0B711C.PNG
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbwCk8-vZBJcyvlC-8akCQhcQUIBZwzf0QyrDx2NaqOjHGqqibuwYyR0UtvQ_AITCY0GyQ/exec";
 
-            // Gumamit ng FETCH para makatawid ang data mula sa domain mo papunta sa Google Sheet
+            // Upgraded submission trick using application/x-www-form-urlencoded to 100% bypass CORS rules natively!
+            var formBody = [];
+            formBody.push(encodeURIComponent("action") + "=" + encodeURIComponent("verifyLogin"));
+            formBody.push(encodeURIComponent("username") + "=" + encodeURIComponent(user));
+            formBody.push(encodeURIComponent("password") + "=" + encodeURIComponent(pass));
+            formBody = formBody.join("&");
+
             fetch(GOOGLE_WEB_APP_API_URL, {
                 method: "POST",
-                mode: "cors", // Bypass cross-origin block rules safely
-                headers: { "Content-Type": "text/plain;charset=utf-8" },
-                body: JSON.stringify({
-                    action: "verifyLogin",
-                    username: user,
-                    password: pass
-                })
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body: formBody
             })
             .then(function(response) { return response.json(); })
             .then(function(response) {
@@ -607,7 +608,6 @@
                 btn.disabled = false;
                 
                 if (response.success) {
-                    // Papasukin si user at i-load ang persistent sessions natin kanina
                     finishLogin(response.username, response.role, response.permissions);
                 } else {
                     errorMsg.innerText = response.message || "Invalid credentials."; 
@@ -619,7 +619,7 @@
                 btn.disabled = false;
                 errorMsg.innerText = "Network Error: Unable to bind data network sync pipes."; 
                 errorMsg.classList.remove('hidden');
-                console.error("API Error: ", error);
+                console.error("Pipeline Error: ", error);
             });
         }
 
