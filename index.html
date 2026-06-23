@@ -654,9 +654,14 @@
                 var roleEl = document.querySelector('aside p.tracking-widest');
                 if(roleEl) roleEl.innerText = role;
 
+                // 1. Unahing i-load ang brands mula sa Google Sheets para maging available ang brands array list
+                loadSidebarBrands();
+
+                // 2. Patakbuhin ang interface visibility configuration rules
                 applyPermissionsToUI();
-                resetIdleTimer(); // Simulan na ang 15 mins timer
+                resetIdleTimer(); 
                 
+                // 3. Ngayong may laman na ang data structural layers, maaari nang buksan nang ligtas ang dashboard view window elements
                 if (currentUserRole === 'Super Admin' || currentUserPermissions.includes('BBC Dashboard Domain')) {
                     openGlobalDashboard();
                 } else if (currentUserPermissions.includes('Cyberguard Reports')) {
@@ -665,8 +670,6 @@
                     document.getElementById('appContent').innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400"><i data-lucide="shield" class="h-16 w-16 mb-4 opacity-20"></i><p>Select an accessible brand from the sidebar.</p></div>';
                     if (typeof lucide !== 'undefined') lucide.createIcons();
                 }
-                
-                loadSidebarBrands();
                 
                 // Wag na mag-notif kung ni-refresh lang ang page
                 if (!isRestore) { showPremiumToast("Welcome Back!", "Successfully logged in to Domain_Guard.", "success"); }
