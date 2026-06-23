@@ -853,12 +853,23 @@
                 google.script.run.withSuccessHandler(function(allDomains) {
                     currentBrandData = allDomains; currentViewData = [].concat(currentBrandData); buildGlobalUI();
                 }).getDomainsData();
-            } else {
-                setTimeout(function() {
-                    currentBrandData = [ { brand: "888LUXURY", domain: "888luxury.com", expiration: "2026-08-15", account: "Godaddy", price: "₱2,500", notes: "Main", agent: "Tech01", redirected: "N/A", pldt: "Active", pldtRemarks: "", globe: "Active", globeRemarks: "", converge: "Active", convergeRemarks: "", dito: "Active", ditoRemarks: "" } ];
-                    currentViewData = [].concat(currentBrandData); buildGlobalUI();
-                }, 800);
+                return;
             }
+
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getDomainsData";
+            var jsonpScript = document.createElement('script');
+            var callbackName = 'jsonp_global_' + Math.round(Math.random() * 1000000);
+            
+            window[callbackName] = function(allDomains) {
+                currentBrandData = allDomains; 
+                currentViewData = [].concat(currentBrandData); 
+                buildGlobalUI();
+                document.body.removeChild(jsonpScript);
+                delete window[callbackName];
+            };
+            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+            document.body.appendChild(jsonpScript);
         }
 
         function buildGlobalUI() {
@@ -1230,28 +1241,59 @@
             var container = document.getElementById('appContent');
             if (!container) return;
             
-            // 1. Tanggalin ang highlight sa Brands at Global Dashboard
             document.querySelectorAll('.brand-btn').forEach(function(b) { 
                 b.className = "brand-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group text-slate-500 hover:bg-slate-100/60 hover:text-indigo-600 bg-transparent justify-between"; 
             });
             var globalBtn = document.getElementById('btnGlobalDashboard');
             if(globalBtn) globalBtn.className = "nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group text-slate-500 hover:bg-slate-100/60 hover:text-indigo-600 bg-transparent";
             
-            // 2. I-Highlight ang Active Sub-menu (Hal. Domain Post Verification)
             var subBtns = document.querySelectorAll('#cyberguardSubMenu button');
             if(subBtns && subBtns.length > 0) {
                 subBtns.forEach(function(btn) {
-                    var isHidden = btn.classList.contains('hidden'); // I-check kung nakatago sa user
-                    
+                    var isHidden = btn.classList.contains('hidden');
                     if (btn.innerText.trim() === reportType) {
                         btn.className = "w-full text-left px-4 py-2 text-[12px] font-bold rounded-lg transition-all bg-indigo-50 text-indigo-600 shadow-sm border border-indigo-100/50";
                     } else {
                         btn.className = "w-full text-left px-4 py-2 text-[12px] font-medium text-slate-500 hover:bg-slate-100 hover:text-indigo-600 rounded-lg transition-all";
                     }
-
-                    if(isHidden) btn.classList.add('hidden'); // I-balik ang pagkaka-hide kung walang access!
+                    if(isHidden) btn.classList.add('hidden');
                 });
             }
+
+            document.getElementById('mainHeader').classList.remove('hidden');
+            var iconMap = { 'Domain Post Verification': 'check-square', 'Payment Gateway': 'credit-card', 'Influencer Report': 'users' };
+            var pageIcon = iconMap[reportType] || 'shield-alert';
+
+            container.style.opacity = '0';
+            setTimeout(function() {
+                if (reportType === 'Domain Post Verification') {
+                    container.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-500"><div class="spinner mb-4"></div><p class="text-sm font-medium">Loading Post Verification Data...</p></div>';
+                    container.style.opacity = '1';
+                    
+                    if (typeof google !== 'undefined' && google.script && google.script.run) {
+                        google.script.run.withSuccessHandler(function(data) {
+                            postVerifData = data; renderPostVerifMain();
+                        }).getPostVerificationData();
+                    } else {
+                        var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+                        var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getPostVerificationData";
+                        var jsonpScript = document.createElement('script');
+                        var callbackName = 'jsonp_dpv_' + Math.round(Math.random() * 1000000);
+                        
+                        window[callbackName] = function(data) {
+                            postVerifData = data; renderPostVerifMain();
+                            document.body.removeChild(jsonpScript); delete window[callbackName];
+                        };
+                        jsonpScript.src = targetUrl + "&callback=" + callbackName;
+                        document.body.appendChild(jsonpScript);
+                    }
+                } else {
+                    container.innerHTML = '<div class="h-full flex flex-col relative bg-slate-50"><div class="px-8 py-6 border-b border-slate-100 bg-white flex-shrink-0"><h2 class="text-2xl font-bold text-slate-800 flex items-center gap-2"><i data-lucide="' + pageIcon + '" class="h-6 w-6 text-indigo-600"></i> Cyberguard: ' + reportType + '</h2><p class="text-sm text-slate-500 mt-1">Aggregated security monitoring and reports for ' + reportType + '.</p></div><div class="flex-1 p-8 flex items-center justify-center flex-col text-slate-400"><i data-lucide="layout-template" class="h-16 w-16 mb-4 opacity-20 text-indigo-500"></i><h3 class="text-lg font-bold text-slate-500">' + reportType + ' Module</h3><p class="text-sm text-slate-400 mt-2">The reporting interface for this section is ready for development.</p></div></div>';
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
+                    container.style.opacity = '1';
+                }
+            }, 150);
+        }
 
             document.getElementById('mainHeader').classList.remove('hidden');
             
@@ -2202,10 +2244,22 @@
                             google.script.run.withSuccessHandler(function(allDomains) {
                                 currentBrandName = brandName;
                                 currentBrandData = allDomains.filter(function(d) { return String(d.brand).trim().toLowerCase() === String(brandName).trim().toLowerCase(); });
-                                currentViewData = [].concat(currentBrandData);
-                                buildOverviewUI(brandName);
+                                currentViewData = [].concat(currentBrandData); buildOverviewUI(brandName);
                             }).getDomainsData();
-                        } else { setTimeout(function() { buildOverviewUI(brandName); }, 800); }
+                        } else { 
+                            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+                            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getDomainsData";
+                            var jsonpScript = document.createElement('script');
+                            var callbackName = 'jsonp_brand_tab_' + Math.round(Math.random() * 1000000);
+                            window[callbackName] = function(allDomains) {
+                                currentBrandName = brandName;
+                                currentBrandData = allDomains.filter(function(d) { return String(d.brand).trim().toLowerCase() === String(brandName).trim().toLowerCase(); });
+                                currentViewData = [].concat(currentBrandData); buildOverviewUI(brandName);
+                                document.body.removeChild(jsonpScript); delete window[callbackName];
+                            };
+                            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+                            document.body.appendChild(jsonpScript);
+                        }
                     } else { buildOverviewUI(brandName); }
 
                 } else if (tabName === 'domains') {
@@ -2261,32 +2315,27 @@
         // ==========================================
         // DYNAMIC TABLE RENDERING & DATA FETCHING
         // ==========================================
-        function loadBrandDomains(brandName) {
-            currentBrandName = brandName;
-            var tbody = document.getElementById('brandDomainTableBody');
-            if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="13" class="px-4 py-16 text-center text-slate-400"><div class="flex flex-col items-center"><div class="spinner mb-4"></div><p class="text-sm font-medium">Fetching domains...</p></div></td></tr>';
+        function loadSidebarBrands() {
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(brands) {
+                    availableBrandsForPerms = brands; renderSidebarBrands(brands);
+                }).getUniqueBrands();
+                return;
             }
 
-            if (typeof google !== 'undefined' && google.script && google.script.run) {
-                google.script.run.withSuccessHandler(function(allDomains) {
-                    currentBrandData = allDomains.filter(function(d) {
-                        return String(d.brand).trim().toLowerCase() === String(brandName).trim().toLowerCase();
-                    });
-                    currentViewData = [].concat(currentBrandData);
-                    currentPage = 1;
-                    buildBrandTableUI();
-                }).getDomainsData();
-            } else {
-                setTimeout(function() {
-                    currentBrandData = [
-                        { brand: brandName, domain: "apex-test.com", expiration: "Jun 03, 2026", account: "Godaddy Nixx", price: "₱2,500", notes: "Main Domain Route", agent: "Tech01", redirected: "https://www.apexapex.online/main-route", pldt: "Active", pldtRemarks: "", globe: "Block", globeRemarks: "Jun 19 | http", converge: "Active", convergeRemarks: "", dito: "Active", ditoRemarks: "" }
-                    ];
-                    currentViewData = [].concat(currentBrandData);
-                    currentPage = 1;
-                    buildBrandTableUI();
-                }, 600);
-            }
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getUniqueBrands";
+            var jsonpScript = document.createElement('script');
+            var callbackName = 'jsonp_brands_' + Math.round(Math.random() * 1000000);
+            
+            window[callbackName] = function(brands) {
+                availableBrandsForPerms = brands; 
+                renderSidebarBrands(brands);
+                document.body.removeChild(jsonpScript);
+                delete window[callbackName];
+            };
+            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+            document.body.appendChild(jsonpScript);
         }
 
         function buildBrandTableUI() {
@@ -3073,6 +3122,37 @@
                 container.innerHTML = logsHtml;
             }
             if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        function loadBrandDomains(brandName) {
+            currentBrandName = brandName;
+            var tbody = document.getElementById('brandDomainTableBody');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="13" class="px-4 py-16 text-center text-slate-400"><div class="flex flex-col items-center"><div class="spinner mb-4"></div><p class="text-sm font-medium">Fetching domains...</p></div></td></tr>';
+            }
+
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(allDomains) {
+                    currentBrandData = allDomains.filter(function(d) { return String(d.brand).trim().toLowerCase() === String(brandName).trim().toLowerCase(); });
+                    currentViewData = [].concat(currentBrandData);
+                    currentPage = 1; buildBrandTableUI();
+                }).getDomainsData();
+                return;
+            }
+
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getDomainsData";
+            var jsonpScript = document.createElement('script');
+            var callbackName = 'jsonp_brand_doms_' + Math.round(Math.random() * 1000000);
+            
+            window[callbackName] = function(allDomains) {
+                currentBrandData = allDomains.filter(function(d) { return String(d.brand).trim().toLowerCase() === String(brandName).trim().toLowerCase(); });
+                currentViewData = [].concat(currentBrandData);
+                currentPage = 1; buildBrandTableUI();
+                document.body.removeChild(jsonpScript); delete window[callbackName];
+            };
+            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+            document.body.appendChild(jsonpScript);
         }
 
     </script>
