@@ -3051,6 +3051,39 @@
             }
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
+        
+        // ==========================================
+        // CLOUDFLARE API GATEWAY POLYFILL
+        // ==========================================
+        if (typeof google === 'undefined') {
+            window.google = { script: { run: createProxyHandler(null, null) } };
+        }
+
+        function createProxyHandler(successCb, failureCb) {
+            return new Proxy({}, {
+                get: function(target, prop) {
+                    if (prop === 'withSuccessHandler') return function(cb) { return createProxyHandler(cb, failureCb); };
+                    if (prop === 'withFailureHandler') return function(cb) { return createProxyHandler(successCb, cb); };
+                    
+                    return function() {
+                        var args = Array.from(arguments);
+                        // 🔴 IPALIT DITO ANG EXACTONG CLOUDFLARE WORKER URL MO:
+                        fetch("https://bbc-api-gateway.ea-nix.workers.dev", {
+                            method: "POST",
+                            headers: { "Content-Type": "text/plain;charset=utf-8" },
+                            body: JSON.stringify({ action: prop, args: args })
+                        })
+                        .then(res => res.json())
+                        .then(res => { if (successCb) successCb(res.data !== undefined ? res.data : res); })
+                        .catch(err => { if (failureCb) failureCb(err); else console.error("Gateway Error:", err); });
+                    };
+                }
+            });
+        }
+        
+        // ==========================================
+        // MOBILE RESPONSIVE HELPERS
+        // ==========================================
 
     </script>
 
