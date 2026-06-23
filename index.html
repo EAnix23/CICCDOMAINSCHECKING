@@ -3052,8 +3052,12 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
         
+        <script>
+        
+        <script>
+        
         // ==========================================
-        // CLOUDFLARE API GATEWAY POLYFILL
+        // CLOUDFLARE API GATEWAY MAGIC POLYFILL
         // ==========================================
         if (typeof google === 'undefined') {
             window.google = { script: { run: createProxyHandler(null, null) } };
@@ -3067,7 +3071,7 @@
                     
                     return function() {
                         var args = Array.from(arguments);
-                        // 🔴 IPALIT DITO ANG EXACTONG CLOUDFLARE WORKER URL MO:
+                        // 🔴 NAKATURO NA ITO SA CLOUDFLARE WORKER MO:
                         fetch("https://bbc-api-gateway.ea-nix.workers.dev", {
                             method: "POST",
                             headers: { "Content-Type": "text/plain;charset=utf-8" },
