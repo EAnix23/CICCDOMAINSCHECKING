@@ -38,9 +38,25 @@
         .perm-item { transition: all 0.2s ease; }
         .perm-item.selected { background-color: rgba(99, 102, 241, 0.2); border-color: #6366f1; color: #a5b4fc; }
 
-        /* Smooth UI Transitions */
+       /* Smooth UI Transitions */
         .smooth-hide { opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
         .smooth-show { opacity: 1; pointer-events: auto; transition: opacity 0.3s ease; }
+
+        /* Auto-responsive global grid alignment framework */
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+            }
+            table {
+                display: block !important;
+                width: 100% !important;
+                overflow-x: auto !important;
+                white-space: nowrap;
+            }
+            #appContent { padding: 1rem !important; }
+            header { padding-left: 1rem !important; padding-right: 1rem !important; }
+            h2 { font-size: 1.15rem !important; }
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 flex h-screen overflow-hidden">
