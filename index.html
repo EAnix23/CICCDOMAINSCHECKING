@@ -1271,27 +1271,29 @@
 
             container.style.opacity = '0';
             setTimeout(function() {
-                if (reportType === 'Domain Post Verification') {
-                    container.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-500"><div class="spinner mb-4"></div><p class="text-sm font-medium">Loading Post Verification Data...</p></div>';
-                    container.style.opacity = '1';
-                    
+               // Kung nasa loob ng Apps Script editor environment
                     if (typeof google !== 'undefined' && google.script && google.script.run) {
                         google.script.run.withSuccessHandler(function(data) {
                             postVerifData = data; renderPostVerifMain();
                         }).getPostVerificationData();
                     } else {
-                        postVerifData = [
-                            {batchId: 'TCG BATCH3', domain: '55555bbm.com', team: 'TCG Batch', pldt: '', pldtRemarks: '', globe: 'ACTIVE', globeRemarks: 'Jun 10 | http', converge: 'BLOCK (TIMEOUT)', convergeRemarks: 'Jun 11 | http', dito: 'BLOCK', ditoRemarks: 'Jun 12 | http'}
-                        ];
-                        renderPostVerifMain();
+                        // 🔴 GITHUB CUSTOM DOMAIN FLOW (JSONP DATA BYPASS)
+                        var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+                        var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getPostVerificationData";
+                        
+                        var jsonpScript = document.createElement('script');
+                        var callbackName = 'jsonp_dpv_' + Math.round(Math.random() * 1000000);
+                        
+                        window[callbackName] = function(data) {
+                            postVerifData = data; 
+                            renderPostVerifMain();
+                            document.body.removeChild(jsonpScript);
+                            delete window[callbackName];
+                        };
+                        
+                        jsonpScript.src = targetUrl + "&callback=" + callbackName;
+                        document.body.appendChild(jsonpScript);
                     }
-                } else {
-                    container.innerHTML = '<div class="h-full flex flex-col relative bg-slate-50"><div class="px-8 py-6 border-b border-slate-100 bg-white flex-shrink-0"><h2 class="text-2xl font-bold text-slate-800 flex items-center gap-2"><i data-lucide="' + pageIcon + '" class="h-6 w-6 text-indigo-600"></i> Cyberguard: ' + reportType + '</h2><p class="text-sm text-slate-500 mt-1">Aggregated security monitoring and reports for ' + reportType + '.</p></div><div class="flex-1 p-8 flex items-center justify-center flex-col text-slate-400"><i data-lucide="layout-template" class="h-16 w-16 mb-4 opacity-20 text-indigo-500"></i><h3 class="text-lg font-bold text-slate-500">' + reportType + ' Module</h3><p class="text-sm text-slate-400 mt-2">The reporting interface for this section is ready for development.</p></div></div>';
-                    if (typeof lucide !== 'undefined') lucide.createIcons();
-                    container.style.opacity = '1';
-                }
-            }, 150);
-        }
 
        
         // --- RENDER POST VERIFICATION TABS & UI ---
