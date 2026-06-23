@@ -479,11 +479,34 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
             
             // Check kung may naka-save na Active Session (Para di ma-logout pag nag Refresh/Back)
+           // Check kung may naka-save na Active Session (Auto-Restore Security Module)
             var savedUser = localStorage.getItem('dg_user');
             var savedRole = localStorage.getItem('dg_role');
             var savedPerms = localStorage.getItem('dg_perms');
             if (savedUser && savedRole) {
+                // 1. Force initialize the master network frameworks para gisingin ang Google Sheets data
+                loadSidebarBrands();
+                
+                // 2. Patakbuhin ang full layout rendering mechanics
                 finishLogin(savedUser, savedRole, savedPerms ? JSON.parse(savedPerms) : [], true);
+                
+                // 3. Sapilitang i-trigger ang current view state framework depende kung nasaan kang pahina nag-refresh
+                setTimeout(function() {
+                    if (currentDpvTeam) {
+                        // Kung nakatayo ka sa Cyberguard, hilahin ang live DATASHEET values
+                        if (typeof google !== 'undefined' && google.script && google.script.run) {
+                            google.script.run.withSuccessHandler(function(data) { postVerifData = data; renderPostVerifMain(); }).getPostVerificationData();
+                        } else {
+                            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+                            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getPostVerificationData";
+                            var jsonpScript = document.createElement('script');
+                            var callbackName = 'jsonp_dpv_restore_' + Math.round(Math.random() * 1000000);
+                            window[callbackName] = function(data) { postVerifData = data; renderPostVerifMain(); document.body.removeChild(jsonpScript); delete window[callbackName]; };
+                            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+                            document.body.appendChild(jsonpScript);
+                        }
+                    }
+                }, 500);
             }
 
             // Pakinggan lahat ng galaw (mouse, keyboard, scroll) para i-reset ang 15 mins timer
