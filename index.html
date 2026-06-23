@@ -587,40 +587,51 @@
             btn.disabled = true; 
             errorMsg.classList.add('hidden');
 
-            // 🔴 IPALIT DITO ANG COPIED DEPLOYMENT LINK MO GALING IMAGE_0B711C.PNG
-            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbwCk8-vZBJcyvlC-8akCQhcQUIBZwzf0QyrDx2NaqOjHGqqibuwYyR0UtvQ_AITCY0GyQ/exec";
+            // 1. DUAL HANDSHAKE FILTER: KUNG NAKALAYLAY SA LOOB NG APPS SCRIPT EDITOR VIEW PANEL
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run
+                    .withSuccessHandler(function(response) {
+                        btn.innerHTML = originalHtml; btn.disabled = false;
+                        if (response.success) {
+                            finishLogin(response.username, response.role, response.permissions);
+                        } else {
+                            errorMsg.innerText = response.message || "Invalid credentials."; errorMsg.classList.remove('hidden');
+                        }
+                    })
+                    .withFailureHandler(function(err) {
+                        btn.innerHTML = originalHtml; btn.disabled = false;
+                        errorMsg.innerText = "Execution Error: " + err.toString(); errorMsg.classList.remove('hidden');
+                    })
+                    .verifyLogin(String(user), String(pass));
+                return;
+            }
 
-            // Upgraded submission trick using application/x-www-form-urlencoded to 100% bypass CORS rules natively!
-            var formBody = [];
-            formBody.push(encodeURIComponent("action") + "=" + encodeURIComponent("verifyLogin"));
-            formBody.push(encodeURIComponent("username") + "=" + encodeURIComponent(user));
-            formBody.push(encodeURIComponent("password") + "=" + encodeURIComponent(pass));
-            formBody = formBody.join("&");
-
-            fetch(GOOGLE_WEB_APP_API_URL, {
-                method: "POST",
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                body: formBody
-            })
-            .then(function(response) { return response.json(); })
-            .then(function(response) {
-                btn.innerHTML = originalHtml; 
-                btn.disabled = false;
+            // 2. KUNG NAKASALALAY SA LIVE WEBSITE REPO DOMAIN (GITHUB PAGES SECURED HANDSHAKE)
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxhu4zQlwGkbZgY_BSeTFXEzjpVV3bs0BvEZOfp5EdjsObrIuawZwAj6FGH5JahwsEiOA/exec";
+            
+            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=verifyLogin&username=" + encodeURIComponent(user) + "&password=" + encodeURIComponent(pass);
+            
+            var jsonpScript = document.createElement('script');
+            var uniqueCallback = 'jsonp_login_' + Math.round(Math.random() * 1000000);
+            
+            window[uniqueCallback] = function(response) {
+                btn.innerHTML = originalHtml; btn.disabled = false;
+                document.body.removeChild(jsonpScript);
+                delete window[uniqueCallback];
                 
                 if (response.success) {
                     finishLogin(response.username, response.role, response.permissions);
                 } else {
-                    errorMsg.innerText = response.message || "Invalid credentials."; 
-                    errorMsg.classList.remove('hidden');
+                    errorMsg.innerText = response.message || "Invalid credentials."; errorMsg.classList.remove('hidden');
                 }
-            })
-            .catch(function(error) {
-                btn.innerHTML = originalHtml; 
-                btn.disabled = false;
-                errorMsg.innerText = "Network Error: Unable to bind data network sync pipes."; 
-                errorMsg.classList.remove('hidden');
-                console.error("Pipeline Error: ", error);
-            });
+            };
+            
+            jsonpScript.src = targetUrl + "&callback=" + uniqueCallback;
+            jsonpScript.onerror = function() {
+                btn.innerHTML = originalHtml; btn.disabled = false;
+                errorMsg.innerText = "Network Error: Unable to bind data network sync pipes."; errorMsg.classList.remove('hidden');
+            };
+            document.body.appendChild(jsonpScript);
         }
 
         function finishLogin(name, role, perms, isRestore) {
