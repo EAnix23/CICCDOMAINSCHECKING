@@ -751,15 +751,31 @@
         // SIDEBAR & CYBERGUARD MENU LOGIC
         // ==========================================
         function loadSidebarBrands() {
+            // Kung nasa loob ng Apps Script editor environment
             if (typeof google !== 'undefined' && google.script && google.script.run) {
                 google.script.run.withSuccessHandler(function(brands) {
                     availableBrandsForPerms = brands;
                     renderSidebarBrands(brands);
                 }).getUniqueBrands();
-            } else {
-                var mockBrands = ['4DWIN', '888LUXURY', 'APEXGAMING'];
-                availableBrandsForPerms = mockBrands; renderSidebarBrands(mockBrands);
+                return;
             }
+
+            // Kung nasa GitHub Pages / Custom Domain (JSONP Bypass)
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getUniqueBrands";
+            
+            var jsonpScript = document.createElement('script');
+            var callbackName = 'jsonp_brands_' + Math.round(Math.random() * 1000000);
+            
+            window[callbackName] = function(brands) {
+                availableBrandsForPerms = brands; 
+                renderSidebarBrands(brands);
+                document.body.removeChild(jsonpScript);
+                delete window[callbackName];
+            };
+            
+            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+            document.body.appendChild(jsonpScript);
         }
 
         function renderSidebarBrands(brands) {
@@ -820,22 +836,37 @@
         // ==========================================
         // GLOBAL DASHBOARD LOGIC
         // ==========================================
-        function openGlobalDashboard() {
+       function openGlobalDashboard() {
             var container = document.getElementById('appContent');
             if (!container) return;
             setActiveSidebarBtn(document.getElementById('btnGlobalDashboard'));
             container.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-500 bg-slate-50/50 z-20"><div class="spinner mb-4"></div><p class="text-sm font-medium text-slate-500">Fetching Global Systems Data...</p></div>';
 
+            // Kung nasa loob ng Apps Script editor environment
             if (typeof google !== 'undefined' && google.script && google.script.run) {
                 google.script.run.withSuccessHandler(function(allDomains) {
                     currentBrandData = allDomains; currentViewData = [].concat(currentBrandData); buildGlobalUI();
                 }).getDomainsData();
-            } else {
-                setTimeout(function() {
-                    currentBrandData = [ { brand: "888LUXURY", domain: "888luxury.com", expiration: "2026-08-15", account: "Godaddy", price: "₱2,500", notes: "Main", agent: "Tech01", redirected: "N/A", pldt: "Active", pldtRemarks: "", globe: "Active", globeRemarks: "", converge: "Active", convergeRemarks: "", dito: "Active", ditoRemarks: "" } ];
-                    currentViewData = [].concat(currentBrandData); buildGlobalUI();
-                }, 800);
+                return;
             }
+
+            // Kung nasa GitHub Pages / Custom Domain (JSONP Bypass)
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getDomainsData";
+            
+            var jsonpScript = document.createElement('script');
+            var callbackName = 'jsonp_global_' + Math.round(Math.random() * 1000000);
+            
+            window[callbackName] = function(allDomains) {
+                currentBrandData = allDomains; 
+                currentViewData = [].concat(currentBrandData); 
+                buildGlobalUI();
+                document.body.removeChild(jsonpScript);
+                delete window[callbackName];
+            };
+            
+            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+            document.body.appendChild(jsonpScript);
         }
 
         function buildGlobalUI() {
@@ -2174,7 +2205,7 @@
                     contentArea.className = "flex-1 p-6 bg-slate-50/50 overflow-y-auto custom-scrollbar transition-opacity duration-200";
                     contentArea.innerHTML = '<div class="flex flex-col items-center justify-center mt-20 text-slate-400"><div class="spinner mb-4"></div><p>Aggregating AI insights...</p></div>';
                     
-                    if (currentBrandName !== brandName) {
+                   if (currentBrandName !== brandName) {
                         if (typeof google !== 'undefined' && google.script && google.script.run) {
                             google.script.run.withSuccessHandler(function(allDomains) {
                                 currentBrandName = brandName;
@@ -2182,7 +2213,26 @@
                                 currentViewData = [].concat(currentBrandData);
                                 buildOverviewUI(brandName);
                             }).getDomainsData();
-                        } else { setTimeout(function() { buildOverviewUI(brandName); }, 800); }
+                        } else { 
+                            // GitHub Pages External Fetch Loop
+                            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+                            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getDomainsData";
+                            
+                            var jsonpScript = document.createElement('script');
+                            var callbackName = 'jsonp_brand_tab_' + Math.round(Math.random() * 1000000);
+                            
+                            window[callbackName] = function(allDomains) {
+                                currentBrandName = brandName;
+                                currentBrandData = allDomains.filter(function(d) { return String(d.brand).trim().toLowerCase() === String(brandName).trim().toLowerCase(); });
+                                currentViewData = [].concat(currentBrandData);
+                                buildOverviewUI(brandName);
+                                document.body.removeChild(jsonpScript);
+                                delete window[callbackName];
+                            };
+                            
+                            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+                            document.body.appendChild(jsonpScript);
+                        }
                     } else { buildOverviewUI(brandName); }
 
                 } else if (tabName === 'domains') {
