@@ -607,7 +607,7 @@
             }
 
             // 2. KUNG NAKASALALAY SA LIVE WEBSITE REPO DOMAIN (GITHUB PAGES SECURED HANDSHAKE)
-            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbzk6PzT2PF7PCxjIjDXZrXgbF6BeU_XiEa2aFBUh2aOokymP6PHxIbzFogaRdQ58xneZA/exec";
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbx_LSzr1P8lL-nQuIDJqIWuYd_CvwCGyNJBdlZIkyguMA5yDquL5oIF4Mg-onhGdx3ecw/exec";
             
             var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=verifyLogin&username=" + encodeURIComponent(user) + "&password=" + encodeURIComponent(pass);
             
@@ -2997,20 +2997,36 @@
             }
 
             var container = document.getElementById('activityLogsContainer');
-            // Maglagay muna ng loading screen habang kinukuha sa database
             container.innerHTML = '<div class="flex flex-col items-center justify-center py-16 text-slate-400"><div class="spinner mb-4 border-t-indigo-500"></div><p class="text-xs font-bold uppercase tracking-widest">Syncing securely from Database...</p></div>';
             
             modal.classList.remove('hidden');
             setTimeout(function(){ modal.style.opacity = '1'; }, 10);
 
+            // 1. KUNG NAKALAYLAY SA LOOB NG APPS SCRIPT DEVELOPER PREVIEW MODE
             if (typeof google !== 'undefined' && google.script && google.script.run) {
                 google.script.run.withSuccessHandler(function(logs) {
                     if(logs && logs.length > 0) systemActivityLogs = logs;
                     renderLogsInModal(container);
                 }).getActivityLogsBackend();
-            } else {
-                setTimeout(function() { renderLogsInModal(container); }, 800);
+                return;
             }
+
+            // 2. KUNG NAKASALALAY SA EXTERNAL CUSTOM DOMAIN PIPELINE GATEWAY (GITHUB HOOK)
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbxKnSOx-OG8_yXo5TPPBLIcYMpO4OQqkaM3lwu5Ve12ow6I9MCokhOCUSTfB-A8phrNcQ/exec";
+            var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getActivityLogsBackend";
+            
+            var jsonpScript = document.createElement('script');
+            var callbackName = 'jsonp_logs_' + Math.round(Math.random() * 1000000);
+            
+            window[callbackName] = function(logs) {
+                if(logs && logs.length > 0) systemActivityLogs = logs;
+                renderLogsInModal(container);
+                document.body.removeChild(jsonpScript);
+                delete window[callbackName];
+            };
+            
+            jsonpScript.src = targetUrl + "&callback=" + callbackName;
+            document.body.appendChild(jsonpScript);
         }
 
         function renderLogsInModal(container) {
