@@ -567,6 +567,9 @@
         // ==========================================
         // LOGIN & LOGOUT LOGIC
         // ==========================================
+       // ==========================================
+        // GITHUB CUSTOM DOMAIN LOGIN ENGINE (API DRIVEN)
+        // ==========================================
         function attemptLogin() {
             var user = document.getElementById('loginUser').value.trim();
             var pass = document.getElementById('loginPass').value.trim();
@@ -574,31 +577,50 @@
             var errorMsg = document.getElementById('loginError');
 
             if(user === '' || pass === '') {
-                errorMsg.innerText = "Please enter both username and password."; errorMsg.classList.remove('hidden'); return;
+                errorMsg.innerText = "Please enter both username and password."; 
+                errorMsg.classList.remove('hidden'); 
+                return;
             }
 
             var originalHtml = btn.innerHTML;
             btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div> Authenticating...';
-            btn.disabled = true; errorMsg.classList.add('hidden');
+            btn.disabled = true; 
+            errorMsg.classList.add('hidden');
 
-            if (typeof google !== 'undefined' && google.script && google.script.run) {
-                google.script.run.withSuccessHandler(function(response) {
-                    if (response.success) {
-                        finishLogin(response.name, response.role, response.permissions);
-                    } else {
-                        btn.innerHTML = originalHtml; btn.disabled = false;
-                        errorMsg.innerText = response.message || "Invalid credentials."; errorMsg.classList.remove('hidden');
-                    }
-                }).verifyLogin(String(user), String(pass));
-            } else {
-                setTimeout(function() {
-                    if (user === 'admin' && pass === 'admin') { finishLogin("Developer Lio", "Super Admin", []); } 
-                    else {
-                        btn.innerHTML = originalHtml; btn.disabled = false;
-                        errorMsg.innerText = "Invalid credentials. (Hint: admin/admin)"; errorMsg.classList.remove('hidden');
-                    }
-                }, 1000);
-            }
+            // 🔴 PAALALA: Palitan mo itong URL sa ibaba ng exactong "Web App URL" na nakuha mo sa Apps Script Deployment mo!
+            var GOOGLE_WEB_APP_API_URL = "https://script.google.com/macros/s/AKfycbz_1WrnZ57WspEGFs5HdvKx5vvmfJ908ZZFC3Q67TTqFwxQ/exec";
+
+            // Gumamit ng FETCH para makatawid ang data mula sa domain mo papunta sa Google Sheet
+            fetch(GOOGLE_WEB_APP_API_URL, {
+                method: "POST",
+                mode: "cors", // Bypass cross-origin block rules safely
+                headers: { "Content-Type": "text/plain;charset=utf-8" },
+                body: JSON.stringify({
+                    action: "verifyLogin",
+                    username: user,
+                    password: pass
+                })
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(response) {
+                btn.innerHTML = originalHtml; 
+                btn.disabled = false;
+                
+                if (response.success) {
+                    // Papasukin si user at i-load ang persistent sessions natin kanina
+                    finishLogin(response.username, response.role, response.permissions);
+                } else {
+                    errorMsg.innerText = response.message || "Invalid credentials."; 
+                    errorMsg.classList.remove('hidden');
+                }
+            })
+            .catch(function(error) {
+                btn.innerHTML = originalHtml; 
+                btn.disabled = false;
+                errorMsg.innerText = "Network Error: Unable to bind data network sync pipes."; 
+                errorMsg.classList.remove('hidden');
+                console.error("API Error: ", error);
+            });
         }
 
         function finishLogin(name, role, perms, isRestore) {
