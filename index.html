@@ -779,26 +779,70 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
-        function setActiveSidebarBtn(clickedBtn) {
-            var inactiveClass = "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group text-slate-500 hover:bg-slate-100/60 hover:text-indigo-600 bg-transparent";
-            var activeClass = "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] transition-all duration-200 group bg-indigo-50/80 text-indigo-700 shadow-sm ring-1 ring-indigo-100/50 font-bold";
-
-            document.querySelectorAll('.brand-btn').forEach(function(b) { b.className = "brand-btn " + inactiveClass + " justify-between"; });
-            var globalBtn = document.getElementById('btnGlobalDashboard');
-            if(globalBtn) globalBtn.className = "nav-btn " + inactiveClass;
-
-            if (clickedBtn) {
-                if (clickedBtn.id === 'btnGlobalDashboard') { clickedBtn.className = "nav-btn " + activeClass; } 
-                else { clickedBtn.className = "brand-btn " + activeClass + " justify-between"; }
-            }
-            document.getElementById('mainHeader').classList.remove('hidden');
-            document.getElementById('mainHeaderWrapper').className = "flex-1 flex flex-col min-w-0 overflow-hidden relative bg-slate-50/50";
+        function openCyberguardSub(reportType) {
+            var container = document.getElementById('appContent');
+            if (!container) return;
             
-            var content = document.getElementById('appContent');
-            content.style.opacity = '0';
-            setTimeout(function(){ content.style.opacity = '1'; }, 50);
+            // 1. Tanggalin ang highlight sa Brands at Global Dashboard
+            document.querySelectorAll('.brand-btn').forEach(function(b) { 
+                b.className = "brand-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group text-slate-500 hover:bg-slate-100/60 hover:text-indigo-600 bg-transparent justify-between"; 
+            });
+            var globalBtn = document.getElementById('btnGlobalDashboard');
+            if(globalBtn) globalBtn.className = "nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group text-slate-500 hover:bg-slate-100/60 hover:text-indigo-600 bg-transparent";
+            
+            // 2. I-Highlight ang Active Sub-menu (Hal. Domain Post Verification)
+            var subBtns = document.querySelectorAll('#cyberguardSubMenu button');
+            if(subBtns && subBtns.length > 0) {
+                subBtns.forEach(function(btn) {
+                    var isHidden = btn.classList.contains('hidden'); // I-check kung nakatago sa user
+                    
+                    if (btn.innerText.trim() === reportType) {
+                        btn.className = "w-full text-left px-4 py-2 text-[12px] font-bold rounded-lg transition-all bg-indigo-50 text-indigo-600 shadow-sm border border-indigo-100/50";
+                    } else {
+                        btn.className = "w-full text-left px-4 py-2 text-[12px] font-medium text-slate-500 hover:bg-slate-100 hover:text-indigo-600 rounded-lg transition-all";
+                    }
 
-            closeMobileSidebar();
+                    if(isHidden) btn.classList.add('hidden'); // I-balik ang pagkaka-hide kung walang access!
+                });
+            }
+
+            document.getElementById('mainHeader').classList.remove('hidden');
+            
+            var iconMap = { 'Domain Post Verification': 'check-square', 'Payment Gateway': 'credit-card', 'Influencer Report': 'users' };
+            var pageIcon = iconMap[reportType] || 'shield-alert';
+
+            container.style.opacity = '0';
+            setTimeout(function() {
+                if (reportType === 'Domain Post Verification') {
+                    container.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-500"><div class="spinner mb-4"></div><p class="text-sm font-medium">Loading Post Verification Data...</p></div>';
+                    container.style.opacity = '1';
+                    
+                    if (typeof google !== 'undefined' && google.script && google.script.run) {
+                        google.script.run.withSuccessHandler(function(data) {
+                            postVerifData = data; renderPostVerifMain();
+                        }).getPostVerificationData();
+                    } else {
+                        var GOOGLE_WEB_APP_API_URL = "https://bbc-api-gateway.ea-nix.workers.dev/";
+                        var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getPostVerificationData";
+                        var jsonpScript = document.createElement('script');
+                        var callbackName = 'jsonp_dpv_' + Math.round(Math.random() * 1000000);
+                        
+                        window[callbackName] = function(data) {
+                            postVerifData = data; renderPostVerifMain();
+                            document.body.removeChild(jsonpScript); delete window[callbackName];
+                        };
+                        jsonpScript.src = targetUrl + "&callback=" + callbackName;
+                        document.body.appendChild(jsonpScript);
+                    }
+                } else {
+                    container.innerHTML = '<div class="h-full flex flex-col relative bg-slate-50"><div class="px-8 py-6 border-b border-slate-100 bg-white flex-shrink-0"><h2 class="text-2xl font-bold text-slate-800 flex items-center gap-2"><i data-lucide="' + pageIcon + '" class="h-6 w-6 text-indigo-600"></i> Cyberguard: ' + reportType + '</h2><p class="text-sm text-slate-500 mt-1">Aggregated security monitoring and reports for ' + reportType + '.</p></div><div class="flex-1 p-8 flex items-center justify-center flex-col text-slate-400"><i data-lucide="layout-template" class="h-16 w-16 mb-4 opacity-20 text-indigo-500"></i><h3 class="text-lg font-bold text-slate-500">' + reportType + ' Module</h3><p class="text-sm text-slate-400 mt-2">The reporting interface for this section is ready for development.</p></div></div>';
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
+                    container.style.opacity = '1';
+                }
+            }, 150);
+            
+            // 🟢 ITO ANG MAGIC FIX PARA ITAGO ULI ANG WALANG ACCESS:
+            applyPermissionsToUI(); 
         }
 
         function toggleCyberguardMenu() {
