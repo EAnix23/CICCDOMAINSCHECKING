@@ -1535,56 +1535,60 @@
                 document.body.insertAdjacentHTML('beforeend', modalHtml);
             }
 
-            // INJECT CRUD MODAL PARA SA DPV (MAY CICC NA)
-            if(!document.getElementById('dpvCrudModal')) {
-                var modalHtml = [
-                    '<div id="dpvCrudModal" class="hidden fixed inset-0 z-[140] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
-                    '  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg transform transition-all overflow-hidden flex flex-col max-h-[90vh]">',
-                    '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">',
-                    '      <h3 class="text-lg font-black text-slate-800 flex items-center gap-2" id="dpvModalTitle"><i data-lucide="edit" class="h-5 w-5 text-indigo-600"></i> Manage DPV Record</h3>',
-                    '      <button onclick="closeSmoothly(\'dpvCrudModal\')" class="text-slate-400 hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-50"><i data-lucide="x" class="h-5 w-5"></i></button>',
-                    '    </div>',
-                    '    <div class="px-6 py-6 overflow-y-auto custom-scrollbar flex-1" id="dpvModalBody">',
-                    '      <div id="dpvFormSection">',
-                    '        <input type="hidden" id="dpvEditIndex" value="-1"><input type="hidden" id="dpvOriginalDomain" value="">',
-                    '        <div class="space-y-4">',
-                    '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Batch ID</label><input type="text" id="dpvBatchId" placeholder="e.g. TCG BATCH1" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm font-bold uppercase"></div>',
-                    '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-indigo-500">CICC Reference No.</label><input type="text" id="dpvCicc" placeholder="e.g. CICC-2026-001" class="w-full px-4 py-2 border border-indigo-200 bg-indigo-50/30 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm font-black uppercase"></div>',
-                    '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Target Domain(s)</label><textarea id="dpvDomain" rows="4" placeholder="e.g. domain1.com\\ndomain2.com" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm custom-scrollbar resize-none"></textarea><p class="text-[9px] text-slate-400 mt-1.5 font-medium"><i data-lucide="info" class="h-3 w-3 inline mr-0.5"></i> Single entry or Bulk (Paste multiple domains separated by a new line)</p></div>',
-                    '          <div class="grid grid-cols-2 gap-4">',
-                    '             <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Assigned Team</label><input type="text" id="dpvTeam" placeholder="e.g. TCG Batch" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm"></div>',
-                    '             <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1"><i data-lucide="lock" class="h-3 w-3 text-indigo-500"></i> Agent (Auto)</label><input type="text" id="dpvAgent" readonly class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm shadow-sm font-bold text-slate-500 bg-slate-100 cursor-not-allowed focus:outline-none" title="Automatically locked to your account name"></div>',
-                    '          </div>',
-                    '        </div>',
-                    '      </div>',
-                    '      <div id="dpvReviewSection" class="hidden flex-col gap-4">',
-                    '        <div class="bg-rose-50 p-4 rounded-xl border border-rose-200">',
-                    '           <h4 class="text-sm font-bold text-rose-700 mb-2 flex items-center gap-2"><i data-lucide="alert-triangle" class="h-4 w-4"></i> Found <span id="dpvDupeCount">0</span> Duplicate(s)</h4>',
-                    '           <div id="dpvDupeList" class="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar"></div>',
-                    '        </div>',
-                    '        <div class="bg-emerald-50 p-4 rounded-xl border border-emerald-200 flex justify-between items-center">',
-                    '           <span class="text-sm font-bold text-emerald-700 flex items-center gap-2"><i data-lucide="check-circle" class="h-4 w-4"></i> Clean Unique Domains to Upload:</span>',
-                    '           <span class="text-lg font-black text-emerald-700" id="dpvCleanCount">0</span>',
-                    '        </div>',
-                    '      </div>',
-                    '    </div>',
-                    '    <div id="dpvFormFooter" class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">',
-                    '      <button onclick="closeSmoothly(\'dpvCrudModal\')" class="px-5 py-2 text-[13px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>',
-                    '      <button onclick="processDpvUpload()" class="px-6 py-2 text-[13px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md flex items-center gap-2 transition-all"><i data-lucide="upload-cloud" class="h-4 w-4"></i> Scan & Save</button>',
-                    '    </div>',
-                    '    <div id="dpvReviewFooter" class="hidden px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center gap-3">',
-                    '      <button onclick="backToDpvForm()" class="px-4 py-2 text-[12px] font-bold text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"><i data-lucide="arrow-left" class="h-3 w-3"></i> Edit List</button>',
-                    '      <button id="btnProceedUpload" onclick="proceedDpvUploadFromReview()" class="px-6 py-2 text-[13px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md transition-all">Proceed Clean Upload</button>',
-                    '    </div>',
-                    '  </div>',
-                    '</div>'
-                ].join('\n');
-                document.body.insertAdjacentHTML('beforeend', modalHtml);
-            }
+           // 🟢 BURAHIN ANG MGA LUMANG MODAL KUNG MERON MAN (PARA IWAS NULL ERROR)
+            var oldCrud = document.getElementById('dpvCrudModal');
+            if(oldCrud) oldCrud.remove();
+            
+            var oldBulk = document.getElementById('dpvBulkUpdateModal');
+            if(oldBulk) oldBulk.remove();
 
-            // 🟢 INJECT BULK UPDATE MODAL
-            if(!document.getElementById('dpvBulkUpdateModal')) {
-                var bulkModalHtml = [
+            // 🟢 INJECT FRESH CRUD MODAL (MAY CICC NA)
+            var modalHtml = [
+                '<div id="dpvCrudModal" class="hidden fixed inset-0 z-[140] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+                '  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg transform transition-all overflow-hidden flex flex-col max-h-[90vh]">',
+                '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">',
+                '      <h3 class="text-lg font-black text-slate-800 flex items-center gap-2" id="dpvModalTitle"><i data-lucide="edit" class="h-5 w-5 text-indigo-600"></i> Manage DPV Record</h3>',
+                '      <button onclick="closeSmoothly(\'dpvCrudModal\')" class="text-slate-400 hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-50"><i data-lucide="x" class="h-5 w-5"></i></button>',
+                '    </div>',
+                '    <div class="px-6 py-6 overflow-y-auto custom-scrollbar flex-1" id="dpvModalBody">',
+                '      <div id="dpvFormSection">',
+                '        <input type="hidden" id="dpvEditIndex" value="-1"><input type="hidden" id="dpvOriginalDomain" value="">',
+                '        <div class="space-y-4">',
+                '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Batch ID</label><input type="text" id="dpvBatchId" placeholder="e.g. TCG BATCH1" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm font-bold uppercase"></div>',
+                '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-indigo-500">CICC Reference No.</label><input type="text" id="dpvCicc" placeholder="e.g. CICC-2026-001" class="w-full px-4 py-2 border border-indigo-200 bg-indigo-50/30 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm font-black uppercase"></div>',
+                '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Target Domain(s)</label><textarea id="dpvDomain" rows="4" placeholder="e.g. domain1.com\\ndomain2.com" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm custom-scrollbar resize-none"></textarea><p class="text-[9px] text-slate-400 mt-1.5 font-medium"><i data-lucide="info" class="h-3 w-3 inline mr-0.5"></i> Single entry or Bulk (Paste multiple domains separated by a new line)</p></div>',
+                '          <div class="grid grid-cols-2 gap-4">',
+                '             <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Assigned Team</label><input type="text" id="dpvTeam" placeholder="e.g. TCG Batch" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm"></div>',
+                '             <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1"><i data-lucide="lock" class="h-3 w-3 text-indigo-500"></i> Agent (Auto)</label><input type="text" id="dpvAgent" readonly class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm shadow-sm font-bold text-slate-500 bg-slate-100 cursor-not-allowed focus:outline-none" title="Automatically locked to your account name"></div>',
+                '          </div>',
+                '        </div>',
+                '      </div>',
+                '      <div id="dpvReviewSection" class="hidden flex-col gap-4">',
+                '        <div class="bg-rose-50 p-4 rounded-xl border border-rose-200">',
+                '           <h4 class="text-sm font-bold text-rose-700 mb-2 flex items-center gap-2"><i data-lucide="alert-triangle" class="h-4 w-4"></i> Found <span id="dpvDupeCount">0</span> Duplicate(s)</h4>',
+                '           <div id="dpvDupeList" class="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar"></div>',
+                '        </div>',
+                '        <div class="bg-emerald-50 p-4 rounded-xl border border-emerald-200 flex justify-between items-center">',
+                '           <span class="text-sm font-bold text-emerald-700 flex items-center gap-2"><i data-lucide="check-circle" class="h-4 w-4"></i> Clean Unique Domains to Upload:</span>',
+                '           <span class="text-lg font-black text-emerald-700" id="dpvCleanCount">0</span>',
+                '        </div>',
+                '      </div>',
+                '    </div>',
+                '    <div id="dpvFormFooter" class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">',
+                '      <button onclick="closeSmoothly(\'dpvCrudModal\')" class="px-5 py-2 text-[13px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>',
+                '      <button onclick="processDpvUpload()" class="px-6 py-2 text-[13px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md flex items-center gap-2 transition-all"><i data-lucide="upload-cloud" class="h-4 w-4"></i> Scan & Save</button>',
+                '    </div>',
+                '    <div id="dpvReviewFooter" class="hidden px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center gap-3">',
+                '      <button onclick="backToDpvForm()" class="px-4 py-2 text-[12px] font-bold text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"><i data-lucide="arrow-left" class="h-3 w-3"></i> Edit List</button>',
+                '      <button id="btnProceedUpload" onclick="proceedDpvUploadFromReview()" class="px-6 py-2 text-[13px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md transition-all">Proceed Clean Upload</button>',
+                '    </div>',
+                '  </div>',
+                '</div>'
+            ].join('\n');
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+            // 🟢 INJECT FRESH BULK UPDATE MODAL
+            var bulkModalHtml = [
                 '<div id="dpvBulkUpdateModal" class="hidden fixed inset-0 z-[160] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
                 '  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg transform transition-all overflow-hidden flex flex-col">',
                 '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-amber-50">',
@@ -1595,7 +1599,13 @@
                 '       <div id="bulkUpdateScopeSection" class="p-3 bg-amber-50/50 border border-amber-100 rounded-xl mb-2">',
                 '           <label class="block text-[10px] font-bold text-amber-700 uppercase tracking-widest mb-1">Target Scope</label>',
                 '           <div id="bulkScopeDisplay" class="text-sm font-bold text-slate-700 mb-2"></div>',
-                '           <select id="bulkUpdateBatchScope" class="hidden w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold focus:outline-none focus:border-amber-500 bg-white shadow-sm"></select>',
+                '           <div id="bulkUpdateBatchScopeWrapper" class="hidden relative w-full">',
+                '               <button type="button" onclick="document.getElementById(\'bulkBatchDropdownMenu\').classList.toggle(\'hidden\')" class="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold bg-white shadow-sm flex justify-between items-center text-slate-700 hover:border-amber-400 transition-colors">',
+                '                   <span id="bulkBatchDropdownLabel">-- Select Batches to Update --</span>',
+                '                   <i data-lucide="chevron-down" class="h-4 w-4 text-slate-400"></i>',
+                '               </button>',
+                '               <div id="bulkBatchDropdownMenu" class="hidden absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-48 overflow-y-auto custom-scrollbar p-2"></div>',
+                '           </div>',
                 '       </div>',
                 '       <p class="text-[11px] text-slate-500 font-medium mb-2"><i data-lucide="info" class="h-3.5 w-3.5 inline"></i> Fields left blank will NOT be updated. Fill only what you want to change.</p>',
                 '       <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update Target Domain</label><input type="text" id="bulkDomain" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
@@ -1612,9 +1622,8 @@
                 '    </div>',
                 '  </div>',
                 '</div>'
-                ].join('\n');
-                document.body.insertAdjacentHTML('beforeend', bulkModalHtml);
-            }
+            ].join('\n');
+            document.body.insertAdjacentHTML('beforeend', bulkModalHtml);
             
             switchPostVerifTab('Overview');
         }
@@ -2268,20 +2277,95 @@
             });
         }
 
+        // 🟢 MGA HELPER FUNCTIONS PARA SA DROPDOWN (PANG-IWAS ERROR AT PANG-LABEL)
+        function updateBulkBatchLabel() {
+            var selected = document.querySelectorAll('.bulk-batch-chk:checked');
+            var label = document.getElementById('bulkBatchDropdownLabel');
+            if(!label) return;
+            if(selected.length === 0) {
+                label.innerText = '-- Select Batches to Update --';
+            } else if (selected.length === 1) {
+                label.innerText = '1 Batch Selected (' + selected[0].value + ')';
+            } else {
+                label.innerText = selected.length + ' Batches Selected';
+            }
+        }
+
+        function toggleBulkBatchDropdown() {
+            var menu = document.getElementById('bulkBatchDropdownMenu');
+            if(menu) menu.classList.toggle('hidden');
+        }
+
+        function closeBulkBatchDropdown() {
+            var menu = document.getElementById('bulkBatchDropdownMenu');
+            if(menu) menu.classList.add('hidden');
+            updateBulkBatchLabel(); // Auto-update label pagka-close
+        }
+
+        // 🟢 MAIN MODAL FUNCTION NA MAY "DONE" BUTTON SA DROPDOWN
         function openDpvBulkUpdateModal() {
+            var oldBulk = document.getElementById('dpvBulkUpdateModal');
+            if (oldBulk && !document.getElementById('bulkBatchDropdownMenu')) {
+                 oldBulk.remove(); 
+            }
+
+            if (!document.getElementById('dpvBulkUpdateModal')) {
+                var bulkModalHtml = [
+                '<div id="dpvBulkUpdateModal" class="hidden fixed inset-0 z-[160] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+                '  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg transform transition-all flex flex-col">',
+                '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-amber-50 rounded-t-2xl">',
+                '      <h3 class="text-lg font-black text-amber-700 flex items-center gap-2"><i data-lucide="edit" class="h-5 w-5"></i> Bulk Update <span id="bulkUpdateTitleSub" class="text-sm"></span></h3>',
+                '      <button onclick="closeSmoothly(\'dpvBulkUpdateModal\')" class="text-amber-400 hover:text-amber-600 p-1.5 rounded-lg hover:bg-white"><i data-lucide="x" class="h-5 w-5"></i></button>',
+                '    </div>',
+                '    <div class="px-6 py-5 space-y-4">',
+                '       <div id="bulkUpdateScopeSection" class="p-3 bg-amber-50/50 border border-amber-100 rounded-xl mb-2">',
+                '           <label class="block text-[10px] font-bold text-amber-700 uppercase tracking-widest mb-1">Target Scope</label>',
+                '           <div id="bulkScopeDisplay" class="text-sm font-bold text-slate-700 mb-2"></div>',
+                '           <div id="bulkUpdateBatchScopeWrapper" class="hidden relative w-full">',
+                '               <button type="button" onclick="toggleBulkBatchDropdown()" class="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold bg-white shadow-sm flex justify-between items-center text-slate-700 hover:border-amber-400 transition-colors">',
+                '                   <span id="bulkBatchDropdownLabel">-- Select Batches to Update --</span>',
+                '                   <i data-lucide="chevron-down" class="h-4 w-4 text-slate-400"></i>',
+                '               </button>',
+                // 🟢 OVERFLOW-HIDDEN DITO PARA HINDI LUMAMPAS ANG SCROLL SA DONE BUTTON
+                '               <div id="bulkBatchDropdownMenu" class="hidden absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl flex flex-col overflow-hidden"></div>',
+                '           </div>',
+                '       </div>',
+                '       <p class="text-[11px] text-slate-500 font-medium mb-2"><i data-lucide="info" class="h-3.5 w-3.5 inline"></i> Fields left blank will NOT be updated. Fill only what you want to change.</p>',
+                '       <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update Target Domain</label><input type="text" id="bulkDomain" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
+                '       <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update CICC Ref No.</label><input type="text" id="bulkCicc" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
+                '       <div class="grid grid-cols-2 gap-4">',
+                '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update Team</label><input type="text" id="bulkTeam" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
+                '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update Agent</label><input type="text" id="bulkAgent" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
+                '       </div>',
+                '       <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-indigo-500">Update ISP Statuses (Global)</label><select id="bulkStatus" class="w-full px-4 py-2 border border-slate-200 bg-slate-50 rounded-xl text-sm font-bold"><option value="">-- Do not change status --</option><option value="ACTIVE" class="text-emerald-600">ACTIVE</option><option value="BLOCKED" class="text-rose-600">BLOCKED</option><option value="REDIRECTED" class="text-amber-600">REDIRECTED</option></select></div>',
+                '    </div>',
+                '    <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 rounded-b-2xl">',
+                '      <button onclick="closeSmoothly(\'dpvBulkUpdateModal\')" class="px-5 py-2 text-[13px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl shadow-sm">Cancel</button>',
+                '      <button onclick="processDpvBulkUpdate()" class="px-6 py-2 text-[13px] font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-xl shadow-[0_4px_12px_rgba(245,158,11,0.3)] flex items-center gap-2 transition-all"><i data-lucide="save" class="h-4 w-4"></i> Apply Bulk Update</button>',
+                '    </div>',
+                '  </div>',
+                '</div>'
+                ].join('\n');
+                document.body.insertAdjacentHTML('beforeend', bulkModalHtml);
+            }
+
             var checked = document.querySelectorAll('.dpv-row-select:checked');
             var scopeDisplay = document.getElementById('bulkScopeDisplay');
-            var batchDropdown = document.getElementById('bulkUpdateBatchScope');
+            var batchWrapper = document.getElementById('bulkUpdateBatchScopeWrapper');
+            var batchMenu = document.getElementById('bulkBatchDropdownMenu');
+            var batchLabel = document.getElementById('bulkBatchDropdownLabel');
             var titleSub = document.getElementById('bulkUpdateTitleSub');
 
+            if (!scopeDisplay || !batchWrapper || !batchMenu) {
+                showPremiumToast("Error", "Modal UI loading error. Please hard refresh.", "error"); return;
+            }
+
             if (checked.length > 0) {
-                // KUNG MAY NAI-CHECK NA BOXES
                 titleSub.innerText = '(' + checked.length + ' Selected Rows)';
                 scopeDisplay.innerHTML = 'Applying update to <b class="text-amber-600">' + checked.length + '</b> manually selected row(s).';
-                batchDropdown.classList.add('hidden');
-                batchDropdown.value = "";
+                batchWrapper.classList.add('hidden');
+                batchMenu.innerHTML = ''; 
             } else {
-                // KUNG WALANG CHECK (GAMITIN ANG BATCH DROPDOWN)
                 var availableBatches = [];
                 postVerifData.forEach(function(d) {
                     if (d.team === currentDpvTeam && d.batchId && d.batchId !== '-' && !availableBatches.includes(d.batchId)) {
@@ -2289,28 +2373,30 @@
                     }
                 });
 
-                if (availableBatches.length === 0) {
-                    showPremiumToast("Notice", "No available batches to update in this tab.", "info");
-                    return;
-                }
+                if (availableBatches.length === 0) { showPremiumToast("Notice", "No available batches to update in this tab.", "info"); return; }
 
-                // Ayusin ang options base sa nakabukas na tab
                 availableBatches.sort((a,b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
-                var opts = '<option value="">-- Select a Batch to Update --</option>';
-                availableBatches.forEach(function(b) { opts += '<option value="' + b + '">' + b + '</option>'; });
-                batchDropdown.innerHTML = opts;
+                
+                // 🟢 SCROLLABLE LIST DIV + FLEX-1
+                var optsHtml = '<div class="max-h-48 overflow-y-auto custom-scrollbar p-2 flex-1">';
+                availableBatches.forEach(function(b) {
+                    optsHtml += '<label class="flex items-center gap-2 p-2 hover:bg-slate-50 cursor-pointer rounded transition-colors border-b border-slate-100 last:border-0"><input type="checkbox" value="' + b + '" class="bulk-batch-chk rounded text-amber-600 focus:ring-amber-500 border-slate-300" onchange="updateBulkBatchLabel()"> <span class="text-xs text-slate-700 font-bold">' + b + '</span></label>';
+                });
+                optsHtml += '</div>';
+                // 🟢 STICKY FOOTER DONE BUTTON
+                optsHtml += '<div class="p-2 border-t border-slate-100 bg-slate-50 flex-shrink-0 z-10"><button type="button" onclick="closeBulkBatchDropdown()" class="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white text-[11px] uppercase tracking-wider font-bold rounded-md transition-colors shadow-sm">Done</button></div>';
+                
+                batchMenu.innerHTML = optsHtml;
+                batchLabel.innerText = '-- Select Batches to Update --';
+                batchMenu.classList.add('hidden'); 
 
                 titleSub.innerText = '(By Batch)';
-                scopeDisplay.innerText = "No rows selected. Choose a Batch below to update ALL domains inside it:";
-                batchDropdown.classList.remove('hidden');
+                scopeDisplay.innerText = "No rows selected. Check multiple Batches below to update ALL domains inside them:";
+                batchWrapper.classList.remove('hidden');
             }
 
-            // Linisin ang inputs
-            document.getElementById('bulkDomain').value = '';
-            document.getElementById('bulkCicc').value = '';
-            document.getElementById('bulkTeam').value = '';
-            document.getElementById('bulkAgent').value = '';
-            document.getElementById('bulkStatus').value = '';
+            document.getElementById('bulkDomain').value = ''; document.getElementById('bulkCicc').value = '';
+            document.getElementById('bulkTeam').value = ''; document.getElementById('bulkAgent').value = ''; document.getElementById('bulkStatus').value = '';
 
             var modal = document.getElementById('dpvBulkUpdateModal');
             modal.classList.remove('hidden');
@@ -2320,13 +2406,16 @@
 
        function processDpvBulkUpdate() {
             var checked = document.querySelectorAll('.dpv-row-select:checked');
-            var batchDropdown = document.getElementById('bulkUpdateBatchScope');
-            var selectedBatch = batchDropdown && !batchDropdown.classList.contains('hidden') ? batchDropdown.value : '';
+            var batchWrapper = document.getElementById('bulkUpdateBatchScopeWrapper');
+            
+            var selectedBatches = [];
+            if (batchWrapper && !batchWrapper.classList.contains('hidden')) {
+                var checkedBatches = document.querySelectorAll('.bulk-batch-chk:checked');
+                selectedBatches = Array.from(checkedBatches).map(cb => cb.value);
+            }
 
-            // Validation: Kailangan may checked OR may piniling Batch sa dropdown
-            if (checked.length === 0 && selectedBatch === "") {
-                showPremiumToast("Required", "Please select a Batch from the dropdown.", "error");
-                return;
+            if (checked.length === 0 && selectedBatches.length === 0) {
+                showPremiumToast("Required", "Please select at least one Batch from the dropdown menu.", "error"); return;
             }
 
             var nDomain = document.getElementById('bulkDomain').value.trim();
@@ -2338,46 +2427,118 @@
             var indicesToUpdate = [];
 
             if (checked.length > 0) {
-                // Pag may checkboxes na pinili
                 indicesToUpdate = Array.from(checked).map(cb => parseInt(cb.value));
             } else {
-                // Pag Batch Dropdown ang ginamit
                 postVerifData.forEach(function(d, index) {
-                    if (d.team === currentDpvTeam && d.batchId === selectedBatch) {
-                        indicesToUpdate.push(index);
+                    if (d.team === currentDpvTeam && selectedBatches.includes(d.batchId)) { 
+                        indicesToUpdate.push(index); 
                     }
                 });
             }
 
-            if (indicesToUpdate.length === 0) {
-                showPremiumToast("Error", "No rows found to update.", "error");
-                return;
-            }
+            if (indicesToUpdate.length === 0) { showPremiumToast("Error", "No rows found to update.", "error"); return; }
+            if (nDomain !== '' && indicesToUpdate.length > 1) { showPremiumToast("Notice", "Cannot bulk update Domain Name. Updates applied to other fields.", "info"); nDomain = ''; }
 
-            // I-apply ang changes sa lahat ng natarget na rows
-            indicesToUpdate.forEach(idx => {
-                if(nDomain) postVerifData[idx].domain = nDomain;
-                if(nCicc) postVerifData[idx].cicc = nCicc;
-                if(nTeam) postVerifData[idx].team = nTeam;
-                if(nAgent) postVerifData[idx].agent = nAgent;
-                if(nStatus) {
-                    postVerifData[idx].pldt = nStatus;
-                    postVerifData[idx].globe = nStatus;
-                    postVerifData[idx].converge = nStatus;
-                    postVerifData[idx].dito = nStatus;
-                }
-            });
-            
-            closeSmoothly('dpvBulkUpdateModal');
-            showPremiumToast("Bulk Updated", indicesToUpdate.length + " domain(s) updated successfully.", "success");
-            renderDpvTableData();
+            var domainsToUpdate = indicesToUpdate.map(idx => postVerifData[idx].domain.toLowerCase());
+            var updatePayload = {
+                domainsToUpdate: domainsToUpdate,
+                updates: { domain: nDomain, cicc: nCicc, team: nTeam, agent: nAgent, status: nStatus }
+            };
+
+            // 🟢 LOADING SPINNER STATE
+            var btn = document.querySelector('#dpvBulkUpdateModal button.bg-amber-500');
+            var origBtn = btn.innerHTML;
+            btn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Applying Updates...';
+            btn.disabled = true;
+            btn.classList.add('opacity-80', 'cursor-not-allowed');
+
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(function(res) {
+                    // 🟢 RESTORE BUTTON STATE AFTER SUCCESS
+                    btn.innerHTML = origBtn; 
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-80', 'cursor-not-allowed');
+                    
+                    if(res && res.success) {
+                        indicesToUpdate.forEach(idx => {
+                            if(nDomain) postVerifData[idx].domain = nDomain;
+                            if(nCicc) postVerifData[idx].cicc = nCicc;
+                            if(nTeam) postVerifData[idx].team = nTeam;
+                            if(nAgent) postVerifData[idx].agent = nAgent;
+                            if(nStatus) {
+                                postVerifData[idx].pldt = nStatus; postVerifData[idx].globe = nStatus;
+                                postVerifData[idx].converge = nStatus; postVerifData[idx].dito = nStatus;
+                            }
+                        });
+                        closeSmoothly('dpvBulkUpdateModal');
+                        showPremiumToast("Bulk Updated", res.message, "success");
+                        renderDpvTableData();
+                    } else {
+                        showPremiumToast("Backend Error", res.message || "Update failed.", "error");
+                    }
+                }).bulkUpdateDpvBackend(updatePayload);
+            } else {
+                setTimeout(function() {
+                    btn.innerHTML = origBtn; 
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-80', 'cursor-not-allowed');
+                    
+                    indicesToUpdate.forEach(idx => {
+                        if(nDomain) postVerifData[idx].domain = nDomain;
+                        if(nCicc) postVerifData[idx].cicc = nCicc;
+                        if(nTeam) postVerifData[idx].team = nTeam;
+                        if(nAgent) postVerifData[idx].agent = nAgent;
+                        if(nStatus) {
+                            postVerifData[idx].pldt = nStatus; postVerifData[idx].globe = nStatus;
+                            postVerifData[idx].converge = nStatus; postVerifData[idx].dito = nStatus;
+                        }
+                    });
+
+                    closeSmoothly('dpvBulkUpdateModal');
+                    showPremiumToast("Bulk Updated", "Update successful! (Mock Mode)", "success");
+                    renderDpvTableData();
+                }, 1200);
+            }
         }
 
 
         function openCleanUpModal() {
+            // 🟢 1. BURAHIN ANG LUMANG GHOST MODAL KUNG MERON MAN
+            var oldModal = document.getElementById('dpvCleanupModal');
+            if (oldModal) oldModal.remove();
+
+            // 🟢 2. AUTO-INJECT NG FRESH CLEANUP MODAL
+            var cleanupModalHtml = [
+                '<div id="dpvCleanupModal" class="hidden fixed inset-0 z-[160] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+                '  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg transform transition-all overflow-hidden flex flex-col max-h-[90vh]">',
+                '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-rose-50 rounded-t-2xl">',
+                '      <h3 class="text-lg font-black text-rose-700 flex items-center gap-2"><i data-lucide="eraser" class="h-5 w-5"></i> Batch Cleanup Tool</h3>',
+                '      <button onclick="closeSmoothly(\'dpvCleanupModal\')" class="text-rose-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-white transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button>',
+                '    </div>',
+                '    <div class="px-6 py-6 overflow-y-auto custom-scrollbar flex-1">',
+                '      <p class="text-[12px] text-slate-500 font-medium mb-4">Select a batch below. The system will scan and remove duplicate domains across the database, keeping only the oldest original record.</p>',
+                '      <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Select Batch to Clean</label>',
+                '      <select id="cleanupBatchSelect" class="w-full px-4 py-2.5 border border-slate-200 bg-slate-50 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:border-rose-500 shadow-sm"></select>',
+                '      <div id="cleanupResultsSection" class="hidden mt-6">',
+                '         <div class="bg-rose-50 p-4 rounded-xl border border-rose-200">',
+                '            <h4 class="text-sm font-bold text-rose-700 mb-3 flex items-center gap-2"><i data-lucide="alert-triangle" class="h-4 w-4"></i> Found <span id="cleanupDupeCount" class="text-lg">0</span> Duplicate(s)</h4>',
+                '            <div id="cleanupDupeList" class="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar"></div>',
+                '         </div>',
+                '      </div>',
+                '    </div>',
+                '    <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 rounded-b-2xl">',
+                '      <button onclick="closeSmoothly(\'dpvCleanupModal\')" class="px-5 py-2 text-[13px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl shadow-sm">Cancel</button>',
+                '      <button id="btnAnalyzeCleanup" onclick="analyzeCleanUp()" class="px-6 py-2 text-[13px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-[0_4px_12px_rgba(79,70,229,0.3)] flex items-center gap-2 transition-all"><i data-lucide="search" class="h-4 w-4"></i> Analyze Batch</button>',
+                '      <button id="btnConfirmCleanup" onclick="confirmCleanUp()" class="hidden px-6 py-2 text-[13px] font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-[0_4px_12px_rgba(225,29,72,0.3)] flex items-center gap-2 transition-all"><i data-lucide="trash-2" class="h-4 w-4"></i> Purge Duplicates</button>',
+                '    </div>',
+                '  </div>',
+                '</div>'
+            ].join('\n');
+            document.body.insertAdjacentHTML('beforeend', cleanupModalHtml);
+
             var modal = document.getElementById('dpvCleanupModal');
-            if(!modal) return;
             
+            // 🟢 3. I-SETUP ANG UI BAGO BUKSAN
             document.getElementById('cleanupResultsSection').classList.add('hidden');
             document.getElementById('btnConfirmCleanup').classList.add('hidden');
             document.getElementById('btnAnalyzeCleanup').classList.remove('hidden');
