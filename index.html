@@ -121,13 +121,11 @@
                         <span class="text-[9px] font-black text-indigo-600 tracking-[0.2em] uppercase">Domain_Guard</span>
                     </div>
                 </div>
-                <!-- MOBILE CLOSE BUTTON -->
                 <button onclick="toggleMobileSidebar()" class="md:hidden text-slate-400 hover:text-rose-500 p-1 bg-slate-50 rounded-lg"><i data-lucide="x" class="h-5 w-5"></i></button>
             </div>
-
             
             <div class="px-5 pt-6 pb-2 flex-shrink-0">
-                <button onclick="openCalendar()" class="nav-btn w-full flex items-center gap-3 px-4 py-3 mb-6 rounded-xl text-[14px] transition-all duration-200 group bg-white border border-slate-200 shadow-sm hover:border-indigo-300 hover:shadow-md text-slate-700" id="btnCalendar">
+                <button onclick="openCalendar()" class="nav-btn w-full flex items-center gap-3 px-4 py-3 mb-4 rounded-xl text-[14px] transition-all duration-200 group bg-white border border-slate-200 shadow-sm hover:border-indigo-300 hover:shadow-md text-slate-700" id="btnCalendar">
                     <div class="p-1.5 bg-indigo-50 rounded-lg text-indigo-600 group-hover:scale-110 transition-transform">
                         <i data-lucide="calendar-days" class="h-4 w-4"></i>
                     </div>
@@ -136,6 +134,15 @@
 
                 <div class="px-2 mb-3 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Dashboard</div>
                 <div class="space-y-1.5">
+                    
+                    <div class="flex flex-col gap-1">
+                        <button onclick="toggleCyberguardMenu()" class="nav-btn w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group text-slate-500 hover:bg-slate-100/60 hover:text-indigo-600 bg-transparent" id="btnCyberguardParent">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="shield-alert" class="h-4 w-4 group-hover:scale-110 transition-transform"></i>
+                                <span class="text-left">Cyberguard Reports</span>
+                            </div>
+                            <i data-lucide="chevron-down" id="cyberguardChevron" class="h-4 w-4 transition-transform duration-300"></i>
+                        </button>
                         
                         <div id="cyberguardSubMenu" class="hidden flex-col gap-1 pl-9 pr-2 py-1">
                             <button onclick="openCyberguardSub('Domain Post Verification')" class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-indigo-600 hover:bg-indigo-50/80 transition-all text-left">
@@ -172,8 +179,7 @@
             </div>
 
             <div class="flex-1 overflow-y-auto px-5 pb-4 sidebar-scroll space-y-1" id="sidebarBrandList">
-                <!-- Brands go here -->
-            </div>
+                </div>
 
             <div class="p-5 flex-shrink-0 relative">
                 <div class="absolute top-0 left-5 right-5 h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent"></div>
@@ -186,7 +192,6 @@
                <h4 id="adminProfileName" class="text-[12px] font-black text-slate-800 truncate uppercase">LIO</h4>
                   <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest truncate">Super Admin</p>
                 </div>            
-            <!-- 🟢 NEW ACTIVITY LOGS BUTTON 🟢 -->
             <button onclick="openActivityLogsModal()" title="View Activity Logs" class="ml-1 p-1.5 text-indigo-600 bg-indigo-100 hover:bg-indigo-200 hover:text-indigo-800 rounded-lg transition-colors border border-indigo-200 flex-shrink-0 shadow-sm">
                 <i data-lucide="activity" class="h-4 w-4"></i>
             </button>
@@ -195,7 +200,6 @@
                         <button onclick="openSettingsDashboard()" class="flex-1 flex justify-center items-center py-2 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-indigo-600 hover:border-indigo-200 hover:shadow-sm transition-all" title="Settings">
                             <i data-lucide="settings" class="h-4 w-4 hover:rotate-45 transition-transform duration-300"></i>
                         </button>
-                        <!-- CHANGED LOGOUT FUNCTION HERE -->
                         <button onclick="logoutSystem()" class="flex-1 flex justify-center items-center py-2 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-rose-600 hover:border-rose-200 hover:shadow-sm transition-all" title="Logout">
                             <i data-lucide="log-out" class="h-4 w-4 hover:-translate-x-1 transition-transform duration-300"></i>
                         </button>
@@ -950,10 +954,7 @@
             '            ',
             '            <div class="flex gap-6 px-6 border-b border-slate-200 pt-4 overflow-x-auto custom-scrollbar flex-shrink-0">',
             '                <button class="pb-3 text-sm font-bold text-indigo-600 border-b-2 border-indigo-600 whitespace-nowrap">Master Schedule</button>',
-            '                <button class="pb-3 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors border-b-2 border-transparent whitespace-nowrap">Financial Obligations</button>',
-            '                <button class="pb-3 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors border-b-2 border-transparent whitespace-nowrap">Operational Cycles</button>',
-            '                <button class="pb-3 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors border-b-2 border-transparent whitespace-nowrap">Task Inventory</button>',
-            '                <button class="pb-3 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors border-b-2 border-transparent whitespace-nowrap">Performance Analytics</button>',
+            '                <button class="pb-3 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors border-b-2 border-transparent whitespace-nowrap">Godaddy Credentials</button>',
             '            </div>',
             '',
             '            ',
@@ -1534,57 +1535,85 @@
                 document.body.insertAdjacentHTML('beforeend', modalHtml);
             }
 
-            // INJECT BATCH CLEANUP MODAL
-            if(!document.getElementById('dpvCleanupModal')) {
-                var cleanModalHtml = [
-                    '<div id="dpvCleanupModal" class="hidden fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            // INJECT CRUD MODAL PARA SA DPV (MAY CICC NA)
+            if(!document.getElementById('dpvCrudModal')) {
+                var modalHtml = [
+                    '<div id="dpvCrudModal" class="hidden fixed inset-0 z-[140] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
                     '  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg transform transition-all overflow-hidden flex flex-col max-h-[90vh]">',
-                    '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-rose-50">',
-                    '      <h3 class="text-lg font-black text-rose-700 flex items-center gap-2"><i data-lucide="eraser" class="h-5 w-5"></i> Batch Data Cleanup</h3>',
-                    '      <button onclick="closeSmoothly(\'dpvCleanupModal\')" class="text-rose-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-white transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button>',
+                    '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">',
+                    '      <h3 class="text-lg font-black text-slate-800 flex items-center gap-2" id="dpvModalTitle"><i data-lucide="edit" class="h-5 w-5 text-indigo-600"></i> Manage DPV Record</h3>',
+                    '      <button onclick="closeSmoothly(\'dpvCrudModal\')" class="text-slate-400 hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-50"><i data-lucide="x" class="h-5 w-5"></i></button>',
                     '    </div>',
-                    '    <div class="px-6 py-6 overflow-y-auto custom-scrollbar">',
-                    '      <div id="cleanupSelectSection">',
-                    '        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Select Batch to Clean</label>',
-                    '        <select id="cleanupBatchSelect" class="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:border-indigo-500 focus:outline-none shadow-sm bg-white"></select>',
-                    '        <p class="text-xs text-slate-500 mt-3 font-medium">This tool scans the selected batch for duplicates that already exist in older batches. It keeps the original entry and prepares duplicates for deletion.</p>',
+                    '    <div class="px-6 py-6 overflow-y-auto custom-scrollbar flex-1" id="dpvModalBody">',
+                    '      <div id="dpvFormSection">',
+                    '        <input type="hidden" id="dpvEditIndex" value="-1"><input type="hidden" id="dpvOriginalDomain" value="">',
+                    '        <div class="space-y-4">',
+                    '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Batch ID</label><input type="text" id="dpvBatchId" placeholder="e.g. TCG BATCH1" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm font-bold uppercase"></div>',
+                    '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-indigo-500">CICC Reference No.</label><input type="text" id="dpvCicc" placeholder="e.g. CICC-2026-001" class="w-full px-4 py-2 border border-indigo-200 bg-indigo-50/30 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm font-black uppercase"></div>',
+                    '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Target Domain(s)</label><textarea id="dpvDomain" rows="4" placeholder="e.g. domain1.com\\ndomain2.com" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm custom-scrollbar resize-none"></textarea><p class="text-[9px] text-slate-400 mt-1.5 font-medium"><i data-lucide="info" class="h-3 w-3 inline mr-0.5"></i> Single entry or Bulk (Paste multiple domains separated by a new line)</p></div>',
+                    '          <div class="grid grid-cols-2 gap-4">',
+                    '             <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Assigned Team</label><input type="text" id="dpvTeam" placeholder="e.g. TCG Batch" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:outline-none shadow-sm"></div>',
+                    '             <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1"><i data-lucide="lock" class="h-3 w-3 text-indigo-500"></i> Agent (Auto)</label><input type="text" id="dpvAgent" readonly class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm shadow-sm font-bold text-slate-500 bg-slate-100 cursor-not-allowed focus:outline-none" title="Automatically locked to your account name"></div>',
+                    '          </div>',
+                    '        </div>',
                     '      </div>',
-                    '      <div id="cleanupResultsSection" class="hidden mt-4">',
-                    '        <h4 class="text-sm font-bold text-rose-700 mb-2 border-b border-rose-100 pb-2">Identified Duplicates (<span id="cleanupDupeCount">0</span>)</h4>',
-                    '        <div id="cleanupDupeList" class="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar"></div>',
+                    '      <div id="dpvReviewSection" class="hidden flex-col gap-4">',
+                    '        <div class="bg-rose-50 p-4 rounded-xl border border-rose-200">',
+                    '           <h4 class="text-sm font-bold text-rose-700 mb-2 flex items-center gap-2"><i data-lucide="alert-triangle" class="h-4 w-4"></i> Found <span id="dpvDupeCount">0</span> Duplicate(s)</h4>',
+                    '           <div id="dpvDupeList" class="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar"></div>',
+                    '        </div>',
+                    '        <div class="bg-emerald-50 p-4 rounded-xl border border-emerald-200 flex justify-between items-center">',
+                    '           <span class="text-sm font-bold text-emerald-700 flex items-center gap-2"><i data-lucide="check-circle" class="h-4 w-4"></i> Clean Unique Domains to Upload:</span>',
+                    '           <span class="text-lg font-black text-emerald-700" id="dpvCleanCount">0</span>',
+                    '        </div>',
                     '      </div>',
                     '    </div>',
-                    '    <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">',
-                    '      <button onclick="closeSmoothly(\'dpvCleanupModal\')" class="px-5 py-2.5 text-[13px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl shadow-sm">Cancel</button>',
-                    '      <button id="btnAnalyzeCleanup" onclick="analyzeCleanUp()" class="px-6 py-2.5 text-[13px] font-bold text-white bg-slate-800 hover:bg-slate-700 rounded-xl shadow-md transition-all">Scan Batch</button>',
-                    '      <button id="btnConfirmCleanup" onclick="confirmCleanUp()" class="hidden px-6 py-2.5 text-[13px] font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-[0_4px_12px_rgba(225,29,72,0.3)] transition-all flex items-center gap-2"><i data-lucide="trash-2" class="h-4 w-4"></i> Purge Duplicates</button>',
+                    '    <div id="dpvFormFooter" class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">',
+                    '      <button onclick="closeSmoothly(\'dpvCrudModal\')" class="px-5 py-2 text-[13px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl">Cancel</button>',
+                    '      <button onclick="processDpvUpload()" class="px-6 py-2 text-[13px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md flex items-center gap-2 transition-all"><i data-lucide="upload-cloud" class="h-4 w-4"></i> Scan & Save</button>',
+                    '    </div>',
+                    '    <div id="dpvReviewFooter" class="hidden px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center gap-3">',
+                    '      <button onclick="backToDpvForm()" class="px-4 py-2 text-[12px] font-bold text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"><i data-lucide="arrow-left" class="h-3 w-3"></i> Edit List</button>',
+                    '      <button id="btnProceedUpload" onclick="proceedDpvUploadFromReview()" class="px-6 py-2 text-[13px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md transition-all">Proceed Clean Upload</button>',
                     '    </div>',
                     '  </div>',
                     '</div>'
                 ].join('\n');
-                document.body.insertAdjacentHTML('beforeend', cleanModalHtml);
+                document.body.insertAdjacentHTML('beforeend', modalHtml);
             }
 
-            if(!document.getElementById('addTeamModal')) {
-                var teamModalHtml = [
-                    '<div id="addTeamModal" class="hidden fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
-                    '  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm transform transition-all overflow-hidden flex flex-col">',
-                    '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">',
-                    '      <h3 class="text-lg font-black text-slate-800 flex items-center gap-2"><i data-lucide="users" class="h-5 w-5 text-indigo-600"></i> Add New Team</h3>',
-                    '      <button onclick="closeSmoothly(\'addTeamModal\')" class="text-slate-400 hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-50 transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button>',
-                    '    </div>',
-                    '    <div class="px-6 py-6">',
-                    '      <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Assigned Team Name <span class="text-rose-500">*</span></label>',
-                    '      <input type="text" id="newTeamInput" placeholder="e.g. Team 003" class="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-sm">',
-                    '    </div>',
-                    '    <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">',
-                    '      <button onclick="closeSmoothly(\'addTeamModal\')" class="px-5 py-2.5 text-[13px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl shadow-sm transition-all">Cancel</button>',
-                    '      <button id="btnSaveNewTeam" onclick="submitNewDpvTeam()" class="px-6 py-2.5 text-[13px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md transition-all flex items-center gap-2">Add Team</button>',
-                    '    </div>',
-                    '  </div>',
-                    '</div>'
+            // 🟢 INJECT BULK UPDATE MODAL
+            if(!document.getElementById('dpvBulkUpdateModal')) {
+                var bulkModalHtml = [
+                '<div id="dpvBulkUpdateModal" class="hidden fixed inset-0 z-[160] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+                '  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg transform transition-all overflow-hidden flex flex-col">',
+                '    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-amber-50">',
+                '      <h3 class="text-lg font-black text-amber-700 flex items-center gap-2"><i data-lucide="edit" class="h-5 w-5"></i> Bulk Update <span id="bulkUpdateTitleSub" class="text-sm"></span></h3>',
+                '      <button onclick="closeSmoothly(\'dpvBulkUpdateModal\')" class="text-amber-400 hover:text-amber-600 p-1.5 rounded-lg hover:bg-white"><i data-lucide="x" class="h-5 w-5"></i></button>',
+                '    </div>',
+                '    <div class="px-6 py-5 space-y-4">',
+                '       <div id="bulkUpdateScopeSection" class="p-3 bg-amber-50/50 border border-amber-100 rounded-xl mb-2">',
+                '           <label class="block text-[10px] font-bold text-amber-700 uppercase tracking-widest mb-1">Target Scope</label>',
+                '           <div id="bulkScopeDisplay" class="text-sm font-bold text-slate-700 mb-2"></div>',
+                '           <select id="bulkUpdateBatchScope" class="hidden w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold focus:outline-none focus:border-amber-500 bg-white shadow-sm"></select>',
+                '       </div>',
+                '       <p class="text-[11px] text-slate-500 font-medium mb-2"><i data-lucide="info" class="h-3.5 w-3.5 inline"></i> Fields left blank will NOT be updated. Fill only what you want to change.</p>',
+                '       <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update Target Domain</label><input type="text" id="bulkDomain" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
+                '       <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update CICC Ref No.</label><input type="text" id="bulkCicc" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
+                '       <div class="grid grid-cols-2 gap-4">',
+                '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update Team</label><input type="text" id="bulkTeam" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
+                '          <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Update Agent</label><input type="text" id="bulkAgent" placeholder="Leave blank to keep original" class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"></div>',
+                '       </div>',
+                '       <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-indigo-500">Update ISP Statuses (Global)</label><select id="bulkStatus" class="w-full px-4 py-2 border border-slate-200 bg-slate-50 rounded-xl text-sm font-bold"><option value="">-- Do not change status --</option><option value="ACTIVE" class="text-emerald-600">ACTIVE</option><option value="BLOCKED" class="text-rose-600">BLOCKED</option><option value="REDIRECTED" class="text-amber-600">REDIRECTED</option></select></div>',
+                '    </div>',
+                '    <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">',
+                '      <button onclick="closeSmoothly(\'dpvBulkUpdateModal\')" class="px-5 py-2 text-[13px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl shadow-sm">Cancel</button>',
+                '      <button onclick="processDpvBulkUpdate()" class="px-6 py-2 text-[13px] font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-xl shadow-[0_4px_12px_rgba(245,158,11,0.3)] flex items-center gap-2"><i data-lucide="save" class="h-4 w-4"></i> Apply Bulk Update</button>',
+                '    </div>',
+                '  </div>',
+                '</div>'
                 ].join('\n');
-                document.body.insertAdjacentHTML('beforeend', teamModalHtml);
+                document.body.insertAdjacentHTML('beforeend', bulkModalHtml);
             }
             
             switchPostVerifTab('Overview');
@@ -1725,7 +1754,6 @@
             if(!wrapper) return;
 
             var filtered = postVerifData.filter(function(d) { return d.team === currentDpvTeam; });
-            
             if (dpvSelectedBatches.length > 0) { filtered = filtered.filter(function(d) { return dpvSelectedBatches.includes(d.batchId); }); }
             if (dpvSearchQuery !== '') {
                 filtered = filtered.filter(function(d) { return (d.domain && d.domain.toLowerCase().includes(dpvSearchQuery)) || (d.batchId && d.batchId.toLowerCase().includes(dpvSearchQuery)); });
@@ -1769,11 +1797,20 @@
             }
 
             var tableHtml = [
+                '<div class="px-4 py-3 bg-white border-b border-slate-200 flex flex-wrap gap-2 items-center justify-between">',
+                '  <span class="text-xs font-bold text-slate-500"><i data-lucide="mouse-pointer-2" class="h-4 w-4 inline mr-1 text-indigo-500"></i> Select rows to apply bulk actions:</span>',
+                '  <div class="flex gap-2">',
+                '    <button onclick="dpvBulkDelete()" class="px-3 py-1.5 bg-rose-50 text-rose-600 border border-rose-100 text-[11px] font-bold rounded-lg hover:bg-rose-100 shadow-sm flex items-center gap-1.5 transition-all uppercase tracking-wider"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i> Bulk Delete</button>',
+                '    <button onclick="openDpvBulkUpdateModal()" class="px-3 py-1.5 bg-amber-50 text-amber-600 border border-amber-100 text-[11px] font-bold rounded-lg hover:bg-amber-100 shadow-sm flex items-center gap-1.5 transition-all uppercase tracking-wider"><i data-lucide="edit" class="h-3.5 w-3.5"></i> Bulk Update</button>',
+                '  </div>',
+                '</div>',
                 '<div class="overflow-y-auto overflow-x-auto custom-scrollbar flex-1 relative bg-white">',
                 '  <table class="w-full text-left border-collapse whitespace-nowrap relative">',
                 '    <thead class="bg-slate-100/80 sticky top-0 z-20 shadow-sm border-b border-slate-200 backdrop-blur-sm">',
                 '      <tr class="text-[11px] uppercase font-bold text-slate-500 tracking-wider">',
-                '        <th class="px-4 py-3">Batch ID</th><th class="px-4 py-3">Target Domain</th><th class="px-4 py-3">Assigned Team</th><th class="px-4 py-3">Agent</th>', // Ininsert si Agent Header
+                '        <th class="px-4 py-3 w-10 text-center"><input type="checkbox" onclick="toggleAllDpvRows(this)" class="rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"></th>',
+                '        <th class="px-4 py-3 text-indigo-700">CICC REF NO.</th>',
+                '        <th class="px-4 py-3">Batch ID</th><th class="px-4 py-3">Target Domain</th><th class="px-4 py-3">Assigned Team</th><th class="px-4 py-3">Agent</th>', 
                 '        <th class="px-4 py-3 text-center border-l border-slate-200 text-red-600">PLDT</th>',
                 '        <th class="px-4 py-3 text-center border-l border-slate-200 text-blue-600">GLOBE</th>',
                 '        <th class="px-4 py-3 text-center border-l border-slate-200 text-orange-600">CONV</th>',
@@ -1786,7 +1823,7 @@
             ];
 
             if(activeFiltered.length === 0) {
-                tableHtml.push('<tr><td colspan="10" class="px-4 py-16 text-center text-slate-400">No records found matching filters.</td></tr>');
+                tableHtml.push('<tr><td colspan="12" class="px-4 py-16 text-center text-slate-400">No records found matching filters.</td></tr>');
             } else {
                 activeFiltered.forEach(function(d) {
                     var originalIndex = postVerifData.indexOf(d); 
@@ -1794,17 +1831,19 @@
                     var hc = hp >= 75 ? 'bg-emerald-500' : (hp >= 50 ? 'bg-amber-400' : 'bg-rose-500');
                     var hb = '<div class="flex items-center gap-2 w-full max-w-[90px] mx-auto"><div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden shadow-inner"><div class="' + hc + ' h-2 rounded-full" style="width: ' + hp + '%"></div></div><span class="text-[10px] font-bold text-slate-600 w-6">' + hp + '%</span></div>';
 
-                    tableHtml.push('<tr class="hover:bg-slate-50 transition-colors">');
+                    tableHtml.push('<tr class="hover:bg-slate-50 transition-colors group">');
+                    tableHtml.push('  <td class="px-4 py-3 text-center"><input type="checkbox" class="dpv-row-select rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" value="' + originalIndex + '"></td>');
+                    tableHtml.push('  <td class="px-4 py-3 font-black text-slate-800">' + (d.cicc || '-') + '</td>');
                     tableHtml.push('  <td class="px-4 py-3 font-bold text-slate-700">' + (d.batchId || '-') + '</td>');
                     tableHtml.push('  <td class="px-4 py-3 font-bold text-indigo-600 select-all">' + (d.domain || '-') + '</td>');
                     tableHtml.push('  <td class="px-4 py-3 text-slate-600 font-medium">' + (d.team || '-') + '</td>');
-                    tableHtml.push('  <td class="px-4 py-3 text-slate-600 font-bold">' + (d.agent || '-') + '</td>'); // Ininsert si Agent Data
+                    tableHtml.push('  <td class="px-4 py-3 text-slate-600 font-bold">' + (d.agent || '-') + '</td>'); 
                     tableHtml.push('  <td class="px-4 py-2 border-l border-slate-100">' + createStatusWithProof(d.pldt, d.pldtRemarks) + '</td>');
                     tableHtml.push('  <td class="px-4 py-2 border-l border-slate-100">' + createStatusWithProof(d.globe, d.globeRemarks) + '</td>');
                     tableHtml.push('  <td class="px-4 py-2 border-l border-slate-100">' + createStatusWithProof(d.converge, d.convergeRemarks) + '</td>');
                     tableHtml.push('  <td class="px-4 py-2 border-l border-slate-100">' + createStatusWithProof(d.dito, d.ditoRemarks) + '</td>');
                     tableHtml.push('  <td class="px-4 py-3 border-l border-slate-100 text-center">' + hb + '</td>');
-                    tableHtml.push('  <td class="px-4 py-3 text-center border-l border-slate-100 bg-white sticky right-0 shadow-[-4px_0_6px_rgba(0,0,0,0.02)]"><div class="flex items-center justify-center gap-2"><button onclick="openDpvCrudModal(' + originalIndex + ')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"><i data-lucide="edit-3" class="h-4 w-4"></i></button><button onclick="deleteDpvRecord(' + originalIndex + ')" class="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"><i data-lucide="trash-2" class="h-4 w-4"></i></button></div></td>');
+                    tableHtml.push('  <td class="px-4 py-3 text-center border-l border-slate-100 bg-white sticky right-0 shadow-[-4px_0_6px_rgba(0,0,0,0.02)]"><div class="flex items-center justify-center gap-2 opacity-20 group-hover:opacity-100 transition-opacity"><button onclick="openDpvCrudModal(' + originalIndex + ')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"><i data-lucide="edit-3" class="h-4 w-4"></i></button><button onclick="deleteDpvRecord(' + originalIndex + ')" class="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"><i data-lucide="trash-2" class="h-4 w-4"></i></button></div></td>');
                     tableHtml.push('</tr>');
                 });
             }
@@ -2048,13 +2087,13 @@
         function openDpvCrudModal(index) {
             var modal = document.getElementById('dpvCrudModal');
             if(!modal) return;
-            
             if(typeof backToDpvForm === 'function') backToDpvForm(); 
 
             if (index !== undefined && index >= 0) {
                 var d = postVerifData[index];
                 document.getElementById('dpvEditIndex').value = index;
                 document.getElementById('dpvOriginalDomain').value = d.domain || '';
+                document.getElementById('dpvCicc').value = d.cicc || '';
                 document.getElementById('dpvBatchId').value = d.batchId || '';
                 document.getElementById('dpvDomain').value = d.domain || '';
                 document.getElementById('dpvTeam').value = d.team || '';
@@ -2063,14 +2102,13 @@
             } else {
                 document.getElementById('dpvEditIndex').value = -1;
                 document.getElementById('dpvOriginalDomain').value = '';
+                document.getElementById('dpvCicc').value = '';
                 document.getElementById('dpvBatchId').value = '';
                 document.getElementById('dpvDomain').value = '';
                 document.getElementById('dpvTeam').value = currentDpvTeam !== 'Overview' ? currentDpvTeam : '';
                 
-                // AUTO-FILL NG CURRENT LOGGED IN USER/AGENT NAME
                 var activeUser = document.getElementById('adminProfileName') ? document.getElementById('adminProfileName').innerText : '';
                 document.getElementById('dpvAgent').value = activeUser;
-                
                 document.getElementById('dpvModalTitle').innerHTML = '<i data-lucide="plus" class="h-5 w-5 text-indigo-600"></i> Add New Record';
             }
             
@@ -2092,9 +2130,10 @@
         }
 
         // ITO NA YUNG KAPALIT NG saveDpvRecord()
-        function processDpvUpload() {
+       function processDpvUpload() {
             var idx = document.getElementById('dpvEditIndex').value;
             var rawInput = document.getElementById('dpvDomain').value;
+            var cicc = document.getElementById('dpvCicc') ? document.getElementById('dpvCicc').value.trim() : '';
             var batchId = document.getElementById('dpvBatchId').value.trim().toUpperCase();
             var team = document.getElementById('dpvTeam').value.trim();
             var agent = document.getElementById('dpvAgent').value.trim();
@@ -2108,7 +2147,7 @@
 
             if(idx >= 0) {
                 if(domains.length > 1) showPremiumToast("Notice", "Edit mode only updates the first domain in the list.", "info");
-                proceedToSaveDpvBulk([domains[0]], batchId, team, agent, idx);
+                proceedToSaveDpvBulk([domains[0]], batchId, team, agent, idx, cicc);
                 return;
             }
 
@@ -2118,22 +2157,16 @@
                 if(!existingMap[dom]) existingMap[dom] = d; 
             });
 
-            var clean = [];
-            var dupes = [];
+            var clean = [], dupes = [];
             domains.forEach(function(dom) {
-                if(existingMap[dom]) {
-                    dupes.push({ domain: dom, origBatch: existingMap[dom].batchId, origTeam: existingMap[dom].team });
-                } else if (!clean.includes(dom)) {
-                    clean.push(dom);
-                    existingMap[dom] = { batchId: batchId, team: team }; 
-                }
+                if(existingMap[dom]) { dupes.push({ domain: dom, origBatch: existingMap[dom].batchId, origTeam: existingMap[dom].team }); } 
+                else if (!clean.includes(dom)) { clean.push(dom); existingMap[dom] = { batchId: batchId, team: team }; }
             });
 
             if (dupes.length > 0) {
-                dpvPendingCleanDomains = clean;
-                dpvPendingBatch = batchId;
-                dpvPendingTeam = team;
-                dpvPendingAgent = agent;
+                dpvPendingCleanDomains = clean; dpvPendingBatch = batchId; dpvPendingTeam = team; dpvPendingAgent = agent;
+                // I-store muna sa global variable ang CICC para ma-save mamaya sa Clean Upload
+                window.dpvPendingCicc = cicc; 
                 
                 document.getElementById('dpvFormSection').classList.add('hidden');
                 document.getElementById('dpvReviewSection').classList.remove('hidden');
@@ -2146,35 +2179,25 @@
                 document.getElementById('dpvDupeCount').innerText = dupes.length;
                 document.getElementById('dpvCleanCount').innerText = clean.length;
                 
-                var dupeHtml = dupes.map(function(d) {
-                    return '<div class="text-[11px] p-2 bg-white border border-rose-100 rounded-lg text-rose-600 flex justify-between items-center shadow-sm"><b>'+d.domain+'</b> <span class="text-[9px] font-medium text-rose-400 bg-rose-50 px-2 py-0.5 rounded">Exists in: '+d.origBatch+' ('+d.origTeam+')</span></div>';
-                }).join('');
+                var dupeHtml = dupes.map(function(d) { return '<div class="text-[11px] p-2 bg-white border border-rose-100 rounded-lg text-rose-600 flex justify-between items-center shadow-sm"><b>'+d.domain+'</b> <span class="text-[9px] font-medium text-rose-400 bg-rose-50 px-2 py-0.5 rounded">Exists in: '+d.origBatch+' ('+d.origTeam+')</span></div>'; }).join('');
                 document.getElementById('dpvDupeList').innerHTML = dupeHtml;
                 
                 var btnProceed = document.getElementById('btnProceedUpload');
                 if(clean.length === 0) {
-                    btnProceed.disabled = true;
-                    btnProceed.className = "px-6 py-2 text-[13px] font-bold text-slate-400 bg-slate-200 rounded-xl transition-all cursor-not-allowed";
-                    btnProceed.innerText = "No Clean Data to Upload";
+                    btnProceed.disabled = true; btnProceed.className = "px-6 py-2 text-[13px] font-bold text-slate-400 bg-slate-200 rounded-xl transition-all cursor-not-allowed"; btnProceed.innerText = "No Clean Data to Upload";
                 } else {
-                    btnProceed.disabled = false;
-                    btnProceed.className = "px-6 py-2 text-[13px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-[0_4px_12px_rgba(5,150,105,0.3)] transition-all flex items-center gap-2";
-                    btnProceed.innerHTML = '<i data-lucide="upload-cloud" class="h-4 w-4"></i> Upload ' + clean.length + ' Unique Domains';
+                    btnProceed.disabled = false; btnProceed.className = "px-6 py-2 text-[13px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-[0_4px_12px_rgba(5,150,105,0.3)] transition-all flex items-center gap-2"; btnProceed.innerHTML = '<i data-lucide="upload-cloud" class="h-4 w-4"></i> Upload ' + clean.length + ' Unique Domains';
                 }
                 if (typeof lucide !== 'undefined') lucide.createIcons();
-            } else {
-                proceedToSaveDpvBulk(clean, batchId, team, agent, -1);
-            }
-        }
+            } else { proceedToSaveDpvBulk(clean, batchId, team, agent, -1, cicc); }
+        } 
 
         function proceedDpvUploadFromReview() {
-            if(dpvPendingCleanDomains.length > 0) {
-                proceedToSaveDpvBulk(dpvPendingCleanDomains, dpvPendingBatch, dpvPendingTeam, dpvPendingAgent, -1);
-            }
+            if(dpvPendingCleanDomains.length > 0) { proceedToSaveDpvBulk(dpvPendingCleanDomains, dpvPendingBatch, dpvPendingTeam, dpvPendingAgent, -1, window.dpvPendingCicc || ''); }
         }
 
-        function proceedToSaveDpvBulk(domainsArray, batchId, team, agent, editIdx) {
-            var payload = { originalDomain: String(document.getElementById('dpvOriginalDomain').value), batchId: batchId, domains: domainsArray, team: team, agent: agent };
+        function proceedToSaveDpvBulk(domainsArray, batchId, team, agent, editIdx, cicc) {
+            var payload = { originalDomain: String(document.getElementById('dpvOriginalDomain').value), batchId: batchId, cicc: cicc, domains: domainsArray, team: team, agent: agent };
             var safePayload = JSON.parse(JSON.stringify(payload));
             
             closeSmoothly('dpvCrudModal');
@@ -2184,11 +2207,9 @@
                 google.script.run.withSuccessHandler(function(response) {
                     showPremiumToast("Success", response.message, "success");
                     if (editIdx >= 0) {
-                        postVerifData[editIdx].batchId = safePayload.batchId; postVerifData[editIdx].domain = safePayload.domains[0]; postVerifData[editIdx].team = safePayload.team; postVerifData[editIdx].agent = safePayload.agent;
+                        postVerifData[editIdx].batchId = safePayload.batchId; postVerifData[editIdx].cicc = safePayload.cicc; postVerifData[editIdx].domain = safePayload.domains[0]; postVerifData[editIdx].team = safePayload.team; postVerifData[editIdx].agent = safePayload.agent;
                     } else {
-                        safePayload.domains.reverse().forEach(function(dom) {
-                            postVerifData.unshift({ batchId: safePayload.batchId, domain: dom, team: safePayload.team, agent: safePayload.agent, pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' });
-                        });
+                        safePayload.domains.reverse().forEach(function(dom) { postVerifData.unshift({ batchId: safePayload.batchId, cicc: safePayload.cicc, domain: dom, team: safePayload.team, agent: safePayload.agent, pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' }); });
                     }
                     renderPostVerifMain(); setTimeout(function() { switchPostVerifTab(safePayload.team); }, 100);
                 }).saveDpvRecordBackend(safePayload);
@@ -2196,11 +2217,9 @@
                 setTimeout(function() {
                     showPremiumToast("Success", domainsArray.length + " Record(s) saved! (Mock)", "success");
                     if (editIdx >= 0) {
-                        postVerifData[editIdx].batchId = safePayload.batchId; postVerifData[editIdx].domain = safePayload.domains[0]; postVerifData[editIdx].team = safePayload.team; postVerifData[editIdx].agent = safePayload.agent;
+                        postVerifData[editIdx].batchId = safePayload.batchId; postVerifData[editIdx].cicc = safePayload.cicc; postVerifData[editIdx].domain = safePayload.domains[0]; postVerifData[editIdx].team = safePayload.team; postVerifData[editIdx].agent = safePayload.agent;
                     } else {
-                        safePayload.domains.reverse().forEach(function(dom) {
-                            postVerifData.unshift({ batchId: safePayload.batchId, domain: dom, team: safePayload.team, agent: safePayload.agent, pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' });
-                        });
+                        safePayload.domains.reverse().forEach(function(dom) { postVerifData.unshift({ batchId: safePayload.batchId, cicc: safePayload.cicc, domain: dom, team: safePayload.team, agent: safePayload.agent, pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' }); });
                     }
                     renderPostVerifMain(); setTimeout(function() { switchPostVerifTab(safePayload.team); }, 100);
                 }, 1000);
@@ -2224,6 +2243,136 @@
         // DPV BATCH CLEANUP UTILITY
         // ==========================================
         var cleanupPendingDuplicates = [];
+
+        // ==========================================
+        // DPV BULK ACTIONS (DELETE & UPDATE)
+        // ==========================================
+        function toggleAllDpvRows(sourceCb) {
+            var checkboxes = document.querySelectorAll('.dpv-row-select');
+            checkboxes.forEach(function(cb) { cb.checked = sourceCb.checked; });
+        }
+
+        function dpvBulkDelete() {
+            var checked = document.querySelectorAll('.dpv-row-select:checked');
+            if(checked.length === 0) { showPremiumToast("Notice", "Please select at least one row to delete.", "info"); return; }
+            
+            showPremiumConfirm("Bulk Delete", "Are you sure you want to permanently delete " + checked.length + " selected domain(s)?", "Yes, Delete All", function() {
+                var indices = Array.from(checked).map(cb => parseInt(cb.value)).sort((a,b) => b-a);
+                
+                // Burahin locally
+                indices.forEach(idx => postVerifData.splice(idx, 1));
+                renderDpvTableData();
+                showPremiumToast("Bulk Deleted", checked.length + " domains deleted successfully.", "success");
+                
+                // Reminder: Kung gusto isama sa database, kailangan i-update ang backend script loop
+            });
+        }
+
+        function openDpvBulkUpdateModal() {
+            var checked = document.querySelectorAll('.dpv-row-select:checked');
+            var scopeDisplay = document.getElementById('bulkScopeDisplay');
+            var batchDropdown = document.getElementById('bulkUpdateBatchScope');
+            var titleSub = document.getElementById('bulkUpdateTitleSub');
+
+            if (checked.length > 0) {
+                // KUNG MAY NAI-CHECK NA BOXES
+                titleSub.innerText = '(' + checked.length + ' Selected Rows)';
+                scopeDisplay.innerHTML = 'Applying update to <b class="text-amber-600">' + checked.length + '</b> manually selected row(s).';
+                batchDropdown.classList.add('hidden');
+                batchDropdown.value = "";
+            } else {
+                // KUNG WALANG CHECK (GAMITIN ANG BATCH DROPDOWN)
+                var availableBatches = [];
+                postVerifData.forEach(function(d) {
+                    if (d.team === currentDpvTeam && d.batchId && d.batchId !== '-' && !availableBatches.includes(d.batchId)) {
+                        availableBatches.push(d.batchId);
+                    }
+                });
+
+                if (availableBatches.length === 0) {
+                    showPremiumToast("Notice", "No available batches to update in this tab.", "info");
+                    return;
+                }
+
+                // Ayusin ang options base sa nakabukas na tab
+                availableBatches.sort((a,b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+                var opts = '<option value="">-- Select a Batch to Update --</option>';
+                availableBatches.forEach(function(b) { opts += '<option value="' + b + '">' + b + '</option>'; });
+                batchDropdown.innerHTML = opts;
+
+                titleSub.innerText = '(By Batch)';
+                scopeDisplay.innerText = "No rows selected. Choose a Batch below to update ALL domains inside it:";
+                batchDropdown.classList.remove('hidden');
+            }
+
+            // Linisin ang inputs
+            document.getElementById('bulkDomain').value = '';
+            document.getElementById('bulkCicc').value = '';
+            document.getElementById('bulkTeam').value = '';
+            document.getElementById('bulkAgent').value = '';
+            document.getElementById('bulkStatus').value = '';
+
+            var modal = document.getElementById('dpvBulkUpdateModal');
+            modal.classList.remove('hidden');
+            setTimeout(() => modal.style.opacity = '1', 10);
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+       function processDpvBulkUpdate() {
+            var checked = document.querySelectorAll('.dpv-row-select:checked');
+            var batchDropdown = document.getElementById('bulkUpdateBatchScope');
+            var selectedBatch = batchDropdown && !batchDropdown.classList.contains('hidden') ? batchDropdown.value : '';
+
+            // Validation: Kailangan may checked OR may piniling Batch sa dropdown
+            if (checked.length === 0 && selectedBatch === "") {
+                showPremiumToast("Required", "Please select a Batch from the dropdown.", "error");
+                return;
+            }
+
+            var nDomain = document.getElementById('bulkDomain').value.trim();
+            var nCicc = document.getElementById('bulkCicc').value.trim().toUpperCase();
+            var nTeam = document.getElementById('bulkTeam').value.trim();
+            var nAgent = document.getElementById('bulkAgent').value.trim();
+            var nStatus = document.getElementById('bulkStatus').value;
+            
+            var indicesToUpdate = [];
+
+            if (checked.length > 0) {
+                // Pag may checkboxes na pinili
+                indicesToUpdate = Array.from(checked).map(cb => parseInt(cb.value));
+            } else {
+                // Pag Batch Dropdown ang ginamit
+                postVerifData.forEach(function(d, index) {
+                    if (d.team === currentDpvTeam && d.batchId === selectedBatch) {
+                        indicesToUpdate.push(index);
+                    }
+                });
+            }
+
+            if (indicesToUpdate.length === 0) {
+                showPremiumToast("Error", "No rows found to update.", "error");
+                return;
+            }
+
+            // I-apply ang changes sa lahat ng natarget na rows
+            indicesToUpdate.forEach(idx => {
+                if(nDomain) postVerifData[idx].domain = nDomain;
+                if(nCicc) postVerifData[idx].cicc = nCicc;
+                if(nTeam) postVerifData[idx].team = nTeam;
+                if(nAgent) postVerifData[idx].agent = nAgent;
+                if(nStatus) {
+                    postVerifData[idx].pldt = nStatus;
+                    postVerifData[idx].globe = nStatus;
+                    postVerifData[idx].converge = nStatus;
+                    postVerifData[idx].dito = nStatus;
+                }
+            });
+            
+            closeSmoothly('dpvBulkUpdateModal');
+            showPremiumToast("Bulk Updated", indicesToUpdate.length + " domain(s) updated successfully.", "success");
+            renderDpvTableData();
+        }
+
 
         function openCleanUpModal() {
             var modal = document.getElementById('dpvCleanupModal');
@@ -2604,16 +2753,18 @@
             var proofHtml = '';
             if (proofRaw && proofRaw.toString().trim() !== '') {
                 var rawStr = proofRaw.toString();
-                if (rawStr.includes('|')) {
+                // Magic Link Parser
+                var linkMatch = rawStr.match(/(https?:\/\/[^\s]+)/);
+                if(rawStr.includes('|')) {
                     var parts = rawStr.split('|');
-                    proofHtml = '<a href="' + parts[1].trim() + '" target="_blank" rel="noopener noreferrer" class="flex items-center justify-center gap-1.5 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline mt-2 transition-colors"><i data-lucide="external-link" class="h-3 w-3"></i> ' + parts[0].replace(/\n/g, ' ').trim() + '</a>';
-                } else if (rawStr.includes('http')) {
-                    proofHtml = '<a href="' + rawStr.trim() + '" target="_blank" rel="noopener noreferrer" class="flex items-center justify-center gap-1.5 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline mt-2 transition-colors"><i data-lucide="external-link" class="h-3 w-3"></i> View Proof</a>';
+                    proofHtml = '<a href="' + parts[1].trim() + '" target="_blank" class="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black rounded-md shadow-sm transition-colors border border-indigo-200 uppercase tracking-wider"><i data-lucide="image" class="h-3 w-3"></i> View Proof</a>';
+                } else if (linkMatch) {
+                    proofHtml = '<a href="' + linkMatch[0] + '" target="_blank" class="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black rounded-md shadow-sm transition-colors border border-indigo-200 uppercase tracking-wider"><i data-lucide="image" class="h-3 w-3"></i> View Proof</a>';
                 } else {
-                    proofHtml = '<span class="text-[10px] text-slate-400 font-medium mt-2">' + rawStr.replace(/\n/g, ' ').trim() + '</span>';
+                    proofHtml = '<span class="text-[9px] text-slate-400 font-medium mt-1.5 block max-w-[100px] truncate" title="'+rawStr+'">' + rawStr.replace(/\n/g, ' ').trim() + '</span>';
                 }
             } else {
-                proofHtml = '<span class="text-[10px] text-slate-300 font-medium mt-2 italic">No image</span>';
+                proofHtml = '<span class="text-[9px] text-slate-300 font-medium mt-1.5 block italic">No proof attached</span>';
             }
             return '<div class="flex flex-col items-center justify-center py-1"><span class="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase inline-flex items-center justify-center tracking-wide shadow-sm ' + badgeClass + '"><span class="mr-1.5 text-[9px] leading-none">●</span>' + stat + '</span>' + proofHtml + '</div>';
         }
