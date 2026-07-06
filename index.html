@@ -841,12 +841,33 @@
                         }).getPostVerificationData();
                     } else {
                         var GOOGLE_WEB_APP_API_URL = "https://bbc-api-gateway.ea-nix.workers.dev/";
-                        var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getPostVerificationData";
+                        
+                        // 🟢 FIX 1: ANTI-CACHE QUERY BUSTER
+                        var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getPostVerificationData&t=" + new Date().getTime();
+                        
                         var jsonpScript = document.createElement('script');
                         var callbackName = 'jsonp_dpv_' + Math.round(Math.random() * 1000000);
                         
                         window[callbackName] = function(data) {
-                            postVerifData = data; renderPostVerifMain();
+                            // 🟢 FIX 2: STRICT COLUMN MAPPING PIPELINE PARA KAY CLOUDFLARE
+                            postVerifData = data.map(function(item) {
+                                return {
+                                    batchId: item.batchId || "",
+                                    domain: item.domain || "",
+                                    team: item.team || "",
+                                    pldt: item.pldt || "",
+                                    pldtRemarks: item.pldtRemarks || "",
+                                    globe: item.globe || "",
+                                    globeRemarks: item.globeRemarks || "",
+                                    converge: item.converge || "",
+                                    convergeRemarks: item.convergeRemarks || "",
+                                    dito: item.dito || "",
+                                    ditoRemarks: item.ditoRemarks || "",
+                                    cicc: item.cicc || item[11] || "", // Pinipilit kunin ang data para sa CICC (Index 11)
+                                    agent: item.agent || item[12] || "" // Pinipilit kunin ang data para sa Agent (Index 12)
+                                };
+                            });
+                            renderPostVerifMain();
                             document.body.removeChild(jsonpScript); delete window[callbackName];
                         };
                         jsonpScript.src = targetUrl + "&callback=" + callbackName;
@@ -859,7 +880,6 @@
                 }
             }, 150);
             
-            // 🟢 ITO ANG MAGIC FIX PARA ITAGO ULI ANG WALANG ACCESS:
             applyPermissionsToUI(); 
         }
 
@@ -2206,9 +2226,23 @@
                 google.script.run.withSuccessHandler(function(response) {
                     showPremiumToast("Success", response.message, "success");
                     if (editIdx >= 0) {
-                        postVerifData[editIdx].batchId = safePayload.batchId; postVerifData[editIdx].cicc = safePayload.cicc; postVerifData[editIdx].domain = safePayload.domains[0]; postVerifData[editIdx].team = safePayload.team; postVerifData[editIdx].agent = safePayload.agent;
+                        // 🟢 FIX 3: TAMA NA ANG POSITION NG CICC AT AGENT DITO
+                        postVerifData[editIdx].batchId = safePayload.batchId; 
+                        postVerifData[editIdx].cicc = safePayload.cicc; 
+                        postVerifData[editIdx].domain = safePayload.domains[0]; 
+                        postVerifData[editIdx].team = safePayload.team; 
+                        postVerifData[editIdx].agent = safePayload.agent;
                     } else {
-                        safePayload.domains.reverse().forEach(function(dom) { postVerifData.unshift({ batchId: safePayload.batchId, cicc: safePayload.cicc, domain: dom, team: safePayload.team, agent: safePayload.agent, pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' }); });
+                        safePayload.domains.reverse().forEach(function(dom) { 
+                            postVerifData.unshift({ 
+                                batchId: safePayload.batchId, 
+                                cicc: safePayload.cicc, 
+                                domain: dom, 
+                                team: safePayload.team, 
+                                agent: safePayload.agent, 
+                                pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' 
+                            }); 
+                        });
                     }
                     renderPostVerifMain(); setTimeout(function() { switchPostVerifTab(safePayload.team); }, 100);
                 }).saveDpvRecordBackend(safePayload);
@@ -2216,9 +2250,23 @@
                 setTimeout(function() {
                     showPremiumToast("Success", domainsArray.length + " Record(s) saved! (Mock)", "success");
                     if (editIdx >= 0) {
-                        postVerifData[editIdx].batchId = safePayload.batchId; postVerifData[editIdx].cicc = safePayload.cicc; postVerifData[editIdx].domain = safePayload.domains[0]; postVerifData[editIdx].team = safePayload.team; postVerifData[editIdx].agent = safePayload.agent;
+                        // 🟢 FIX 4: PATI SA MOCK FALLBACK AY TAMA NA RIN
+                        postVerifData[editIdx].batchId = safePayload.batchId; 
+                        postVerifData[editIdx].cicc = safePayload.cicc; 
+                        postVerifData[editIdx].domain = safePayload.domains[0]; 
+                        postVerifData[editIdx].team = safePayload.team; 
+                        postVerifData[editIdx].agent = safePayload.agent;
                     } else {
-                        safePayload.domains.reverse().forEach(function(dom) { postVerifData.unshift({ batchId: safePayload.batchId, cicc: safePayload.cicc, domain: dom, team: safePayload.team, agent: safePayload.agent, pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' }); });
+                        safePayload.domains.reverse().forEach(function(dom) { 
+                            postVerifData.unshift({ 
+                                batchId: safePayload.batchId, 
+                                cicc: safePayload.cicc, 
+                                domain: dom, 
+                                team: safePayload.team, 
+                                agent: safePayload.agent, 
+                                pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' 
+                            }); 
+                        });
                     }
                     renderPostVerifMain(); setTimeout(function() { switchPostVerifTab(safePayload.team); }, 100);
                 }, 1000);
