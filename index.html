@@ -1774,6 +1774,8 @@
             var accessibleCount = 0, fullyBlockedCount = 0, totalHealth = 0;
 
             activeFiltered.forEach(function(d) {
+
+                
                 var activeIsps = 0, hasData = false, isFullyBlocked = true;
                 var isps = [d.pldt, d.globe, d.converge, d.dito];
                 isps.forEach(function(s) {
@@ -1842,11 +1844,14 @@
 
                     tableHtml.push('<tr class="hover:bg-slate-50 transition-colors group">');
                     tableHtml.push('  <td class="px-4 py-3 text-center"><input type="checkbox" class="dpv-row-select rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" value="' + originalIndex + '"></td>');
+                    
+                    // 🟢 GAMITIN ANG SAKTONG OBJECT PROPERTY MAPPING (cicc para sa Column L, agent para sa Column M)
                     tableHtml.push('  <td class="px-4 py-3 font-black text-slate-800">' + (d.cicc || '-') + '</td>');
                     tableHtml.push('  <td class="px-4 py-3 font-bold text-slate-700">' + (d.batchId || '-') + '</td>');
                     tableHtml.push('  <td class="px-4 py-3 font-bold text-indigo-600 select-all">' + (d.domain || '-') + '</td>');
                     tableHtml.push('  <td class="px-4 py-3 text-slate-600 font-medium">' + (d.team || '-') + '</td>');
                     tableHtml.push('  <td class="px-4 py-3 text-slate-600 font-bold">' + (d.agent || '-') + '</td>'); 
+                    
                     tableHtml.push('  <td class="px-4 py-2 border-l border-slate-100">' + createStatusWithProof(d.pldt, d.pldtRemarks) + '</td>');
                     tableHtml.push('  <td class="px-4 py-2 border-l border-slate-100">' + createStatusWithProof(d.globe, d.globeRemarks) + '</td>');
                     tableHtml.push('  <td class="px-4 py-2 border-l border-slate-100">' + createStatusWithProof(d.converge, d.convergeRemarks) + '</td>');
