@@ -2951,22 +2951,29 @@
             if (stat === '' || stat === '-') return '<div class="text-center text-slate-300 font-bold">-</div>';
             var badgeClass = getStatusBadge(stat);
             var proofHtml = '';
+            
             if (proofRaw && proofRaw.toString().trim() !== '') {
                 var rawStr = proofRaw.toString();
-                // Magic Link Parser
                 var linkMatch = rawStr.match(/(https?:\/\/[^\s]+)/);
+                
                 if(rawStr.includes('|')) {
                     var parts = rawStr.split('|');
-                    proofHtml = '<a href="' + parts[1].trim() + '" target="_blank" class="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black rounded-md shadow-sm transition-colors border border-indigo-200 uppercase tracking-wider"><i data-lucide="image" class="h-3 w-3"></i> View Proof</a>';
+                    var dateLabel = parts[0].replace('(IMAGE)', '').trim() || 'VIEW PROOF';
+                    
+                    proofHtml = '<a href="' + parts[1].trim() + '" target="_blank" class="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black rounded border border-indigo-200 uppercase tracking-wider whitespace-nowrap transition-colors shadow-sm" title="Click to view proof image"><i data-lucide="external-link" class="h-2.5 w-2.5"></i> ' + dateLabel + '</a>';
                 } else if (linkMatch) {
-                    proofHtml = '<a href="' + linkMatch[0] + '" target="_blank" class="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black rounded-md shadow-sm transition-colors border border-indigo-200 uppercase tracking-wider"><i data-lucide="image" class="h-3 w-3"></i> View Proof</a>';
+                    var textOnly = rawStr.replace(linkMatch[0], '').trim();
+                    var fallbackLabel = textOnly !== '' ? textOnly : 'VIEW PROOF';
+                    
+                    proofHtml = '<a href="' + linkMatch[0] + '" target="_blank" class="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black rounded border border-indigo-200 uppercase tracking-wider whitespace-nowrap transition-colors shadow-sm" title="Click to view proof image"><i data-lucide="external-link" class="h-2.5 w-2.5"></i> ' + fallbackLabel + '</a>';
                 } else {
                     proofHtml = '<span class="text-[9px] text-slate-400 font-medium mt-1.5 block max-w-[100px] truncate" title="'+rawStr+'">' + rawStr.replace(/\n/g, ' ').trim() + '</span>';
                 }
             } else {
-                proofHtml = '<span class="text-[9px] text-slate-300 font-medium mt-1.5 block italic">No proof attached</span>';
+                proofHtml = '<span class="text-[9px] text-slate-300 font-medium mt-1.5 block italic">No record</span>';
             }
-            return '<div class="flex flex-col items-center justify-center py-1"><span class="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase inline-flex items-center justify-center tracking-wide shadow-sm ' + badgeClass + '"><span class="mr-1.5 text-[9px] leading-none">●</span>' + stat + '</span>' + proofHtml + '</div>';
+            
+            return '<div class="flex flex-col items-center justify-center py-1.5"><span class="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase inline-flex items-center justify-center tracking-wide shadow-sm ' + badgeClass + '"><span class="mr-1.5 text-[9px] leading-none">●</span>' + stat + '</span>' + proofHtml + '</div>';
         }
 
         function getStatusBadge(status) {
