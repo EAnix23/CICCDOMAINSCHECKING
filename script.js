@@ -667,15 +667,18 @@ function statTile(icon, color, label, value) {
 // ==========================================
 // AI INSIGHT PANEL (SHARED SHELL)
 // ==========================================
-function aiInsightPanel(scopeKey, tagLabel, targetLabel, dateStr) {
+function aiInsightPanel(scopeKey, tagLabel, targetLabel, dateStr, datasetExpr) {
     var safeScope = scopeKey.replace(/'/g, "\\'");
+    var onclickCall = datasetExpr
+        ? "generateAIInsight('" + safeScope + "', " + datasetExpr + ")"
+        : "generateAIInsight('" + safeScope + "')";
     return [
         '<div class="ai-panel mb-6">',
         '    <div class="ai-panel-glow"></div>',
         '    <div class="p-6 relative">',
         '        <div class="flex justify-between items-start mb-6 flex-wrap gap-3">',
         '            <div><h3 class="text-heading text-lg font-black flex items-center gap-3"><div class="ai-bot-icon"><i data-lucide="sparkles" class="h-5 w-5"></i></div> AI Executive Summary <span class="chip-tag">' + tagLabel + '</span></h3><div class="flex gap-4 mt-2 text-[11px] text-subtle font-medium"><span class="flex items-center gap-1.5"><i data-lucide="clock" class="h-3 w-3"></i> GENERATED: ' + dateStr + '</span><span class="flex items-center gap-1.5 text-indigo-500 font-semibold"><i data-lucide="folder" class="h-3 w-3"></i> SCOPE: ' + targetLabel.toUpperCase() + '</span></div></div>',
-        '            <button onclick="generateAIInsight(\'' + safeScope + '\')" class="btn-ai-generate"><i data-lucide="cpu" class="h-4 w-4"></i> Generate Insight</button>',
+        '            <button onclick="' + onclickCall + '" class="btn-ai-generate"><i data-lucide="cpu" class="h-4 w-4"></i> Generate Insight</button>',
         '        </div>',
         '        <div id="aiInsightBox" class="text-[13px] text-body leading-relaxed ai-insight-idle p-5 rounded-xl font-medium">Click <span class="text-indigo-500 font-bold">Generate Insight</span> to run a fresh read on <b>' + targetLabel + '</b> — status, risk, and what to do next.</div>',
         '    </div>',
@@ -688,15 +691,16 @@ function aiInsightPanel(scopeKey, tagLabel, targetLabel, dateStr) {
 // ==========================================
 function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-function generateAIInsight(scopeName) {
+function generateAIInsight(scopeName, dataset) {
     var insightBox = document.getElementById('aiInsightBox');
     if (!insightBox) return;
+    dataset = dataset || currentViewData;
 
     var scanMsgs = [
-        "Cross-referencing " + currentViewData.length + " endpoints against the last 4 ISP sweeps...",
-        "Pulling telemetry from " + currentViewData.length + " tracked domains and weighing recent volatility...",
-        "Running a pattern check across " + currentViewData.length + " nodes to separate noise from real signal...",
-        "Comparing today's block/active states against baseline for " + currentViewData.length + " domains..."
+        "Cross-referencing " + dataset.length + " endpoints against the last 4 ISP sweeps...",
+        "Pulling telemetry from " + dataset.length + " tracked domains and weighing recent volatility...",
+        "Running a pattern check across " + dataset.length + " nodes to separate noise from real signal...",
+        "Comparing today's block/active states against baseline for " + dataset.length + " domains..."
     ];
     insightBox.innerHTML = '<div class="flex items-center gap-3 text-indigo-500 font-bold"><div class="spinner border-t-indigo-500 h-5 w-5 border-2"></div> <span>' + pickRandom(scanMsgs) + '</span></div>';
 
@@ -704,7 +708,7 @@ function generateAIInsight(scopeName) {
         var totalChecks = 0, blockedChecks = 0, activeChecks = 0, redirectChecks = 0, fullyBlockedDomains = 0;
         var ispStats = { pldt: {b:0, a:0, r:0, t:0}, globe: {b:0, a:0, r:0, t:0}, converge: {b:0, a:0, r:0, t:0}, dito: {b:0, a:0, r:0, t:0} };
 
-        currentViewData.forEach(function(d) {
+        dataset.forEach(function(d) {
             var isFullyBlocked = true, hasData = false;
             ['pldt', 'globe', 'converge', 'dito'].forEach(function(isp) {
                 var s = (d[isp] || '').toString().toLowerCase();
@@ -789,16 +793,19 @@ function generateAIInsight(scopeName) {
 // ==========================================
 // "4D" ISP CARD (depth via layered gradient + tilt-on-hover)
 // ==========================================
-function getIspCard(ispName, statObj, ispKey) {
+function getIspCard(ispName, statObj, ispKey, datasetExpr) {
     var blockPct = statObj.total > 0 ? ((statObj.block / statObj.total) * 100).toFixed(1) : "0.0";
     var activePct = statObj.total > 0 ? ((statObj.active / statObj.total) * 100).toFixed(1) : "0.0";
     var redirectPct = statObj.total > 0 ? ((statObj.redirect / statObj.total) * 100).toFixed(1) : "0.0";
     var isHigh = parseFloat(blockPct) >= 50;
     var blockColorClass = isHigh ? 'text-rose-500' : 'text-emerald-500';
     var ringClass = isHigh ? 'isp4d-ring-rose' : 'isp4d-ring-emerald';
+    var onclickCall = datasetExpr
+        ? "openIspModal('" + ispKey + "', '" + ispName + "', " + datasetExpr + ")"
+        : "openIspModal('" + ispKey + "', '" + ispName + "')";
 
     return [
-        '<div onclick="openIspModal(\'' + ispKey + '\', \'' + ispName + '\')" class="isp4d-card ' + ringClass + '" style="--pct:' + blockPct + '">',
+        '<div onclick="' + onclickCall + '" class="isp4d-card ' + ringClass + '" style="--pct:' + blockPct + '">',
         '    <div class="isp4d-depth"></div>',
         '    <div class="isp4d-content">',
         '        <div class="flex items-start justify-between mb-1">',
@@ -884,15 +891,16 @@ function getStatusBadge(status) {
     return 'badge-neutral';
 }
 
-function openIspModal(ispKey, ispTitle) {
+function openIspModal(ispKey, ispTitle, dataset) {
     var modal = document.getElementById('ispDetailsModal');
     if (!modal) return;
+    dataset = dataset || currentViewData;
 
     var activeList = [], blockedList = [], redirectedList = [];
-    currentViewData.forEach(function(d) {
+    dataset.forEach(function(d) {
         var stat = (d[ispKey] || '').toString().toLowerCase();
         var remarks = d[ispKey + 'Remarks'] || '';
-        var item = { domain: d.domain, remarks: remarks, brand: d.brand };
+        var item = { domain: d.domain, remarks: remarks, brand: d.brand || d.team || '' };
 
         if (stat !== '' && stat !== '-') {
             if (stat.includes('active') || stat.includes('clear')) activeList.push(item);
@@ -1479,8 +1487,28 @@ function switchPostVerifTab(tabName) {
                 return '<label class="flex items-center gap-2 p-2 hover:bg-app cursor-pointer rounded"><input type="checkbox" value="'+b+'" class="dpv-batch-chk rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" onchange="updateDpvFilters()"> <span class="text-xs text-body font-bold">'+b+'</span></label>';
             }).join('');
 
+            var safeTeam = tabName.replace(/'/g, "\\'");
+            var teamDomains = baseData.filter(function(d) { return d.domain && !d.domain.includes('init-'); });
+            var teamIspStats = { pldt: { block: 0, active: 0, redirect: 0, total: 0 }, globe: { block: 0, active: 0, redirect: 0, total: 0 }, converge: { block: 0, active: 0, redirect: 0, total: 0 }, dito: { block: 0, active: 0, redirect: 0, total: 0 } };
+            teamDomains.forEach(function(d) {
+                [{ key: 'pldt', val: d.pldt }, { key: 'globe', val: d.globe }, { key: 'converge', val: d.converge }, { key: 'dito', val: d.dito }].forEach(function(isp) {
+                    var s = (isp.val || '').toString().toLowerCase();
+                    if (s !== '' && s !== '-') {
+                        teamIspStats[isp.key].total++;
+                        if (s.includes('active') || s.includes('clear')) teamIspStats[isp.key].active++;
+                        else if (s.includes('block') || s.includes('down') || s.includes('timeout')) teamIspStats[isp.key].block++;
+                        else if (s.includes('redirect')) teamIspStats[isp.key].redirect++;
+                    }
+                });
+            });
+            var teamDateStr = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true });
+            var teamDatasetExpr = "postVerifData.filter(function(d){return d.team==='" + safeTeam + "' && d.domain && !d.domain.includes('init-');})";
+
             var toolbarHtml = [
                 '<div id="dpvCardsContainer" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 flex-shrink-0 transition-all duration-300"></div>',
+                aiInsightPanel(tabName, 'Team Analytics', tabName, teamDateStr, teamDatasetExpr),
+                '<h4 class="text-[11px] font-bold text-subtle uppercase tracking-widest mb-3 flex items-center gap-2"><i data-lucide="bar-chart-2" class="h-4 w-4 text-subtle"></i> ISP Compliance Breakdown <span class="text-xs font-normal text-subtle ml-2">(Click cards for details)</span></h4>',
+                '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">', getIspCard('PLDT', teamIspStats.pldt, 'pldt', teamDatasetExpr), getIspCard('GLOBE', teamIspStats.globe, 'globe', teamDatasetExpr), getIspCard('CONVERGE', teamIspStats.converge, 'converge', teamDatasetExpr), getIspCard('DITO', teamIspStats.dito, 'dito', teamDatasetExpr), '</div>',
                 '<div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 flex-shrink-0">',
                 '    <div class="flex items-center gap-3 w-full md:w-auto relative">',
                 '        <div class="relative flex-1 md:w-64">',
@@ -1754,7 +1782,7 @@ function buildDpvOverviewUI() {
             statTile('slash', 'rose', 'Fully Blocked', blockedCount),
             statTile('activity', 'amber', 'Overall DPV Health', avgHealth + '%'),
         '</div>',
-        aiInsightPanel('DPV', 'DPV System', 'all post-verification teams (' + uniqueTeams.length + ')', currentDateStr),
+        aiInsightPanel('DPV', 'DPV System', 'all post-verification teams (' + uniqueTeams.length + ')', currentDateStr, "postVerifData.filter(function(d){return d.domain && !d.domain.includes('init-');})"),
 
         '<div class="panel-card overflow-hidden mb-6 flex flex-col">',
         '    <div class="px-6 py-4 border-b border-theme bg-app flex flex-col md:flex-row md:items-center justify-between gap-3">',
