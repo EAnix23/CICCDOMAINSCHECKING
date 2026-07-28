@@ -483,10 +483,85 @@ function openCalendar() {
     if (!container) return;
     setActiveSidebarBtn(document.getElementById('btnCalendar'));
     document.getElementById('mainHeader').classList.add('hidden');
-    document.getElementById('mainHeaderWrapper').className = "flex-1 flex flex-col min-w-0 overflow-hidden relative bg-slate-50/50";
-    container.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400"><i data-lucide="calendar-days" class="h-16 w-16 mb-4 opacity-20"></i><p>Calendar module coming soon.</p></div>';
+    document.getElementById('mainHeaderWrapper').className = "flex-1 flex flex-col min-w-0 overflow-hidden relative bg-app";
+
+    var now = new Date();
+    var firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    var startWeekday = firstOfMonth.getDay();
+    var daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    var daysInPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+
+    var calendarGrid = '';
+    var totalCells = Math.ceil((startWeekday + daysInMonth) / 7) * 7;
+    for (var i = 0; i < totalCells; i++) {
+        var dayNum, isFaded, isToday;
+        if (i < startWeekday) {
+            dayNum = daysInPrevMonth - (startWeekday - 1 - i);
+            isFaded = true; isToday = false;
+        } else if (i < startWeekday + daysInMonth) {
+            dayNum = i - startWeekday + 1;
+            isFaded = false; isToday = (dayNum === now.getDate());
+        } else {
+            dayNum = i - (startWeekday + daysInMonth) + 1;
+            isFaded = true; isToday = false;
+        }
+        var extraClass = isToday ? 'bg-indigo-tint text-indigo-600 font-black rounded w-6 h-6 flex items-center justify-center' : '';
+        var faded = isFaded ? 'text-subtle' : 'text-body';
+        calendarGrid += '<div class="min-h-[140px] p-3 border-r border-b border-theme bg-panel hover:bg-app transition-colors"><span class="text-xs font-bold ' + faded + ' ' + extraClass + '">' + dayNum + '</span></div>';
+    }
+
+    var monthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+    var html = [
+    '<div class="h-full flex flex-col relative transition-opacity duration-300 opacity-0" id="calendarWrapper">',
+    '    <div class="px-8 py-6 border-b border-theme bg-panel flex-shrink-0">',
+    '        <h2 class="text-2xl font-black text-heading tracking-tight uppercase flex items-center gap-3">CALENDAR <span class="text-sm font-medium text-subtle normal-case tracking-normal">' + monthLabel + '</span></h2>',
+    '    </div>',
+    '    <div class="flex-1 p-6 bg-app overflow-hidden flex flex-col">',
+    '        <div class="panel-card flex-1 flex flex-col overflow-hidden">',
+    '            <div class="flex gap-6 px-6 border-b border-theme pt-4 overflow-x-auto custom-scrollbar flex-shrink-0">',
+    '                <button class="pb-3 text-sm font-bold text-indigo-500 border-b-2 border-indigo-500 whitespace-nowrap">Master Schedule</button>',
+    '                <button class="pb-3 text-sm font-medium text-subtle hover:text-body transition-colors border-b-2 border-transparent whitespace-nowrap">Godaddy Credentials</button>',
+    '            </div>',
+    '            <div class="p-4 border-b border-theme flex flex-col xl:flex-row justify-between items-center gap-4 flex-shrink-0 bg-app">',
+    '                <div class="flex items-center gap-2 overflow-x-auto w-full xl:w-auto pb-2 xl:pb-0 custom-scrollbar">',
+    '                    <div class="relative"><i data-lucide="search" class="absolute left-2.5 top-2 h-4 w-4 text-subtle"></i><input type="text" placeholder="Search calendar" class="pl-8 pr-3 py-1.5 border border-theme bg-panel rounded-md text-xs w-48 text-body focus:border-indigo-500 outline-none shadow-sm font-medium"></div>',
+    '                    <button class="px-3 py-1.5 bg-indigo-tint text-indigo-600 border border-indigo-200 rounded-md text-[11px] font-bold flex items-center gap-1.5 whitespace-nowrap shadow-sm">Assignee: ' + (document.getElementById('adminProfileName') ? document.getElementById('adminProfileName').innerText : 'Me') + ' <i data-lucide="chevron-down" class="h-3 w-3"></i></button>',
+    '                </div>',
+    '                <div class="flex items-center gap-3">',
+    '                    <button onclick="openCalendar()" class="px-4 py-1.5 border border-theme bg-panel text-body rounded-md text-[11px] font-bold hover:bg-app shadow-sm">Today</button>',
+    '                    <div class="flex items-center gap-1.5">',
+    '                        <button onclick="goToPrevCalendarMonth()" class="p-1.5 rounded-md border border-theme text-subtle hover:bg-app transition-colors"><i data-lucide="chevron-left" class="h-4 w-4"></i></button>',
+    '                        <button onclick="goToNextCalendarMonth()" class="p-1.5 rounded-md border border-theme text-subtle hover:bg-app transition-colors"><i data-lucide="chevron-right" class="h-4 w-4"></i></button>',
+    '                    </div>',
+    '                </div>',
+    '            </div>',
+    '            <div class="flex-1 overflow-auto bg-app flex flex-col">',
+    '                <div class="grid grid-cols-7 border-b border-theme bg-panel sticky top-0 z-10 shadow-sm">',
+    '                    <div class="py-3 text-center text-[10px] font-black uppercase text-subtle tracking-widest border-r border-theme">Sun</div>',
+    '                    <div class="py-3 text-center text-[10px] font-black uppercase text-heading tracking-widest border-r border-theme">Mon</div>',
+    '                    <div class="py-3 text-center text-[10px] font-black uppercase text-heading tracking-widest border-r border-theme">Tue</div>',
+    '                    <div class="py-3 text-center text-[10px] font-black uppercase text-heading tracking-widest border-r border-theme">Wed</div>',
+    '                    <div class="py-3 text-center text-[10px] font-black uppercase text-heading tracking-widest border-r border-theme">Thu</div>',
+    '                    <div class="py-3 text-center text-[10px] font-black uppercase text-heading tracking-widest border-r border-theme">Fri</div>',
+    '                    <div class="py-3 text-center text-[10px] font-black uppercase text-subtle tracking-widest">Sat</div>',
+    '                </div>',
+    '                <div class="grid grid-cols-7 flex-1 border-l border-theme">',
+                         calendarGrid,
+    '                </div>',
+    '            </div>',
+    '        </div>',
+    '    </div>',
+    '</div>'
+    ].join('\n');
+
+    container.innerHTML = html;
+    setTimeout(function(){ var w = document.getElementById('calendarWrapper'); if(w) w.style.opacity = '1'; }, 30);
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
+
+function goToPrevCalendarMonth() { showPremiumToast("Notice", "Month navigation isn't wired to real data yet — same as before.", "info"); }
+function goToNextCalendarMonth() { showPremiumToast("Notice", "Month navigation isn't wired to real data yet — same as before.", "info"); }
 
 // ==========================================
 // GLOBAL DASHBOARD LOGIC
