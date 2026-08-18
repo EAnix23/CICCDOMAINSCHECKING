@@ -1051,10 +1051,11 @@ function exportIspList(statusKey, format) {
     if (list.length === 0) { showPremiumToast('Walang Laman', 'Walang domain sa listahang ito para i-download.', 'error'); return; }
 
     var reportTitle = ispModalExportData.ispTitle + ' - ' + statusKey.charAt(0).toUpperCase() + statusKey.slice(1) + ' Domains';
-    var headers = ['Ref No.', 'Domain', 'Batch/Team', 'Last Check', 'Proof Link'];
+    var statusLabel = statusKey.toUpperCase();
+    var headers = ['Ref No.', 'Domain', 'Batch/Team', 'Status', 'Last Check', 'Proof Link'];
     var rows = list.map(function(item) {
         var proof = parseProof(item.remarks);
-        return [item.refNo || '-', item.domain, item.brand || '-', proof.timestamp || '-', proof.link || '-'];
+        return [item.refNo || '-', item.domain, item.brand || '-', statusLabel, proof.timestamp || '-', proof.link || '-'];
     });
 
     if (format === 'csv') downloadCSV(reportTitle, headers, rows);
@@ -1101,7 +1102,7 @@ function downloadPDFReport(title, headers, rows) {
         startY: 32,
         styles: { fontSize: 8, cellPadding: 2 },
         headStyles: { fillColor: [79, 70, 229] },
-        columnStyles: { 4: { cellWidth: 90 } } // Proof Link column — give it room
+        columnStyles: (function() { var s = {}; s[headers.length - 1] = { cellWidth: 90 }; return s; })() // Proof Link is always the last column — give it room
     });
     doc.save(title.replace(/[^a-z0-9\-_ ]/gi, '') + '.pdf');
     showPremiumToast('Na-download', 'PDF file: ' + title + '.pdf', 'success');
