@@ -45,11 +45,14 @@ var currentUserPermissions = [];
 var currentEditingUser = null;
 var currentSessionToken = null;
 
-var postVerifData = [];
+var postVerifData = []; // holds ONLY the currently-open team's records (or empty on Overview) — never the full table
 var currentDpvTeam = 'Overview';
 var dpvSearchQuery = '';
 var dpvSelectedBatches = [];
 var dpvBatchList = [];
+var dpvKnownTeams = []; // lightweight list of team names, used for tabs + permission picker
+var dpvCurrentPage = 1;
+var dpvRowsPerPage = 50;
 
 var idleTimer;
 var IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -98,12 +101,18 @@ function silentRefresh() {
         }).getDomainsData(currentSessionToken);
 
     } else if (currentScreenContext === 'dpv') {
-        google.script.run.withSuccessHandler(function(data) {
-            if (currentScreenContext !== 'dpv' || isAnyModalOpen()) return;
-            postVerifData = data;
-            if (currentDpvTeam === 'Overview') { if (document.getElementById('dpvContentArea')) buildDpvOverviewUI(); }
-            else { if (document.getElementById('dpvTableWrapper')) renderDpvTableData(); }
-        }).getPostVerificationData(currentSessionToken);
+        // Both branches already fetch only what they need (aggregate stats, or this one team's
+        // rows) — never the full 24K+ row table, so this poll stays cheap regardless of scale.
+        if (currentDpvTeam === 'Overview') {
+            if (document.getElementById('dpvContentArea')) buildDpvOverviewUI();
+        } else if (document.getElementById('dpvTableWrapper')) {
+            var teamAtRequestTime = currentDpvTeam;
+            google.script.run.withSuccessHandler(function(data) {
+                if (currentScreenContext !== 'dpv' || currentDpvTeam !== teamAtRequestTime || isAnyModalOpen()) return;
+                postVerifData = data;
+                renderDpvTableData();
+            }).getPostVerificationData(currentSessionToken, teamAtRequestTime);
+        }
     }
 }
 
@@ -725,11 +734,13 @@ function statTile(icon, color, label, value) {
 // ==========================================
 // AI INSIGHT PANEL (SHARED SHELL)
 // ==========================================
-function aiInsightPanel(scopeKey, tagLabel, targetLabel, dateStr, datasetExpr) {
+function aiInsightPanel(scopeKey, tagLabel, targetLabel, dateStr, datasetExpr, customOnclick) {
     var safeScope = scopeKey.replace(/'/g, "\\'");
-    var onclickCall = datasetExpr
-        ? "generateAIInsight('" + safeScope + "', " + datasetExpr + ")"
-        : "generateAIInsight('" + safeScope + "')";
+    var onclickCall = customOnclick
+        ? customOnclick
+        : (datasetExpr
+            ? "generateAIInsight('" + safeScope + "', " + datasetExpr + ")"
+            : "generateAIInsight('" + safeScope + "')");
     return [
         '<div class="ai-panel mb-6">',
         '    <div class="ai-panel-glow"></div>',
@@ -846,6 +857,24 @@ function generateAIInsight(scopeName, dataset) {
         ].join('\n');
         if (typeof lucide !== 'undefined') lucide.createIcons();
     }, 900 + Math.round(Math.random() * 500));
+}
+
+// DPV Overview's AI panel doesn't have the full 24K+ row dataset sitting in memory (on purpose —
+// that's the whole point of the Overview stats being server-aggregated). Fetch everything just for
+// this one on-demand analysis, only when the admin actually asks for it.
+function generateDpvOverviewAIInsight() {
+    var insightBox = document.getElementById('aiInsightBox');
+    if (!insightBox) return;
+    insightBox.innerHTML = '<div class="flex items-center gap-3 text-indigo-500 font-bold"><div class="spinner border-t-indigo-500 h-5 w-5 border-2"></div> <span>Pulling the full post-verification set for a deep-dive pass...</span></div>';
+
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+        google.script.run.withSuccessHandler(function(allData) {
+            var dataset = allData.filter(function(d) { return d.domain && !d.domain.includes('init-'); });
+            generateAIInsight('DPV', dataset);
+        }).getPostVerificationData(currentSessionToken);
+    } else {
+        setTimeout(function() { generateAIInsight('DPV', []); }, 500);
+    }
 }
 
 // ==========================================
@@ -1127,14 +1156,7 @@ function openUserModal(editUser, editEmail, editPass, editPermsStr) {
         'Influencer Report'
     ];
 
-    var dynamicTeams = [];
-    if (typeof postVerifData !== 'undefined') {
-        postVerifData.forEach(function(d) {
-            if (d.team && !dynamicTeams.includes(d.team) && !d.team.includes('init-')) {
-                dynamicTeams.push(d.team);
-            }
-        });
-    }
+    var dynamicTeams = dpvKnownTeams || [];
 
     var allOptions = baseOptions.concat(dynamicTeams).concat(availableBrandsForPerms);
 
@@ -1304,35 +1326,21 @@ function openCyberguardSub(reportType) {
             container.innerHTML = skeletonScreen('table');
             container.style.opacity = '1';
 
+            // Only the team NAMES load here — actual records load per-team when a tab is opened.
+            // At 24K+ rows, fetching everything up front is exactly what made this screen slow.
             if (typeof google !== 'undefined' && google.script && google.script.run) {
-                google.script.run.withSuccessHandler(function(data) {
-                    postVerifData = data; renderPostVerifMain();
-                }).getPostVerificationData(currentSessionToken);
+                google.script.run.withSuccessHandler(function(teams) {
+                    dpvKnownTeams = teams; postVerifData = []; renderPostVerifMain(teams);
+                }).getDpvTeams(currentSessionToken);
             } else {
                 var GOOGLE_WEB_APP_API_URL = "https://bbc-api-gateway.ea-nix.workers.dev/";
-                var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getPostVerificationData&token=" + encodeURIComponent(currentSessionToken || '') + "&t=" + new Date().getTime();
+                var targetUrl = GOOGLE_WEB_APP_API_URL + "?action=getDpvTeams&token=" + encodeURIComponent(currentSessionToken || '') + "&t=" + new Date().getTime();
                 var jsonpScript = document.createElement('script');
                 var callbackName = 'jsonp_dpv_' + Math.round(Math.random() * 1000000);
 
-                window[callbackName] = function(data) {
-                    postVerifData = data.map(function(item) {
-                        return {
-                            batchId: item.batchId || "",
-                            domain: item.domain || "",
-                            team: item.team || "",
-                            pldt: item.pldt || "",
-                            pldtRemarks: item.pldtRemarks || "",
-                            globe: item.globe || "",
-                            globeRemarks: item.globeRemarks || "",
-                            converge: item.converge || "",
-                            convergeRemarks: item.convergeRemarks || "",
-                            dito: item.dito || "",
-                            ditoRemarks: item.ditoRemarks || "",
-                            cicc: item.cicc || item[11] || "",
-                            agent: item.agent || item[12] || ""
-                        };
-                    });
-                    renderPostVerifMain();
+                window[callbackName] = function(teams) {
+                    dpvKnownTeams = teams; postVerifData = [];
+                    renderPostVerifMain(teams);
                     document.body.removeChild(jsonpScript); delete window[callbackName];
                 };
                 jsonpScript.src = targetUrl + "&callback=" + callbackName;
@@ -1362,7 +1370,7 @@ function submitNewDpvTeam() {
     var inputEl = document.getElementById('newTeamInput');
     var newTeam = inputEl.value.trim();
     if (!newTeam) { showPremiumToast("Required", "Team name cannot be empty.", "error"); inputEl.focus(); return; }
-    var exists = postVerifData.some(function(d) { return (d.team || '').toLowerCase() === newTeam.toLowerCase(); });
+    var exists = dpvKnownTeams.some(function(t) { return t.toLowerCase() === newTeam.toLowerCase(); });
     if(exists) { showPremiumToast("Notice", "Team already exists.", "info"); return; }
 
     var btn = document.getElementById('btnSaveNewTeam');
@@ -1372,29 +1380,44 @@ function submitNewDpvTeam() {
     var payload = { originalDomain: "", batchId: "-", domains: ["init-" + newTeam.replace(/\s+/g, '').toLowerCase() + ".local"], team: newTeam };
     var safePayload = JSON.parse(JSON.stringify(payload));
 
+    function afterTeamAdded() {
+        closeSmoothly('addTeamModal');
+        refreshDpvTeamsThenOpen(newTeam);
+    }
+
     if (typeof google !== 'undefined' && google.script && google.script.run) {
         google.script.run.withSuccessHandler(function(res) {
-            btn.innerHTML = origHtml; btn.disabled = false; closeSmoothly('addTeamModal');
+            btn.innerHTML = origHtml; btn.disabled = false;
             showPremiumToast("Success", "Team added successfully.", "success");
-            postVerifData.push({ batchId: safePayload.batchId, domain: safePayload.domains[0], team: safePayload.team, pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' });
-            renderPostVerifMain(); setTimeout(function() { switchPostVerifTab(newTeam); }, 100);
+            afterTeamAdded();
         }).saveDpvRecordBackend(currentSessionToken, safePayload);
     } else {
         setTimeout(function() {
-            btn.innerHTML = origHtml; btn.disabled = false; closeSmoothly('addTeamModal');
+            btn.innerHTML = origHtml; btn.disabled = false;
             showPremiumToast("Success", "Team added! (Mock)", "success");
-            postVerifData.push({ batchId: safePayload.batchId, domain: safePayload.domains[0], team: safePayload.team, pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: '' });
-            renderPostVerifMain(); setTimeout(function() { switchPostVerifTab(newTeam); }, 100);
+            afterTeamAdded();
         }, 600);
     }
 }
 
-function renderPostVerifMain() {
+// Refetches the team-name list from the server (so a brand-new team shows up in the tab bar),
+// then opens the given team's tab.
+function refreshDpvTeamsThenOpen(teamToOpen) {
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+        google.script.run.withSuccessHandler(function(teams) {
+            dpvKnownTeams = teams;
+            renderPostVerifMain(teams);
+            setTimeout(function() { switchPostVerifTab(teamToOpen); }, 100);
+        }).getDpvTeams(currentSessionToken);
+    } else {
+        renderPostVerifMain(dpvKnownTeams);
+        setTimeout(function() { switchPostVerifTab(teamToOpen); }, 100);
+    }
+}
+
+function renderPostVerifMain(teams) {
     var container = document.getElementById('appContent');
-    var uniqueTeams = [];
-    postVerifData.forEach(function(d) {
-        if(d.team && !uniqueTeams.includes(d.team) && !d.team.includes('INIT_')) uniqueTeams.push(d.team);
-    });
+    var uniqueTeams = teams || dpvKnownTeams || [];
 
     var tabHtml = '<button onclick="switchPostVerifTab(\'Overview\')" id="tab-dpv-overview" class="pb-3 text-sm font-semibold text-indigo-500 border-b-2 border-indigo-500 transition-colors whitespace-nowrap">Overview</button>';
     uniqueTeams.forEach(function(team) {
@@ -1515,7 +1538,7 @@ function injectDpvModals() {
 
 function switchPostVerifTab(tabName) {
     currentDpvTeam = tabName;
-    dpvSearchQuery = ''; dpvSelectedBatches = [];
+    dpvSearchQuery = ''; dpvSelectedBatches = []; dpvCurrentPage = 1;
 
     var tabs = document.getElementById('dpvTabContainer').querySelectorAll('button:not(:last-child)');
     tabs.forEach(function(t) { t.className = "pb-3 text-sm font-semibold text-subtle hover:text-body hover:border-slate-300 transition-colors border-b-2 border-transparent whitespace-nowrap"; });
@@ -1531,12 +1554,46 @@ function switchPostVerifTab(tabName) {
     setTimeout(function() {
         if (tabName === 'Overview') {
             contentArea.className = "flex-1 p-6 bg-app overflow-y-auto custom-scrollbar transition-opacity duration-200";
+            contentArea.innerHTML = skeletonScreen('cards');
+            contentArea.style.opacity = '1';
             buildDpvOverviewUI();
         } else {
             contentArea.className = "flex-1 p-6 bg-app overflow-hidden flex flex-col relative transition-opacity duration-200";
+            contentArea.innerHTML = skeletonScreen('table');
+            contentArea.style.opacity = '1';
 
+            // Team-scoped fetch — only this team's rows come over the wire, not the whole table.
+            loadDpvTeamData(tabName, function() {
+                if (currentDpvTeam !== tabName) return; // user already switched tabs again
+                renderDpvTeamContent(tabName);
+            });
+        }
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }, 150);
+}
+
+function loadDpvTeamData(teamName, onDone) {
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+        google.script.run.withSuccessHandler(function(data) {
+            postVerifData = data;
+            onDone();
+        }).getPostVerificationData(currentSessionToken, teamName);
+    } else {
+        setTimeout(function() {
+            postVerifData = [];
+            onDone();
+        }, 400);
+    }
+}
+
+function renderDpvTeamContent(tabName) {
+    var contentArea = document.getElementById('dpvContentArea');
+    if (!contentArea) return;
+    contentArea.style.opacity = '0';
+
+    setTimeout(function() {
             dpvBatchList = [];
-            var baseData = postVerifData.filter(function(d) { return d.team === tabName; });
+            var baseData = postVerifData; // already team-scoped by the server
             baseData.forEach(function(d) { if(d.batchId && d.batchId !== '-' && !dpvBatchList.includes(d.batchId)) dpvBatchList.push(d.batchId); });
 
             dpvBatchList.sort(function(a, b) {
@@ -1547,7 +1604,6 @@ function switchPostVerifTab(tabName) {
                 return '<label class="flex items-center gap-2 p-2 hover:bg-app cursor-pointer rounded"><input type="checkbox" value="'+b+'" class="dpv-batch-chk rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" onchange="updateDpvFilters()"> <span class="text-xs text-body font-bold">'+b+'</span></label>';
             }).join('');
 
-            var safeTeam = tabName.replace(/'/g, "\\'");
             var teamDomains = baseData.filter(function(d) { return d.domain && !d.domain.includes('init-'); });
             var teamIspStats = { pldt: { block: 0, active: 0, redirect: 0, total: 0 }, globe: { block: 0, active: 0, redirect: 0, total: 0 }, converge: { block: 0, active: 0, redirect: 0, total: 0 }, dito: { block: 0, active: 0, redirect: 0, total: 0 } };
             teamDomains.forEach(function(d) {
@@ -1562,7 +1618,7 @@ function switchPostVerifTab(tabName) {
                 });
             });
             var teamDateStr = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true });
-            var teamDatasetExpr = "postVerifData.filter(function(d){return d.team==='" + safeTeam + "' && d.domain && !d.domain.includes('init-');})";
+            var teamDatasetExpr = "postVerifData.filter(function(d){return d.domain && !d.domain.includes('init-');})"; // postVerifData is already scoped to this team
 
             var toolbarHtml = [
                 '<div id="dpvCardsContainer" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 flex-shrink-0 transition-all duration-300"></div>',
@@ -1601,13 +1657,12 @@ function switchPostVerifTab(tabName) {
 
             contentArea.innerHTML = toolbarHtml;
             renderDpvTableData();
-        }
-        if (typeof lucide !== 'undefined') lucide.createIcons();
-        contentArea.style.opacity = '1';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+            contentArea.style.opacity = '1';
     }, 150);
 }
 
-function handleDpvSearch(val) { dpvSearchQuery = val.toLowerCase().trim(); renderDpvTableData(); }
+function handleDpvSearch(val) { dpvSearchQuery = val.toLowerCase().trim(); dpvCurrentPage = 1; renderDpvTableData(); }
 
 function toggleAllDpvBatches(selectAll) {
     var checkboxes = document.querySelectorAll('.dpv-batch-chk');
@@ -1618,6 +1673,7 @@ function toggleAllDpvBatches(selectAll) {
 function updateDpvFilters() {
     var checkboxes = document.querySelectorAll('.dpv-batch-chk:checked');
     dpvSelectedBatches = Array.from(checkboxes).map(function(cb) { return cb.value; });
+    dpvCurrentPage = 1;
     renderDpvTableData();
 }
 
@@ -1625,7 +1681,7 @@ function renderDpvTableData() {
     var wrapper = document.getElementById('dpvTableWrapper');
     if(!wrapper) return;
 
-    var filtered = postVerifData.filter(function(d) { return d.team === currentDpvTeam; });
+    var filtered = postVerifData.slice(); // already team-scoped by the server
     if (dpvSelectedBatches.length > 0) { filtered = filtered.filter(function(d) { return dpvSelectedBatches.includes(d.batchId); }); }
     if (dpvSearchQuery !== '') {
         filtered = filtered.filter(function(d) { return (d.domain && d.domain.toLowerCase().includes(dpvSearchQuery)) || (d.batchId && d.batchId.toLowerCase().includes(dpvSearchQuery)); });
@@ -1694,10 +1750,16 @@ function renderDpvTableData() {
         '    <tbody class="divide-y divide-theme text-sm text-body">'
     ];
 
+    var totalPages = Math.max(1, Math.ceil(activeFiltered.length / dpvRowsPerPage));
+    if (dpvCurrentPage > totalPages) dpvCurrentPage = totalPages;
+    if (dpvCurrentPage < 1) dpvCurrentPage = 1;
+    var pageStart = (dpvCurrentPage - 1) * dpvRowsPerPage;
+    var pageRows = activeFiltered.slice(pageStart, pageStart + dpvRowsPerPage);
+
     if(activeFiltered.length === 0) {
         tableHtml.push('<tr><td colspan="12" class="px-4 py-16 text-center text-subtle">No records found matching filters.</td></tr>');
     } else {
-        activeFiltered.forEach(function(d) {
+        pageRows.forEach(function(d) {
             var originalIndex = postVerifData.indexOf(d);
             var hp = d._healthPct !== undefined ? d._healthPct : 0;
             var hb = healthBar(hp);
@@ -1720,9 +1782,29 @@ function renderDpvTableData() {
     }
 
     tableHtml.push('    </tbody></table></div>');
+
+    if (activeFiltered.length > 0) {
+        var startCount = pageStart + 1, endCount = Math.min(pageStart + dpvRowsPerPage, activeFiltered.length);
+        var footerHtml = [
+            '<div class="bg-app px-6 py-3 border-t border-theme flex flex-wrap justify-between items-center gap-3 flex-shrink-0">',
+            '  <div class="flex items-center gap-3 text-[11px] font-medium text-subtle"><span>Showing ' + startCount + ' to ' + endCount + ' of ' + activeFiltered.length + ' entries</span>',
+            '  <select onchange="changeDpvRowsPerPage(this.value)" class="border border-theme rounded-md px-2 py-1 outline-none bg-panel cursor-pointer hover:bg-app transition-colors"><option value="50" ' + (dpvRowsPerPage == 50 ? 'selected' : '') + '>50 rows</option><option value="100" ' + (dpvRowsPerPage == 100 ? 'selected' : '') + '>100 rows</option><option value="250" ' + (dpvRowsPerPage == 250 ? 'selected' : '') + '>250 rows</option></select></div>',
+            '  <div class="flex items-center gap-1.5">',
+            '    <button onclick="goToDpvPage(' + (dpvCurrentPage - 1) + ')" ' + (dpvCurrentPage === 1 ? 'disabled' : '') + ' class="p-1.5 rounded-md border border-theme text-subtle hover:bg-app disabled:opacity-50 transition-colors"><i data-lucide="chevron-left" class="h-4 w-4"></i></button>',
+            '    <span class="text-[11px] font-bold text-body px-2">Page ' + dpvCurrentPage + ' of ' + totalPages + '</span>',
+            '    <button onclick="goToDpvPage(' + (dpvCurrentPage + 1) + ')" ' + (dpvCurrentPage === totalPages ? 'disabled' : '') + ' class="p-1.5 rounded-md border border-theme text-subtle hover:bg-app disabled:opacity-50 transition-colors"><i data-lucide="chevron-right" class="h-4 w-4"></i></button>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        tableHtml.push(footerHtml);
+    }
+
     wrapper.innerHTML = tableHtml.join('\n');
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
+
+function goToDpvPage(page) { dpvCurrentPage = page; renderDpvTableData(); }
+function changeDpvRowsPerPage(val) { dpvRowsPerPage = parseInt(val); dpvCurrentPage = 1; renderDpvTableData(); }
 
 function healthBar(hp) {
     var hc = hp >= 75 ? 'health-good' : (hp >= 50 ? 'health-warn' : 'health-bad');
@@ -1736,64 +1818,43 @@ function buildDpvOverviewUI() {
     var contentArea = document.getElementById('dpvContentArea');
     if (!contentArea) return;
 
+    // Aggregate stats come from the server (SQL COUNT/AVG/GROUP BY) instead of shipping every
+    // DPV row to the browser just to add them up here — that's what made this screen slow at 24K+ rows.
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+        google.script.run.withSuccessHandler(function(stats) {
+            if (currentDpvTeam !== 'Overview') return; // tab changed while this was in flight
+            renderDpvOverviewFromStats(stats);
+        }).getDpvOverviewStats(currentSessionToken);
+    } else {
+        setTimeout(function() {
+            renderDpvOverviewFromStats({ totalDomains: 0, accessibleCount: 0, blockedCount: 0, avgHealth: 0, teams: [], agents: [] });
+        }, 400);
+    }
+}
+
+function renderDpvOverviewFromStats(stats) {
+    var contentArea = document.getElementById('dpvContentArea');
+    if (!contentArea) return;
+
     if (!window.dpvAgentTargets) window.dpvAgentTargets = {};
     if (!window.dpvKpiTimeframe) window.dpvKpiTimeframe = 'Daily';
 
-    var validData = postVerifData.filter(function(d) { return d.domain && !d.domain.includes('init-'); });
-
-    var totalDomains = validData.length;
-    var uniqueTeams = [];
-    var accessibleCount = 0;
-    var blockedCount = 0;
-    var totalHealthSum = 0;
-
-    var teamStats = {};
-    var agentStats = {};
-
-    validData.forEach(function(d) {
-        if (d.team && !uniqueTeams.includes(d.team)) { uniqueTeams.push(d.team); }
-        if (!teamStats[d.team]) { teamStats[d.team] = { count: 0, healthSum: 0 }; }
-
-        var ag = (d.agent && d.agent.trim() !== '') ? d.agent.trim().toUpperCase() : 'UNKNOWN AGENT';
-        if (!agentStats[ag]) { agentStats[ag] = { uploads: 0, duplicates: 0 }; }
-        agentStats[ag].uploads++;
-
-        var activeIsps = 0;
-        var hasData = false;
-        var isFullyBlocked = true;
-        var isps = [d.pldt, d.globe, d.converge, d.dito];
-
-        isps.forEach(function(s) {
-            var stat = (s || '').toLowerCase();
-            if (stat !== '' && stat !== '-') {
-                hasData = true;
-                if (stat.includes('active') || stat.includes('clear')) { activeIsps++; isFullyBlocked = false; }
-                else if (stat.includes('block') || stat.includes('down') || stat.includes('timeout')) { }
-                else { isFullyBlocked = false; }
-            } else { isFullyBlocked = false; }
-        });
-
-        if (activeIsps > 0) accessibleCount++;
-        if (hasData && isFullyBlocked) blockedCount++;
-
-        var hp = Math.round((activeIsps / 4) * 100);
-        totalHealthSum += hp;
-
-        teamStats[d.team].count++;
-        teamStats[d.team].healthSum += hp;
-    });
-
-    var avgHealth = totalDomains > 0 ? Math.round(totalHealthSum / totalDomains) : 0;
+    var totalDomains = stats.totalDomains || 0;
+    var accessibleCount = stats.accessibleCount || 0;
+    var blockedCount = stats.blockedCount || 0;
+    var avgHealth = stats.avgHealth || 0;
+    var uniqueTeams = (stats.teams || []).map(function(t) { return t.team; });
 
     var kpiRowsHtml = '';
-    var agentNames = Object.keys(agentStats).sort();
+    var agents = stats.agents || [];
 
-    if (agentNames.length === 0) {
+    if (agents.length === 0) {
         kpiRowsHtml = '<tr><td colspan="6" class="px-4 py-8 text-center text-subtle font-medium">No agent records found.</td></tr>';
     } else {
-        agentNames.forEach(function(ag) {
+        agents.forEach(function(a) {
+            var ag = a.agent;
             var safeAg = ag.replace(/'/g, "\\'");
-            var st = agentStats[ag];
+            var st = { uploads: a.uploads, duplicates: 0 };
             var currentTarget = window.dpvAgentTargets[ag] || 100;
             var hitRate = currentTarget > 0 ? Math.min(100, Math.round((st.uploads / currentTarget) * 100)) : 100;
 
@@ -1817,16 +1878,16 @@ function buildDpvOverviewUI() {
     }
 
     var teamRowsHtml = '';
-    if (uniqueTeams.length === 0) {
+    if ((stats.teams || []).length === 0) {
         teamRowsHtml = '<tr><td colspan="4" class="px-4 py-12 text-center text-subtle font-medium">No team data available for Post Verification yet.</td></tr>';
     } else {
-        uniqueTeams.sort().forEach(function(team) {
-            var stats = teamStats[team] || { count: 0, healthSum: 0 };
-            var tAvg = stats.count > 0 ? Math.round(stats.healthSum / stats.count) : 0;
+        stats.teams.forEach(function(t) {
+            var team = t.team;
+            var tAvg = t.avgHealth || 0;
 
             teamRowsHtml += '<tr class="hover:bg-indigo-tint/50 border-b border-theme last:border-0 transition-colors">' +
                             '<td class="px-5 py-4 font-bold text-body">' + team + '</td>' +
-                            '<td class="px-5 py-4 text-subtle font-medium text-xs">' + stats.count + ' monitored domain(s)</td>' +
+                            '<td class="px-5 py-4 text-subtle font-medium text-xs">' + t.count + ' monitored domain(s)</td>' +
                             '<td class="px-5 py-4 w-1/3">' + healthBar(tAvg).replace('max-w-[90px] mx-auto', 'max-w-none') + '</td>' +
                             '<td class="px-5 py-4 text-right"><button onclick="switchPostVerifTab(\''+team.replace(/'/g, "\\'")+'\')" class="px-3 py-1.5 text-xs font-bold text-indigo-500 bg-indigo-tint hover:bg-indigo-100 rounded-lg transition-colors">View Team &rarr;</button></td>' +
                             '</tr>';
@@ -1842,7 +1903,7 @@ function buildDpvOverviewUI() {
             statTile('slash', 'rose', 'Fully Blocked', blockedCount),
             statTile('activity', 'amber', 'Overall DPV Health', avgHealth + '%'),
         '</div>',
-        aiInsightPanel('DPV', 'DPV System', 'all post-verification teams (' + uniqueTeams.length + ')', currentDateStr, "postVerifData.filter(function(d){return d.domain && !d.domain.includes('init-');})"),
+        aiInsightPanel('DPV', 'DPV System', 'all post-verification teams (' + uniqueTeams.length + ')', currentDateStr, null, "generateDpvOverviewAIInsight()"),
 
         '<div class="panel-card overflow-hidden mb-6 flex flex-col">',
         '    <div class="px-6 py-4 border-b border-theme bg-app flex flex-col md:flex-row md:items-center justify-between gap-3">',
@@ -2015,34 +2076,18 @@ function proceedToSaveDpvBulk(domainsArray, batchId, team, agent, editIdx, cicc)
     closeSmoothly('dpvCrudModal');
     showPremiumToast("Processing", "Syncing " + domainsArray.length + " record(s) to Database...", "info");
 
-    function applyLocalUpdate() {
-        if (editIdx >= 0) {
-            postVerifData[editIdx].batchId = safePayload.batchId;
-            postVerifData[editIdx].cicc = safePayload.cicc;
-            postVerifData[editIdx].domain = safePayload.domains[0];
-            postVerifData[editIdx].team = safePayload.team;
-            postVerifData[editIdx].agent = safePayload.agent;
-        } else {
-            safePayload.domains.reverse().forEach(function(dom) {
-                postVerifData.unshift({
-                    batchId: safePayload.batchId, cicc: safePayload.cicc, domain: dom, team: safePayload.team, agent: safePayload.agent,
-                    pldt: '-', pldtRemarks: '', globe: '-', globeRemarks: '', converge: '-', convergeRemarks: '', dito: '-', ditoRemarks: ''
-                });
-            });
-        }
-    }
-
+    // No local array patching here — switchPostVerifTab() (inside refreshDpvTeamsThenOpen) re-fetches
+    // this team's records fresh from the server right after, so patching local state first would just
+    // get thrown away.
     if (typeof google !== 'undefined' && google.script && google.script.run) {
         google.script.run.withSuccessHandler(function(response) {
             showPremiumToast("Success", response.message, "success");
-            applyLocalUpdate();
-            renderPostVerifMain(); setTimeout(function() { switchPostVerifTab(safePayload.team); }, 100);
+            refreshDpvTeamsThenOpen(safePayload.team);
         }).saveDpvRecordBackend(currentSessionToken, safePayload);
     } else {
         setTimeout(function() {
             showPremiumToast("Success", domainsArray.length + " Record(s) saved! (Mock)", "success");
-            applyLocalUpdate();
-            renderPostVerifMain(); setTimeout(function() { switchPostVerifTab(safePayload.team); }, 100);
+            refreshDpvTeamsThenOpen(safePayload.team);
         }, 700);
     }
 }
