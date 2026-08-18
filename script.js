@@ -54,6 +54,59 @@ var dpvBatchList = [];
 var idleTimer;
 var IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 
+// ---- Auto-refresh (near-real-time) ----
+var autoRefreshTimer = null;
+var AUTO_REFRESH_MS = 20 * 1000; // 20 seconds
+var currentScreenContext = null; // 'global' | 'brand:<name>:<tab>' | 'dpv'
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    autoRefreshTimer = setInterval(silentRefresh, AUTO_REFRESH_MS);
+}
+function stopAutoRefresh() {
+    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+}
+
+function isAnyModalOpen() {
+    var modalIds = ['userSettingsModal', 'addBrandModal', 'domainModal', 'dpvCrudModal', 'dpvBulkUpdateModal', 'dpvCleanupModal', 'premiumConfirm', 'activityLogsModal', 'addTeamModal'];
+    return modalIds.some(function(id) {
+        var el = document.getElementById(id);
+        return el && !el.classList.contains('hidden');
+    });
+}
+
+function silentRefresh() {
+    if (!currentSessionToken || isAnyModalOpen() || !currentScreenContext) return;
+    if (typeof google === 'undefined' || !google.script || !google.script.run) return;
+
+    if (currentScreenContext === 'global') {
+        google.script.run.withSuccessHandler(function(allDomains) {
+            if (currentScreenContext !== 'global' || isAnyModalOpen()) return;
+            currentBrandData = allDomains; currentViewData = [].concat(currentBrandData);
+            buildGlobalUI();
+        }).getDomainsData(currentSessionToken);
+
+    } else if (currentScreenContext.indexOf('brand:') === 0) {
+        var parts = currentScreenContext.split(':'); var brandName = parts[1]; var tab = parts[2];
+        google.script.run.withSuccessHandler(function(allDomains) {
+            if (currentScreenContext !== 'brand:' + brandName + ':' + tab || isAnyModalOpen()) return;
+            currentBrandName = brandName;
+            currentBrandData = allDomains.filter(function(d) { return String(d.brand).trim().toLowerCase() === String(brandName).trim().toLowerCase(); });
+            currentViewData = [].concat(currentBrandData);
+            if (tab === 'domains') { if (document.getElementById('brandDomainTableBody')) buildBrandTableUI(); }
+            else { if (document.getElementById('brandContentArea')) buildOverviewUI(brandName); }
+        }).getDomainsData(currentSessionToken);
+
+    } else if (currentScreenContext === 'dpv') {
+        google.script.run.withSuccessHandler(function(data) {
+            if (currentScreenContext !== 'dpv' || isAnyModalOpen()) return;
+            postVerifData = data;
+            if (currentDpvTeam === 'Overview') { if (document.getElementById('dpvContentArea')) buildDpvOverviewUI(); }
+            else { if (document.getElementById('dpvTableWrapper')) renderDpvTableData(); }
+        }).getPostVerificationData(currentSessionToken);
+    }
+}
+
 function resetIdleTimer() {
     clearTimeout(idleTimer);
     var app = document.getElementById('mainApplication');
@@ -306,6 +359,7 @@ function finishLogin(name, role, perms, isRestore) {
         }
 
         loadSidebarBrands();
+        startAutoRefresh();
 
         if (!isRestore) { showPremiumToast("Welcome Back!", "Successfully logged in to Domain_Guard.", "success"); }
     }, 300);
@@ -316,6 +370,8 @@ function logoutSystem(isAutoKicked) {
         if (typeof google !== 'undefined' && google.script && google.script.run && currentSessionToken) {
             google.script.run.logoutSessionBackend(currentSessionToken); // fire-and-forget server-side session cleanup
         }
+        stopAutoRefresh();
+        currentScreenContext = null;
 
         var app = document.getElementById('mainApplication');
         app.classList.add('smooth-hide');
@@ -481,6 +537,7 @@ function setActiveSidebarBtn(clickedBtn) {
 function openCalendar() {
     var container = document.getElementById('appContent');
     if (!container) return;
+    currentScreenContext = null;
     setActiveSidebarBtn(document.getElementById('btnCalendar'));
     document.getElementById('mainHeader').classList.add('hidden');
     document.getElementById('mainHeaderWrapper').className = "flex-1 flex flex-col min-w-0 overflow-hidden relative bg-app";
@@ -571,6 +628,7 @@ function openGlobalDashboard() {
     if (!container) return;
     setActiveSidebarBtn(document.getElementById('btnGlobalDashboard'));
     container.innerHTML = skeletonScreen('cards');
+    currentScreenContext = 'global';
 
     if (typeof google !== 'undefined' && google.script && google.script.run) {
         google.script.run.withSuccessHandler(function(allDomains) {
@@ -940,6 +998,7 @@ function openSettingsDashboard() {
     closeMobileSidebar();
     var container = document.getElementById('appContent');
     if (!container) return;
+    currentScreenContext = null;
 
     document.querySelectorAll('.brand-btn, .nav-btn').forEach(function(b) {
         b.className = b.className.replace('bg-indigo-50/80 text-indigo-700 shadow-sm ring-1 ring-indigo-100/50 font-bold', 'text-slate-500 hover:bg-slate-100/60 hover:text-indigo-600 bg-transparent');
@@ -1239,6 +1298,7 @@ function openCyberguardSub(reportType) {
     var pageIcon = iconMap[reportType] || 'shield-alert';
 
     container.style.opacity = '0';
+    currentScreenContext = (reportType === 'Domain Post Verification') ? 'dpv' : null;
     setTimeout(function() {
         if (reportType === 'Domain Post Verification') {
             container.innerHTML = skeletonScreen('table');
@@ -2329,6 +2389,7 @@ function switchBrandTab(tabName, brandName) {
             tabOverview.className = "pb-3 text-sm font-semibold text-indigo-500 border-b-2 border-indigo-500 transition-colors";
             contentArea.className = "flex-1 p-6 bg-app overflow-y-auto custom-scrollbar transition-opacity duration-200";
             contentArea.innerHTML = skeletonScreen('cards');
+            currentScreenContext = 'brand:' + brandName + ':overview';
 
             if (currentBrandName !== brandName) {
                 if (typeof google !== 'undefined' && google.script && google.script.run) {
@@ -2344,6 +2405,7 @@ function switchBrandTab(tabName, brandName) {
         } else if (tabName === 'domains') {
             tabDomains.className = "pb-3 text-sm font-semibold text-indigo-500 border-b-2 border-indigo-500 transition-colors";
             contentArea.className = "flex-1 p-6 bg-app overflow-hidden flex flex-col transition-opacity duration-200";
+            currentScreenContext = 'brand:' + brandName + ':domains';
 
             var tableHtml = [
                 '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 flex-shrink-0">',
