@@ -978,6 +978,22 @@ function getStatusBadge(status) {
     return 'badge-neutral';
 }
 
+// Splits the combined "TIMESTAMP (IMAGE) | LINK" remarks string (written by checker.js /
+// createStatusWithProof) into its two parts, for use both on-screen and in CSV/PDF exports.
+function parseProof(raw) {
+    var rawStr = (raw || '').toString().trim();
+    if (rawStr === '') return { timestamp: '', link: '' };
+    if (rawStr.includes('|')) {
+        var parts = rawStr.split('|');
+        return { timestamp: parts[0].replace('(IMAGE)', '').trim(), link: parts[1].trim() };
+    }
+    var linkMatch = rawStr.match(/(https?:\/\/[^\s]+)/);
+    if (linkMatch) return { timestamp: rawStr.replace(linkMatch[0], '').trim(), link: linkMatch[0] };
+    return { timestamp: rawStr, link: '' };
+}
+
+var ispModalExportData = null; // { ispTitle, active: [], blocked: [], redirected: [] } — set each time the modal opens
+
 function openIspModal(ispKey, ispTitle, dataset) {
     var modal = document.getElementById('ispDetailsModal');
     if (!modal) return;
@@ -987,7 +1003,7 @@ function openIspModal(ispKey, ispTitle, dataset) {
     dataset.forEach(function(d) {
         var stat = (d[ispKey] || '').toString().toLowerCase();
         var remarks = d[ispKey + 'Remarks'] || '';
-        var item = { domain: d.domain, remarks: remarks, brand: d.brand || d.team || '' };
+        var item = { domain: d.domain, remarks: remarks, brand: d.brand || d.team || '', refNo: d.cicc || '' };
 
         if (stat !== '' && stat !== '-') {
             if (stat.includes('active') || stat.includes('clear')) activeList.push(item);
@@ -996,28 +1012,99 @@ function openIspModal(ispKey, ispTitle, dataset) {
         }
     });
 
+    ispModalExportData = { ispTitle: ispTitle, active: activeList, blocked: blockedList, redirected: redirectedList };
+
     function buildListDom(list, iconClass, iconLucide) {
         if (list.length === 0) return '<div class="text-xs text-subtle p-4 text-center bg-app rounded-lg border border-theme border-dashed m-2">No domains in this status.</div>';
         var html = '';
         list.forEach(function(item) {
-            html += '<div class="flex justify-between items-center p-3 border-b border-theme hover:bg-app transition-colors"><div class="flex items-center gap-3"><div class="' + iconClass + '"><i data-lucide="' + iconLucide + '" class="h-4 w-4"></i></div><span class="text-[13px] font-bold text-heading">' + item.domain + ' <span class="text-[9px] font-medium text-subtle ml-1">(' + item.brand + ')</span></span></div><div class="text-[11px] text-subtle">' + formatLastCheck(item.remarks) + '</div></div>';
+            html += '<div class="flex justify-between items-center p-3 border-b border-theme hover:bg-app transition-colors"><div class="flex items-center gap-3"><div class="' + iconClass + '"><i data-lucide="' + iconLucide + '" class="h-4 w-4"></i></div><span class="text-[13px] font-bold text-heading">' + item.domain + ' <span class="text-[9px] font-medium text-subtle ml-1">(' + item.brand + ')</span></span>' + (item.refNo ? '<span class="text-[9px] font-mono text-indigo-500 ml-2">REF# ' + item.refNo + '</span>' : '') + '</div><div class="text-[11px] text-subtle">' + formatLastCheck(item.remarks) + '</div></div>';
         });
         return html;
+    }
+
+    function sectionDownloadBtns(statusKey) {
+        return '<div class="flex items-center gap-1.5"><button onclick="exportIspList(\'' + statusKey + '\',\'csv\')" title="Download as Excel/CSV" class="p-1 text-subtle hover:text-indigo-500 hover:bg-indigo-tint rounded transition-colors"><i data-lucide="file-spreadsheet" class="h-3.5 w-3.5"></i></button><button onclick="exportIspList(\'' + statusKey + '\',\'pdf\')" title="Download as PDF" class="p-1 text-subtle hover:text-rose-500 hover:bg-rose-tint rounded transition-colors"><i data-lucide="file-text" class="h-3.5 w-3.5"></i></button></div>';
     }
 
     var modalHtml = [
         '<div class="panel-card w-full max-w-3xl flex flex-col overflow-hidden max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">',
         '    <div class="px-6 py-4 border-b border-theme flex justify-between items-center bg-app"><h3 class="text-lg font-bold text-heading flex items-center gap-2"><i data-lucide="server" class="h-5 w-5 text-indigo-500"></i> ' + ispTitle + ' Detailed Report</h3><button onclick="closeSmoothly(\'ispDetailsModal\')" class="p-1.5 rounded-md text-subtle hover:bg-app hover:text-heading transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button></div>',
         '    <div class="overflow-y-auto custom-scrollbar flex-1 p-6 space-y-6">',
-        '        <div><h4 class="text-xs font-bold text-subtle uppercase tracking-widest mb-2 flex items-center gap-2 border-b border-theme pb-2"><span class="w-2 h-2 rounded-full bg-red-500"></span> Blocked Domains (' + blockedList.length + ')</h4><div class="bg-panel border border-theme rounded-lg overflow-hidden">' + buildListDom(blockedList, 'text-red-500 bg-rose-tint p-1.5 rounded', 'slash') + '</div></div>',
-        '        <div><h4 class="text-xs font-bold text-subtle uppercase tracking-widest mb-2 flex items-center gap-2 border-b border-theme pb-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Active Domains (' + activeList.length + ')</h4><div class="bg-panel border border-theme rounded-lg overflow-hidden">' + buildListDom(activeList, 'text-emerald-500 bg-emerald-tint p-1.5 rounded', 'check-circle') + '</div></div>',
-        '        <div><h4 class="text-xs font-bold text-subtle uppercase tracking-widest mb-2 flex items-center gap-2 border-b border-theme pb-2"><span class="w-2 h-2 rounded-full bg-amber-500"></span> Redirected Domains (' + redirectedList.length + ')</h4><div class="bg-panel border border-theme rounded-lg overflow-hidden">' + buildListDom(redirectedList, 'text-amber-500 bg-amber-tint p-1.5 rounded', 'corner-up-right') + '</div></div>',
+        '        <div><div class="flex items-center justify-between mb-2 border-b border-theme pb-2"><h4 class="text-xs font-bold text-subtle uppercase tracking-widest flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500"></span> Blocked Domains (' + blockedList.length + ')</h4>' + sectionDownloadBtns('blocked') + '</div><div class="bg-panel border border-theme rounded-lg overflow-hidden">' + buildListDom(blockedList, 'text-red-500 bg-rose-tint p-1.5 rounded', 'slash') + '</div></div>',
+        '        <div><div class="flex items-center justify-between mb-2 border-b border-theme pb-2"><h4 class="text-xs font-bold text-subtle uppercase tracking-widest flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Active Domains (' + activeList.length + ')</h4>' + sectionDownloadBtns('active') + '</div><div class="bg-panel border border-theme rounded-lg overflow-hidden">' + buildListDom(activeList, 'text-emerald-500 bg-emerald-tint p-1.5 rounded', 'check-circle') + '</div></div>',
+        '        <div><div class="flex items-center justify-between mb-2 border-b border-theme pb-2"><h4 class="text-xs font-bold text-subtle uppercase tracking-widest flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amber-500"></span> Redirected Domains (' + redirectedList.length + ')</h4>' + sectionDownloadBtns('redirected') + '</div><div class="bg-panel border border-theme rounded-lg overflow-hidden">' + buildListDom(redirectedList, 'text-amber-500 bg-amber-tint p-1.5 rounded', 'corner-up-right') + '</div></div>',
         '    </div>',
         '</div>'
     ].join('\n');
     modal.innerHTML = modalHtml;
     modal.classList.remove('hidden');
     if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+// Called by the download buttons in each ISP modal status section. statusKey is 'active' |
+// 'blocked' | 'redirected'; format is 'csv' | 'pdf'. Reads from ispModalExportData, set the last
+// time openIspModal() ran.
+function exportIspList(statusKey, format) {
+    if (!ispModalExportData) return;
+    var list = ispModalExportData[statusKey] || [];
+    if (list.length === 0) { showPremiumToast('Walang Laman', 'Walang domain sa listahang ito para i-download.', 'error'); return; }
+
+    var reportTitle = ispModalExportData.ispTitle + ' - ' + statusKey.charAt(0).toUpperCase() + statusKey.slice(1) + ' Domains';
+    var headers = ['Ref No.', 'Domain', 'Batch/Team', 'Last Check', 'Proof Link'];
+    var rows = list.map(function(item) {
+        var proof = parseProof(item.remarks);
+        return [item.refNo || '-', item.domain, item.brand || '-', proof.timestamp || '-', proof.link || '-'];
+    });
+
+    if (format === 'csv') downloadCSV(reportTitle, headers, rows);
+    else downloadPDFReport(reportTitle, headers, rows);
+}
+
+// Plain CSV — no external library needed, opens directly in Excel/Google Sheets.
+function downloadCSV(filename, headers, rows) {
+    function escapeCell(v) {
+        v = (v === undefined || v === null) ? '' : String(v);
+        return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    }
+    var lines = [headers.map(escapeCell).join(',')];
+    rows.forEach(function(r) { lines.push(r.map(escapeCell).join(',')); });
+    var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename.replace(/[^a-z0-9\-_ ]/gi, '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showPremiumToast('Na-download', 'CSV file: ' + filename + '.csv', 'success');
+}
+
+// PDF via jsPDF + autotable (loaded from CDN in index.html). Falls back to a toast if the
+// libraries failed to load (e.g. no internet access at that moment).
+function downloadPDFReport(title, headers, rows) {
+    if (typeof window.jspdf === 'undefined') {
+        showPremiumToast('PDF Error', 'Hindi ma-load ang PDF library. Subukan ulit o gamitin muna ang CSV.', 'error');
+        return;
+    }
+    var doc = new window.jspdf.jsPDF({ orientation: 'landscape' });
+    doc.setFontSize(14);
+    doc.text('BBC-SEC DOMAIN_GUARD', 14, 15);
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(title, 14, 22);
+    doc.text('Generated: ' + new Date().toLocaleString('en-US'), 14, 27);
+    doc.autoTable({
+        head: [headers],
+        body: rows,
+        startY: 32,
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [79, 70, 229] },
+        columnStyles: { 4: { cellWidth: 90 } } // Proof Link column — give it room
+    });
+    doc.save(title.replace(/[^a-z0-9\-_ ]/gi, '') + '.pdf');
+    showPremiumToast('Na-download', 'PDF file: ' + title + '.pdf', 'success');
 }
 
 // ==========================================
@@ -1652,7 +1739,7 @@ function renderDpvTeamContent(tabName) {
                 '       <button onclick="openDpvCrudModal()" class="flex-1 md:flex-none px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 shadow-[0_4px_12px_rgba(79,70,229,0.25)] flex items-center gap-2 justify-center transition-all"><i data-lucide="plus" class="h-4 w-4"></i> Add Record</button>',
                 '    </div>',
                 '</div>',
-                '<div class="panel-card flex flex-col flex-1 overflow-hidden" id="dpvTableWrapper"></div>'
+                '<div class="panel-card flex flex-col overflow-hidden max-h-[62vh]" id="dpvTableWrapper"></div>'
             ].join('\n');
 
             contentArea.innerHTML = toolbarHtml;
@@ -2462,7 +2549,7 @@ function switchBrandTab(tabName, brandName) {
                 '    <div class="relative"><i data-lucide="search" class="absolute left-3 top-2.5 h-4 w-4 text-subtle"></i><input type="text" id="localSearchInput" onkeyup="filterBrandTable()" placeholder="Search in ' + brandName + '..." class="pl-9 pr-4 py-2 border border-theme bg-panel rounded-lg text-sm text-body focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64 transition-all shadow-sm"></div>',
                 '    <button onclick="openDomainModal()" class="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 shadow-sm"><i data-lucide="plus" class="h-4 w-4"></i> Add Domain</button>',
                 '</div>',
-                '<div class="panel-card flex flex-col flex-1 overflow-hidden">',
+                '<div class="panel-card flex flex-col overflow-hidden max-h-[62vh]">',
                 '    <div class="overflow-y-auto overflow-x-auto custom-scrollbar flex-1 relative bg-panel">',
                 '        <table class="w-full text-left border-collapse whitespace-nowrap relative">',
                 '            <thead class="bg-app sticky top-0 z-20 shadow-sm border-b border-theme backdrop-blur-sm">',
