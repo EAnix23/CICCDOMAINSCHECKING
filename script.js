@@ -2207,11 +2207,25 @@ function dpvBulkDelete() {
     var checked = document.querySelectorAll('.dpv-row-select:checked');
     if(checked.length === 0) { showPremiumToast("Notice", "Please select at least one row to delete.", "info"); return; }
 
-    showPremiumConfirm("Bulk Delete", "Are you sure you want to permanently delete " + checked.length + " selected domain(s)?", "Yes, Delete All", function() {
-        var indices = Array.from(checked).map(function(cb){ return parseInt(cb.value); }).sort(function(a,b){ return b-a; });
-        indices.forEach(function(idx){ postVerifData.splice(idx, 1); });
-        renderDpvTableData();
-        showPremiumToast("Bulk Deleted", checked.length + " domains deleted successfully.", "success");
+    var indices = Array.from(checked).map(function(cb){ return parseInt(cb.value); });
+    var domainsToDelete = indices.map(function(idx){ return postVerifData[idx] ? postVerifData[idx].domain : null; }).filter(function(d){ return !!d; });
+
+    showPremiumConfirm("Bulk Delete", "Are you sure you want to permanently delete " + domainsToDelete.length + " selected domain(s)?", "Yes, Delete All", function() {
+        function afterDeleted(message) {
+            indices.sort(function(a,b){ return b-a; }).forEach(function(idx){ postVerifData.splice(idx, 1); });
+            renderDpvTableData();
+            showPremiumToast("Bulk Deleted", message || (domainsToDelete.length + " domains deleted successfully."), "success");
+        }
+        // BUG FIX: dating tinatanggal lang sa local postVerifData array (kaya bumabalik pag na-refresh
+        // dahil hindi talaga naaabot ang D1). Ngayon, tinatawag na natin ang aktwal na bulkDeleteDpvBackend
+        // sa Worker bago tanggalin sa screen — parehong pattern gaya ng single-row deleteDpvRecord().
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+            google.script.run.withSuccessHandler(function(res) {
+                afterDeleted(res && res.message);
+            }).bulkDeleteDpvBackend(currentSessionToken, domainsToDelete);
+        } else {
+            afterDeleted(domainsToDelete.length + " domains deleted successfully. (Simulation)");
+        }
     });
 }
 
