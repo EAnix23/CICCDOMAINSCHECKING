@@ -107,11 +107,11 @@ function silentRefresh() {
             if (document.getElementById('dpvContentArea')) buildDpvOverviewUI();
         } else if (document.getElementById('dpvTableWrapper')) {
             var teamAtRequestTime = currentDpvTeam;
-            google.script.run.withSuccessHandler(function(data) {
+            fetchDpvTeamPaged(teamAtRequestTime, function(allRows) {
                 if (currentScreenContext !== 'dpv' || currentDpvTeam !== teamAtRequestTime || isAnyModalOpen()) return;
-                postVerifData = data;
+                postVerifData = allRows;
                 renderDpvTableData();
-            }).getPostVerificationData(currentSessionToken, teamAtRequestTime);
+            });
         }
     }
 }
@@ -742,7 +742,7 @@ function aiInsightPanel(scopeKey, tagLabel, targetLabel, dateStr, datasetExpr, c
             ? "generateAIInsight('" + safeScope + "', " + datasetExpr + ")"
             : "generateAIInsight('" + safeScope + "')");
     return [
-        '<div class="ai-panel mb-6">',
+        '<div class="ai-panel mb-6 flex-shrink-0">',
         '    <div class="ai-panel-glow"></div>',
         '    <div class="p-6 relative">',
         '        <div class="flex justify-between items-start mb-6 flex-wrap gap-3">',
@@ -1525,7 +1525,7 @@ function renderPostVerifMain(teams) {
         '    <div class="px-8 pt-4 bg-app border-b border-theme flex gap-4 flex-shrink-0 overflow-x-auto custom-scrollbar" id="dpvTabContainer">',
                  tabHtml,
         '    </div>',
-        '    <div id="dpvContentArea" class="flex-1 p-6 bg-app overflow-hidden flex flex-col relative transition-opacity duration-200"></div>',
+        '    <div id="dpvContentArea" class="flex-1 p-6 bg-app overflow-y-auto custom-scrollbar flex flex-col relative transition-opacity duration-200"></div>',
         '</div>'
     ].join('\n');
 
@@ -1660,18 +1660,38 @@ function switchPostVerifTab(tabName) {
     }, 150);
 }
 
-function loadDpvTeamData(teamName, onDone) {
+// Fetches one team's DPV rows in 2,000-row pages instead of one giant request — a single request
+// for a large team (TEAM 001 alone has 11K+ rows) was hanging in the browser even after removing
+// the Worker's CPU-time limit, since that much JSON is just slow to serialize/transfer in one
+// shot. Shared by the initial tab load AND the 20-second auto-refresh poller, so neither path can
+// regress back to the one-big-request pattern. onAllPages receives the full stitched-together array.
+function fetchDpvTeamPaged(teamName, onAllPages) {
+    var PAGE_SIZE = 2000;
     if (typeof google !== 'undefined' && google.script && google.script.run) {
-        google.script.run.withSuccessHandler(function(data) {
-            postVerifData = data;
-            onDone();
-        }).getPostVerificationData(currentSessionToken, teamName);
+        var accumulated = [];
+        var offset = 0;
+        function fetchNextPage() {
+            google.script.run.withSuccessHandler(function(pageData) {
+                accumulated = accumulated.concat(pageData || []);
+                if (pageData && pageData.length === PAGE_SIZE) {
+                    offset += PAGE_SIZE;
+                    fetchNextPage();
+                } else {
+                    onAllPages(accumulated);
+                }
+            }).getPostVerificationData(currentSessionToken, teamName, offset, PAGE_SIZE);
+        }
+        fetchNextPage();
     } else {
-        setTimeout(function() {
-            postVerifData = [];
-            onDone();
-        }, 400);
+        setTimeout(function() { onAllPages([]); }, 400);
     }
+}
+
+function loadDpvTeamData(teamName, onDone) {
+    fetchDpvTeamPaged(teamName, function(allRows) {
+        postVerifData = allRows;
+        onDone();
+    });
 }
 
 function renderDpvTeamContent(tabName) {
@@ -1711,8 +1731,8 @@ function renderDpvTeamContent(tabName) {
             var toolbarHtml = [
                 '<div id="dpvCardsContainer" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 flex-shrink-0 transition-all duration-300"></div>',
                 aiInsightPanel(tabName, 'Team Analytics', tabName, teamDateStr, teamDatasetExpr),
-                '<h4 class="text-[11px] font-bold text-subtle uppercase tracking-widest mb-3 flex items-center gap-2"><i data-lucide="bar-chart-2" class="h-4 w-4 text-subtle"></i> ISP Compliance Breakdown <span class="text-xs font-normal text-subtle ml-2">(Click cards for details)</span></h4>',
-                '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">', getIspCard('PLDT', teamIspStats.pldt, 'pldt', teamDatasetExpr), getIspCard('GLOBE', teamIspStats.globe, 'globe', teamDatasetExpr), getIspCard('CONVERGE', teamIspStats.converge, 'converge', teamDatasetExpr), getIspCard('DITO', teamIspStats.dito, 'dito', teamDatasetExpr), '</div>',
+                '<h4 class="text-[11px] font-bold text-subtle uppercase tracking-widest mb-3 flex items-center gap-2 flex-shrink-0"><i data-lucide="bar-chart-2" class="h-4 w-4 text-subtle"></i> ISP Compliance Breakdown <span class="text-xs font-normal text-subtle ml-2">(Click cards for details)</span></h4>',
+                '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 flex-shrink-0">', getIspCard('PLDT', teamIspStats.pldt, 'pldt', teamDatasetExpr), getIspCard('GLOBE', teamIspStats.globe, 'globe', teamDatasetExpr), getIspCard('CONVERGE', teamIspStats.converge, 'converge', teamDatasetExpr), getIspCard('DITO', teamIspStats.dito, 'dito', teamDatasetExpr), '</div>',
                 '<div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 flex-shrink-0">',
                 '    <div class="flex items-center gap-3 w-full md:w-auto relative">',
                 '        <div class="relative flex-1 md:w-64">',
@@ -1740,7 +1760,7 @@ function renderDpvTeamContent(tabName) {
                 '       <button onclick="openDpvCrudModal()" class="flex-1 md:flex-none px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 shadow-[0_4px_12px_rgba(79,70,229,0.25)] flex items-center gap-2 justify-center transition-all"><i data-lucide="plus" class="h-4 w-4"></i> Add Record</button>',
                 '    </div>',
                 '</div>',
-                '<div class="panel-card flex flex-col overflow-hidden max-h-[62vh]" id="dpvTableWrapper"></div>'
+                '<div class="panel-card flex flex-col overflow-hidden flex-shrink-0" id="dpvTableWrapper"></div>'
             ].join('\n');
 
             contentArea.innerHTML = toolbarHtml;
@@ -1820,9 +1840,9 @@ function renderDpvTableData() {
         '    <button onclick="openDpvBulkUpdateModal()" class="px-3 py-1.5 bg-amber-tint text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900 text-[11px] font-bold rounded-lg hover:opacity-80 shadow-sm flex items-center gap-1.5 transition-all uppercase tracking-wider"><i data-lucide="edit" class="h-3.5 w-3.5"></i> Bulk Update</button>',
         '  </div>',
         '</div>',
-        '<div class="overflow-y-auto overflow-x-auto custom-scrollbar flex-1 relative bg-panel">',
+        '<div class="overflow-x-auto custom-scrollbar relative bg-panel">',
         '  <table class="w-full text-left border-collapse whitespace-nowrap relative">',
-        '    <thead class="bg-app sticky top-0 z-20 shadow-sm border-b border-theme backdrop-blur-sm">',
+        '    <thead class="bg-app shadow-sm border-b border-theme">',
         '      <tr class="text-[11px] uppercase font-bold text-subtle tracking-wider">',
         '        <th class="px-4 py-3 w-10 text-center"><input type="checkbox" onclick="toggleAllDpvRows(this)" class="rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"></th>',
         '        <th class="px-4 py-3 text-indigo-500">CICC REF NO.</th>',
@@ -1832,7 +1852,7 @@ function renderDpvTableData() {
         '        <th class="px-4 py-3 text-center border-l border-theme text-orange-500">CONV</th>',
         '        <th class="px-4 py-3 text-center border-l border-theme text-purple-500">DITO</th>',
         '        <th class="px-4 py-3 text-center border-l border-theme">Health %</th>',
-        '        <th class="px-4 py-3 text-center border-l border-theme bg-app sticky right-0">Actions</th>',
+        '        <th class="px-4 py-3 text-center border-l border-theme bg-app">Actions</th>',
         '      </tr>',
         '    </thead>',
         '    <tbody class="divide-y divide-theme text-sm text-body">'
@@ -2511,7 +2531,7 @@ function openBrandPage(brandName, btnElement) {
         '        <button onclick="switchBrandTab(\'overview\', \'' + safeName + '\')" id="tab-overview" class="pb-3 text-sm font-semibold text-indigo-500 border-b-2 border-indigo-500 transition-colors">Overview</button>',
         '        <button onclick="switchBrandTab(\'domains\', \'' + safeName + '\')" id="tab-domains" class="pb-3 text-sm font-semibold text-subtle hover:text-body hover:border-slate-300 transition-colors border-b-2 border-transparent">Domain List</button>',
         '    </div>',
-        '    <div id="brandContentArea" class="flex-1 p-6 bg-app overflow-hidden flex flex-col relative transition-opacity duration-200"></div>',
+        '    <div id="brandContentArea" class="flex-1 p-6 bg-app overflow-y-auto custom-scrollbar flex flex-col relative transition-opacity duration-200"></div>',
         '</div>'
     ];
     container.innerHTML = layouts.join('\n');
