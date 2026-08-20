@@ -1517,7 +1517,7 @@ function renderPostVerifMain(teams) {
     tabHtml += '<div class="pl-4 ml-2 border-l border-theme flex items-center pb-2.5"><button onclick="promptAddNewDpvTeam()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-500 bg-indigo-tint hover:bg-indigo-100 transition-all whitespace-nowrap -mt-1"><i data-lucide="plus" class="h-3.5 w-3.5"></i> Add Team</button></div>';
 
     var html = [
-        '<div class="h-full min-h-0 flex flex-col relative transition-opacity duration-300 opacity-0" id="dpvWrapper">',
+        '<div class="flex flex-col relative transition-opacity duration-300 opacity-0" id="dpvWrapper">',
         '    <div class="px-8 py-6 border-b border-theme bg-panel flex-shrink-0">',
         '        <h2 class="text-2xl font-bold text-heading flex items-center gap-2"><i data-lucide="check-square" class="h-6 w-6 text-indigo-500"></i> Domain Post Verification</h2>',
         '        <p class="text-sm text-muted mt-1">Monitor post-deployment domain statuses across assigned teams.</p>',
@@ -1525,7 +1525,7 @@ function renderPostVerifMain(teams) {
         '    <div class="px-8 pt-4 bg-app border-b border-theme flex gap-4 flex-shrink-0 overflow-x-auto custom-scrollbar" id="dpvTabContainer">',
                  tabHtml,
         '    </div>',
-        '    <div id="dpvContentArea" class="flex-1 min-h-0 p-6 bg-app overflow-y-auto custom-scrollbar flex flex-col relative transition-opacity duration-200"></div>',
+        '    <div id="dpvContentArea" class="p-6 bg-app flex flex-col relative transition-opacity duration-200"></div>',
         '</div>'
     ].join('\n');
 
@@ -1641,12 +1641,12 @@ function switchPostVerifTab(tabName) {
 
     setTimeout(function() {
         if (tabName === 'Overview') {
-            contentArea.className = "flex-1 p-6 bg-app overflow-y-auto custom-scrollbar transition-opacity duration-200";
+            contentArea.className = "p-6 bg-app transition-opacity duration-200";
             contentArea.innerHTML = skeletonScreen('cards');
             contentArea.style.opacity = '1';
             buildDpvOverviewUI();
         } else {
-            contentArea.className = "flex-1 p-6 bg-app overflow-hidden flex flex-col relative transition-opacity duration-200";
+            contentArea.className = "p-6 bg-app flex flex-col relative transition-opacity duration-200";
             contentArea.innerHTML = skeletonScreen('table');
             contentArea.style.opacity = '1';
 
@@ -2531,7 +2531,7 @@ function openBrandPage(brandName, btnElement) {
         '        <button onclick="switchBrandTab(\'overview\', \'' + safeName + '\')" id="tab-overview" class="pb-3 text-sm font-semibold text-indigo-500 border-b-2 border-indigo-500 transition-colors">Overview</button>',
         '        <button onclick="switchBrandTab(\'domains\', \'' + safeName + '\')" id="tab-domains" class="pb-3 text-sm font-semibold text-subtle hover:text-body hover:border-slate-300 transition-colors border-b-2 border-transparent">Domain List</button>',
         '    </div>',
-        '    <div id="brandContentArea" class="flex-1 p-6 bg-app overflow-y-auto custom-scrollbar flex flex-col relative transition-opacity duration-200"></div>',
+        '    <div id="brandContentArea" class="p-6 bg-app flex flex-col relative transition-opacity duration-200"></div>',
         '</div>'
     ];
     container.innerHTML = layouts.join('\n');
@@ -2554,7 +2554,7 @@ function switchBrandTab(tabName, brandName) {
 
         if (tabName === 'overview') {
             tabOverview.className = "pb-3 text-sm font-semibold text-indigo-500 border-b-2 border-indigo-500 transition-colors";
-            contentArea.className = "flex-1 p-6 bg-app overflow-y-auto custom-scrollbar transition-opacity duration-200";
+            contentArea.className = "p-6 bg-app transition-opacity duration-200";
             contentArea.innerHTML = skeletonScreen('cards');
             currentScreenContext = 'brand:' + brandName + ':overview';
 
@@ -2571,7 +2571,7 @@ function switchBrandTab(tabName, brandName) {
 
         } else if (tabName === 'domains') {
             tabDomains.className = "pb-3 text-sm font-semibold text-indigo-500 border-b-2 border-indigo-500 transition-colors";
-            contentArea.className = "flex-1 p-6 bg-app overflow-hidden flex flex-col transition-opacity duration-200";
+            contentArea.className = "p-6 bg-app flex flex-col transition-opacity duration-200";
             currentScreenContext = 'brand:' + brandName + ':domains';
 
             var tableHtml = [
