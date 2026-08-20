@@ -1760,7 +1760,7 @@ function renderDpvTeamContent(tabName) {
                 '       <button onclick="openDpvCrudModal()" class="flex-1 md:flex-none px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 shadow-[0_4px_12px_rgba(79,70,229,0.25)] flex items-center gap-2 justify-center transition-all"><i data-lucide="plus" class="h-4 w-4"></i> Add Record</button>',
                 '    </div>',
                 '</div>',
-                '<div class="panel-card flex flex-col overflow-hidden flex-shrink-0 max-h-[60vh]" id="dpvTableWrapper"></div>'
+                '<div class="panel-card flex flex-col overflow-hidden flex-shrink-0" id="dpvTableWrapper"></div>'
             ].join('\n');
 
             contentArea.innerHTML = toolbarHtml;
@@ -1840,9 +1840,9 @@ function renderDpvTableData() {
         '    <button onclick="openDpvBulkUpdateModal()" class="px-3 py-1.5 bg-amber-tint text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900 text-[11px] font-bold rounded-lg hover:opacity-80 shadow-sm flex items-center gap-1.5 transition-all uppercase tracking-wider"><i data-lucide="edit" class="h-3.5 w-3.5"></i> Bulk Update</button>',
         '  </div>',
         '</div>',
-        '<div class="overflow-y-auto overflow-x-auto custom-scrollbar relative bg-panel flex-1 min-h-0">',
+        '<div class="overflow-x-auto custom-scrollbar relative bg-panel">',
         '  <table class="w-full text-left border-collapse whitespace-nowrap relative">',
-        '    <thead class="bg-app sticky top-0 z-20 shadow-sm border-b border-theme backdrop-blur-sm">',
+        '    <thead class="bg-app shadow-sm border-b border-theme">',
         '      <tr class="text-[11px] uppercase font-bold text-subtle tracking-wider">',
         '        <th class="px-4 py-3 w-10 text-center"><input type="checkbox" onclick="toggleAllDpvRows(this)" class="rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"></th>',
         '        <th class="px-4 py-3 text-indigo-500">CICC REF NO.</th>',
@@ -2584,10 +2584,10 @@ function switchBrandTab(tabName, brandName) {
                 '    <div class="relative"><i data-lucide="search" class="absolute left-3 top-2.5 h-4 w-4 text-subtle"></i><input type="text" id="localSearchInput" onkeyup="filterBrandTable()" placeholder="Search in ' + brandName + '..." class="pl-9 pr-4 py-2 border border-theme bg-panel rounded-lg text-sm text-body focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64 transition-all shadow-sm"></div>',
                 '    <button onclick="openDomainModal()" class="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 shadow-sm"><i data-lucide="plus" class="h-4 w-4"></i> Add Domain</button>',
                 '</div>',
-                '<div class="panel-card flex flex-col overflow-hidden max-h-[60vh]">',
-                '    <div class="overflow-y-auto overflow-x-auto custom-scrollbar flex-1 min-h-0 relative bg-panel">',
+                '<div class="panel-card flex flex-col overflow-hidden">',
+                '    <div class="overflow-x-auto custom-scrollbar relative bg-panel">',
                 '        <table class="w-full text-left border-collapse whitespace-nowrap relative">',
-                '            <thead class="bg-app sticky top-0 z-20 shadow-sm border-b border-theme backdrop-blur-sm">',
+                '            <thead class="bg-app shadow-sm border-b border-theme">',
                 '                <tr class="text-[11px] uppercase font-bold text-subtle tracking-wider">',
                 '                    <th class="px-4 py-3 cursor-pointer hover:opacity-80 transition-colors" onclick="sortBrandTable(\'domain\')">Domain Name <i data-lucide="chevrons-up-down" class="h-3 w-3 inline opacity-50"></i></th>',
                 '                    <th class="px-4 py-3 cursor-pointer hover:opacity-80 transition-colors" onclick="sortBrandTable(\'expiration\')">Exp Date <i data-lucide="chevrons-up-down" class="h-3 w-3 inline opacity-50"></i></th>',
