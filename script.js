@@ -2917,20 +2917,57 @@ function handleCSVUpload(event) {
     reader.readAsText(file);
 }
 
+// BUG FIX: dati, fake lang ang function na ito — 1-second na setTimeout tapos "success" toast,
+// pero hindi talaga tumatawag sa backend kaya walang aktwal na na-save. Ngayon, tumatawag na ito
+// nang sunud-sunod (isa-isa, hindi sabay-sabay, para hindi ma-overload ang Worker) sa parehong
+// saveNewDomain na ginagamit ng single-entry form, at nagbibigay ng TOTOONG bilang ng successful/
+// failed saves — hindi na basta "processed successfully" kahit ano pa ang totoong nangyari.
 function saveBulkDomains() {
+    if (!validBulkUploadArray || validBulkUploadArray.length === 0) {
+        showPremiumToast("Walang Laman", "Walang domain na dapat i-upload.", "error");
+        return;
+    }
+
     var btn = document.getElementById('btnSaveBulk');
     var originalText = btn.innerHTML;
-    btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div> Processing...';
     btn.disabled = true;
 
-    setTimeout(function() {
-        btn.innerHTML = originalText;
-        closeSmoothly('domainModal');
-        showPremiumToast("Bulk Upload Success", validBulkUploadArray.length + " domains processed successfully!", "success");
-        document.getElementById('csvFileInput').value = '';
-        document.getElementById('bulkUploadStats').classList.add('hidden');
-        validBulkUploadArray = [];
-    }, 1000);
+    var toSave = validBulkUploadArray.slice();
+    var total = toSave.length;
+    var successCount = 0, failCount = 0;
+
+    function saveNext() {
+        btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div> Saving ' + (successCount + failCount + 1) + ' of ' + total + '...';
+
+        if (toSave.length === 0) {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            closeSmoothly('domainModal');
+            document.getElementById('csvFileInput').value = '';
+            document.getElementById('bulkUploadStats').classList.add('hidden');
+            validBulkUploadArray = [];
+            var msg = successCount + " domain(s) na-save" + (failCount > 0 ? (", " + failCount + " na-fail — subukan ulit yung mga yun") : "") + ".";
+            showPremiumToast(failCount > 0 ? "Tapos na (may kulang)" : "Bulk Upload Success", msg, failCount > 0 ? "error" : "success");
+            loadBrandDomains(currentBrandName); // ipapakita agad sa table ang bagong laman
+            return;
+        }
+
+        var item = toSave.shift();
+        var payload = { originalDomain: "", brand: item.brand, domain: item.domain, expiration: item.expiration, account: item.account, price: item.price, notes: item.notes, agent: item.agent, redirected: item.redirected };
+        var safePayload = JSON.parse(JSON.stringify(payload));
+
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+            google.script.run.withSuccessHandler(function(res) {
+                if (res && res.success) successCount++; else failCount++;
+                saveNext();
+            }).withFailureHandler(function() { failCount++; saveNext(); }).saveNewDomain(currentSessionToken, safePayload);
+        } else {
+            successCount++;
+            setTimeout(saveNext, 50);
+        }
+    }
+
+    saveNext();
 }
 
 function openDomainModal(index) {
