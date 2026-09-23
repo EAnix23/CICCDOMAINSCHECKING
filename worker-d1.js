@@ -149,13 +149,14 @@ const actions = {
   async getUsersData(db, token) {
     try {
       await checkSession(db, token, true);
-      const { results } = await db.prepare("SELECT username, email, image, permissions, team, hrid_number, position, sub_department, rest_day FROM users").all();
+      const { results } = await db.prepare("SELECT username, email, image, permissions, team, hrid_number, position, sub_department, rest_day, full_name FROM users").all();
       return results.map(r => {
         let perms = []; try { perms = JSON.parse(r.permissions || "[]"); } catch (e) {}
         // password is never sent to the client anymore — hashes aren't recoverable, and shouldn't be either
         return {
           username: r.username, password: "", email: r.email || "", image: r.image || "", permissions: perms, team: r.team || "",
-          hridNumber: r.hrid_number || "", position: r.position || "", subDepartment: r.sub_department || "", restDay: r.rest_day || ""
+          hridNumber: r.hrid_number || "", position: r.position || "", subDepartment: r.sub_department || "", restDay: r.rest_day || "",
+          fullName: r.full_name || ""
         };
       });
     } catch (e) { return []; }
@@ -164,9 +165,9 @@ const actions = {
   async saveNewUserBackend(db, token, userObj) {
     await checkSession(db, token, true);
     const hash = await hashPassword(userObj.password);
-    await db.prepare("INSERT INTO users (username, password_hash, email, permissions, team, hrid_number, position, sub_department, rest_day) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    await db.prepare("INSERT INTO users (username, password_hash, email, permissions, team, hrid_number, position, sub_department, rest_day, full_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "",
-        userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "").run();
+        userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "", userObj.fullName || "").run();
     return { success: true, message: "User successfully created!" };
   },
 
@@ -174,13 +175,13 @@ const actions = {
     await checkSession(db, token, true);
     if (userObj.password && userObj.password.trim() !== "") {
       const hash = await hashPassword(userObj.password);
-      await db.prepare("UPDATE users SET username=?, password_hash=?, email=?, permissions=?, team=?, hrid_number=?, position=?, sub_department=?, rest_day=? WHERE username=?")
+      await db.prepare("UPDATE users SET username=?, password_hash=?, email=?, permissions=?, team=?, hrid_number=?, position=?, sub_department=?, rest_day=?, full_name=? WHERE username=?")
         .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "",
-          userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "", userObj.originalUsername).run();
+          userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "", userObj.fullName || "", userObj.originalUsername).run();
     } else {
-      await db.prepare("UPDATE users SET username=?, email=?, permissions=?, team=?, hrid_number=?, position=?, sub_department=?, rest_day=? WHERE username=?")
+      await db.prepare("UPDATE users SET username=?, email=?, permissions=?, team=?, hrid_number=?, position=?, sub_department=?, rest_day=?, full_name=? WHERE username=?")
         .bind(userObj.username, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "",
-          userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "", userObj.originalUsername).run();
+          userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "", userObj.fullName || "", userObj.originalUsername).run();
     }
     return { success: true, message: "User permissions updated successfully!" };
   },
@@ -662,7 +663,7 @@ const actions = {
     if (!targetTeam) return { team: "", dateList: [], members: [] };
 
     const { results: memberRows } = await db.prepare(
-      "SELECT username, hrid_number as hridNumber, position, sub_department as subDepartment, rest_day as restDay FROM users WHERE team = ? ORDER BY username ASC"
+      "SELECT username, hrid_number as hridNumber, position, sub_department as subDepartment, rest_day as restDay, full_name as fullName FROM users WHERE team = ? ORDER BY username ASC"
     ).bind(targetTeam).all();
 
     const { results: attRows } = await db.prepare(
@@ -694,7 +695,7 @@ const actions = {
         days[d] = (h === undefined) ? null : h;
         if (h) { totalDays++; totalHours += h; }
       });
-      return { username: u.username, hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
+      return { username: u.username, fullName: u.fullName || "", hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
     });
 
     return { team: targetTeam, dateList: dateList, members: members };

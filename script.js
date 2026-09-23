@@ -1167,12 +1167,13 @@ function renderSettingsUI(usersData) {
             var safePosition = String(u.position || '').replace(/'/g, "\\'");
             var safeSubDept = String(u.subDepartment || '').replace(/'/g, "\\'");
             var safeRestDay = String(u.restDay || '').replace(/'/g, "\\'");
+            var safeFullName = String(u.fullName || '').replace(/'/g, "\\'");
 
             return [
                 '<tr class="border-b border-theme hover:bg-app transition-colors group">',
                 '   <td class="px-6 py-4 flex items-center gap-4">',
                 '       <div class="h-8 w-8 rounded-full bg-app border border-theme flex items-center justify-center text-subtle"><i data-lucide="user" class="h-4 w-4"></i></div>',
-                '       <div><span class="text-sm font-bold text-heading group-hover:text-indigo-500 transition-colors block">' + u.username + '</span>' + (u.team ? '<span class="text-[10px] font-bold text-indigo-400 uppercase tracking-wide">' + escapeHtmlClient(u.team) + '</span>' : '') + '</div>',
+                '       <div><span class="text-sm font-bold text-heading group-hover:text-indigo-500 transition-colors block">' + u.username + '</span>' + (u.fullName ? '<span class="text-[11px] text-subtle block">' + escapeHtmlClient(u.fullName) + '</span>' : '') + (u.team ? '<span class="text-[10px] font-bold text-indigo-400 uppercase tracking-wide">' + escapeHtmlClient(u.team) + '</span>' : '') + '</div>',
                 '   </td>',
                 '   <td class="px-6 py-4 text-sm text-muted">' + (u.email || 'N/A') + '</td>',
                 '   <td class="px-6 py-4">',
@@ -1184,7 +1185,7 @@ function renderSettingsUI(usersData) {
                 '   <td class="px-6 py-4"><span class="px-3 py-1 rounded-md badge-good text-xs font-bold inline-flex items-center w-max gap-2">Activated <i data-lucide="chevron-down" class="h-3 w-3 opacity-50"></i></span></td>',
                 '   <td class="px-6 py-4">' + roleBadge + '</td>',
                 '   <td class="px-6 py-4 flex gap-2">',
-                '       <button onclick="openUserModal(\'' + safeUser + '\', \'' + safeEmail + '\', \'' + safePass + '\', \'' + safePerms + '\', \'' + safeTeam + '\', \'' + safeHrid + '\', \'' + safePosition + '\', \'' + safeSubDept + '\', \'' + safeRestDay + '\')" class="px-3 py-1.5 rounded-lg border border-theme text-subtle hover:text-indigo-500 hover:border-indigo-300 hover:bg-indigo-tint transition-colors flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider"><i data-lucide="edit" class="h-3 w-3"></i> Edit</button>',
+                '       <button onclick="openUserModal(\'' + safeUser + '\', \'' + safeEmail + '\', \'' + safePass + '\', \'' + safePerms + '\', \'' + safeTeam + '\', \'' + safeHrid + '\', \'' + safePosition + '\', \'' + safeSubDept + '\', \'' + safeRestDay + '\', \'' + safeFullName + '\')" class="px-3 py-1.5 rounded-lg border border-theme text-subtle hover:text-indigo-500 hover:border-indigo-300 hover:bg-indigo-tint transition-colors flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider"><i data-lucide="edit" class="h-3 w-3"></i> Edit</button>',
                 '       <button onclick="deleteUserRecord(\'' + safeUser + '\')" class="p-1.5 rounded-lg border border-theme text-subtle hover:text-rose-500 hover:border-rose-300 hover:bg-rose-tint transition-colors"><i data-lucide="trash-2" class="h-4 w-4"></i></button>',
                 '   </td>',
                 '</tr>'
@@ -1221,11 +1222,12 @@ function renderSettingsUI(usersData) {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
-function openUserModal(editUser, editEmail, editPass, editPermsStr, editTeam, editHrid, editPosition, editSubDept, editRestDay) {
+function openUserModal(editUser, editEmail, editPass, editPermsStr, editTeam, editHrid, editPosition, editSubDept, editRestDay, editFullName) {
     var isEdit = !!editUser;
     currentEditingUser = isEdit ? editUser : null;
 
     document.getElementById('newUsername').value = editUser || '';
+    document.getElementById('newUserFullName').value = editFullName || '';
     document.getElementById('newEmail').value = editEmail || '';
     document.getElementById('newPassword').value = editPass || '';
     document.getElementById('newUserHrid').value = editHrid || '';
@@ -1353,7 +1355,7 @@ function saveNewUser() {
     var email = document.getElementById('newEmail').value.trim();
     var pass = document.getElementById('newPassword').value.trim();
 
-    if(!user || !pass) { showPremiumToast("Error", "Username and Password are required.", "error"); return; }
+    if(!user || (!currentEditingUser && !pass)) { showPremiumToast("Error", "Username and Password are required.", "error"); return; }
 
     var assignedItems = document.getElementById('listAssigned').children;
     var permissions = [];
@@ -1374,7 +1376,8 @@ function saveNewUser() {
         var position = document.getElementById('newUserPosition').value.trim();
         var subDepartment = document.getElementById('newUserSubDept').value.trim();
         var restDay = document.getElementById('newUserRestDay').value;
-        var payload = { originalUsername: String(currentEditingUser || ''), username: String(user), email: String(email), password: String(pass), permissions: permissions, team: String(team || ''), hridNumber: hridNumber, position: position, subDepartment: subDepartment, restDay: restDay };
+        var fullName = document.getElementById('newUserFullName').value.trim();
+        var payload = { originalUsername: String(currentEditingUser || ''), username: String(user), email: String(email), password: String(pass), permissions: permissions, team: String(team || ''), hridNumber: hridNumber, position: position, subDepartment: subDepartment, restDay: restDay, fullName: fullName };
         var safePayload = JSON.parse(JSON.stringify(payload));
         var backendFunc = currentEditingUser ? 'updateUserBackend' : 'saveNewUserBackend';
 
@@ -3672,7 +3675,7 @@ function kpiRunDtrExport() {
         var headers = ['Team Personnel', 'HRID Number', 'Position', 'Sub-Department', 'Rest Day'].concat(dateList).concat(['Number of Days', 'Total Hours (no break)']);
         var rows = members.map(function(m) {
             var dayCells = dateList.map(function(d) { return (m.days[d] === null || m.days[d] === undefined) ? '' : m.days[d]; });
-            return [m.username, m.hridNumber, m.position, m.subDepartment, m.restDay].concat(dayCells).concat([m.totalDays, m.totalHours]);
+            return [m.fullName || m.username, m.hridNumber, m.position, m.subDepartment, m.restDay].concat(dayCells).concat([m.totalDays, m.totalHours]);
         });
 
         downloadCSV('DTR_' + (data.team || kpiCurrentTeam) + '_' + startDate + '_to_' + endDate, headers, rows);
