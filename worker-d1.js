@@ -491,24 +491,29 @@ const actions = {
       `SELECT agent, domain FROM dpv_records WHERE created_at >= ? AND team = ? AND domain NOT LIKE 'init-%' ORDER BY agent ASC`
     ).bind(startSQL, targetTeam).all();
 
-    const autoTasks = [];
-    bbcRows.forEach(function (r) { autoTasks.push({ label: "[BBC] " + r.brand + " — " + r.domain, agent: r.agent || "" }); });
-    dpvRows.forEach(function (r) { autoTasks.push({ label: "[DPV] " + r.domain, agent: r.agent || "" }); });
-
-    // Manual tasks are a persistent Kanban board, not scoped to today — a card created yesterday
-    // and still "In Progress" needs to keep showing up, not vanish once the date rolls over.
-    const { results: manualTasks } = await db.prepare(
-      "SELECT id, title, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? ORDER BY id DESC"
-    ).bind(targetTeam).all();
-
     // Super Admin can assign a task to anyone across every team they manage, not just this one —
     // an Agent/Admin only ever sees their own team, so they're still limited to targetTeam.
     const memberResult = session.role === "Super Admin"
-      ? await db.prepare("SELECT username FROM users WHERE team != '' ORDER BY username ASC").all()
-      : await db.prepare("SELECT username FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
+      ? await db.prepare("SELECT username, full_name as fullName FROM users WHERE team != '' ORDER BY username ASC").all()
+      : await db.prepare("SELECT username, full_name as fullName FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
     const { results: memberRows } = memberResult;
+    const nameMap = {};
+    memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; });
 
-    return { autoTasks, manualTasks, members: memberRows.map(r => r.username), team: targetTeam };
+    const autoTasks = [];
+    bbcRows.forEach(function (r) { autoTasks.push({ label: "[BBC] " + r.brand + " — " + r.domain, agent: r.agent || "", agentName: nameMap[r.agent] || r.agent || "" }); });
+    dpvRows.forEach(function (r) { autoTasks.push({ label: "[DPV] " + r.domain, agent: r.agent || "", agentName: nameMap[r.agent] || r.agent || "" }); });
+
+    // Manual tasks are a persistent Kanban board, not scoped to today — a card created yesterday
+    // and still "In Progress" needs to keep showing up, not vanish once the date rolls over.
+    const { results: manualTasksRaw } = await db.prepare(
+      "SELECT id, title, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? ORDER BY id DESC"
+    ).bind(targetTeam).all();
+    const manualTasks = manualTasksRaw.map(function (t) {
+      return Object.assign({}, t, { assignedToName: t.assignedTo ? (nameMap[t.assignedTo] || t.assignedTo) : "", createdByName: nameMap[t.created_by] || t.created_by });
+    });
+
+    return { autoTasks, manualTasks, members: memberRows.map(r => ({ username: r.username, fullName: r.fullName || r.username })), team: targetTeam };
   },
 
   async addKpiManualTask(db, token, team, title, assignedTo) {
@@ -586,9 +591,11 @@ const actions = {
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
     if (!targetTeam) return [];
     const { results } = await db.prepare(
-      "SELECT id, category, title, description, created_by, created_at FROM kpi_achievements WHERE team = ? ORDER BY id DESC"
+      "SELECT id, category, title, description, created_by, created_at, " +
+      "(SELECT full_name FROM users WHERE username = kpi_achievements.created_by) as createdByName " +
+      "FROM kpi_achievements WHERE team = ? ORDER BY id DESC"
     ).bind(targetTeam).all();
-    return results;
+    return results.map(function (r) { return Object.assign({}, r, { createdByName: r.createdByName || r.created_by }); });
   },
 
   async addKpiAchievement(db, token, team, category, title, description) {
@@ -621,8 +628,10 @@ const actions = {
     if (!targetTeam) return [];
     const days = (periodDays === 30) ? 30 : 7;
 
-    const { results: memberRows } = await db.prepare("SELECT username FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
+    const { results: memberRows } = await db.prepare("SELECT username, full_name as fullName FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
     const members = memberRows.map(r => r.username);
+    const nameMap = {};
+    memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; });
     if (members.length === 0) return [];
 
     const startSQL = getPeriodStartSQL(days);
@@ -656,7 +665,7 @@ const actions = {
       const attendancePct = Math.min(100, Math.round((attendance[m] / days) * 100));
       const tasksPct = taskTotals[m] > 0 ? Math.round((taskDone[m] / taskTotals[m]) * 100) : 100;
       const combinedScore = Math.round(uploadScore * 0.5 + attendancePct * 0.3 + tasksPct * 0.2);
-      return { username: m, uploads: uploads[m], uploadScore, attendanceDays: attendance[m], attendancePct, tasksDone: taskDone[m], tasksTotal: taskTotals[m], tasksPct, combinedScore };
+      return { username: m, fullName: nameMap[m] || m, uploads: uploads[m], uploadScore, attendanceDays: attendance[m], attendancePct, tasksDone: taskDone[m], tasksTotal: taskTotals[m], tasksPct, combinedScore };
     }).sort(function (a, b) { return b.combinedScore - a.combinedScore; });
   },
 
@@ -714,7 +723,7 @@ const actions = {
       return { username: u.username, fullName: u.fullName || "", hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
     });
 
-    return { team: targetTeam, dateList: dateList, members: members };
+    return { team: teamList.join(", "), dateList: dateList, members: members };
   },
 
   // Bulk-loads historical Time In/Out rows (e.g. from an old spreadsheet) via upsert keyed on

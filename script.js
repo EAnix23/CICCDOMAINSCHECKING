@@ -3409,10 +3409,10 @@ function renderKpiTodoTab() {
         kpiCurrentMembers = members;
 
         var autoHtml = autoTasks.length ? autoTasks.map(function(t) {
-            return '<div class="flex items-center gap-3 p-3 bg-app rounded-lg"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500 flex-shrink-0"></i><span class="text-sm text-body flex-1">' + escapeHtmlClient(t.label) + '</span><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(t.agent) + '</span></div>';
+            return '<div class="flex items-center gap-3 p-3 bg-app rounded-lg"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500 flex-shrink-0"></i><span class="text-sm text-body flex-1">' + escapeHtmlClient(t.label) + '</span><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(t.agentName || t.agent) + '</span></div>';
         }).join('') : '<p class="text-xs text-subtle p-3">Wala pang na-upload ngayong araw.</p>';
 
-        var assigneeOptions = '<option value="">Buong Team</option>' + members.map(function(m) { return '<option value="' + escapeHtmlClient(m) + '">' + escapeHtmlClient(m) + '</option>'; }).join('');
+        var assigneeOptions = '<option value="">Buong Team</option>' + members.map(function(m) { return '<option value="' + escapeHtmlClient(m.username) + '">' + escapeHtmlClient(m.fullName) + '</option>'; }).join('');
 
         var columns = [
             { key: 'todo', label: 'To Do', color: 'text-slate-500' },
@@ -3425,7 +3425,7 @@ function renderKpiTodoTab() {
                 return '<div class="p-3 bg-panel border border-theme rounded-lg shadow-sm group">' +
                     '<p class="text-sm font-bold text-body mb-2">' + escapeHtmlClient(t.title) + '</p>' +
                     '<div class="flex items-center justify-between gap-2">' +
-                        '<span class="text-[10px] font-bold text-indigo-400 uppercase truncate">' + escapeHtmlClient(t.assignedTo || 'Team') + '</span>' +
+                        '<span class="text-[10px] font-bold text-indigo-400 uppercase truncate">' + escapeHtmlClient(t.assignedToName || 'Team') + '</span>' +
                         '<div class="flex items-center gap-1 flex-shrink-0">' +
                             '<select onchange="kpiChangeTaskStatus(' + t.id + ', this.value)" class="text-[10px] border border-theme rounded px-1 py-1 bg-app text-body">' +
                                 columns.map(function(c) { return '<option value="' + c.key + '"' + (c.key === col.key ? ' selected' : '') + '>' + c.label + '</option>'; }).join('') +
@@ -3553,13 +3553,7 @@ function renderKpiAttendanceLog() {
     var isSuperAdmin = currentUserRole === 'Super Admin';
     var teamPickerHtml = '';
     if (isSuperAdmin && kpiAllTeams.length > 1) {
-        teamPickerHtml = '<div class="flex flex-wrap items-center gap-3 mb-3 pb-3 border-b border-theme">' +
-            '<span class="text-[10px] font-bold text-subtle uppercase">Teams:</span>' +
-            kpiAllTeams.map(function(t) {
-                var checked = t === kpiCurrentTeam ? ' checked' : '';
-                return '<label class="flex items-center gap-1.5 text-xs text-body cursor-pointer"><input type="checkbox" class="kpi-att-team-chk rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" value="' + escapeHtmlClient(t) + '"' + checked + '> ' + escapeHtmlClient(t) + '</label>';
-            }).join('') +
-        '</div>';
+        teamPickerHtml = '<p class="text-[10px] font-bold text-subtle uppercase mb-3 pb-3 border-b border-theme">Pinagsama-samang Attendance ng lahat ng teams (' + kpiAllTeams.map(escapeHtmlClient).join(', ') + ')</p>';
     }
 
     logEl.innerHTML = '<div class="panel-card p-5">' +
@@ -3589,9 +3583,8 @@ function kpiRefreshAttendanceSummary() {
     kpiAttendanceSummaryEnd = endInput ? endInput.value : kpiAttendanceSummaryEnd;
     tableEl.innerHTML = '<div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div>';
 
-    var teamChks = document.querySelectorAll('.kpi-att-team-chk');
-    var selectedTeams = [];
-    teamChks.forEach(function(c) { if (c.checked) selectedTeams.push(c.value); });
+    var isSuperAdmin = currentUserRole === 'Super Admin';
+    var selectedTeams = (isSuperAdmin && kpiAllTeams.length > 1) ? kpiAllTeams : [];
     var showTeamCol = selectedTeams.length > 1;
 
     google.script.run.withSuccessHandler(function(data) {
@@ -3646,7 +3639,7 @@ function renderKpiAchievementsTab() {
                 '<span class="text-[10px] font-black uppercase px-2 py-1 rounded-md ' + (catColors[r.category] || catColors.accomplishment) + '">' + (catLabels[r.category] || escapeHtmlClient(r.category)) + '</span>' +
                 '<h4 class="text-sm font-black text-heading mt-2">' + escapeHtmlClient(r.title) + '</h4>' +
                 (r.description ? '<p class="text-xs text-subtle mt-1">' + escapeHtmlClient(r.description) + '</p>' : '') +
-                '<div class="flex items-center justify-between mt-3"><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(r.created_by) + ' • ' + escapeHtmlClient((r.created_at || '').slice(0, 10)) + '</span>' +
+                '<div class="flex items-center justify-between mt-3"><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(r.createdByName || r.created_by) + ' • ' + escapeHtmlClient((r.created_at || '').slice(0, 10)) + '</span>' +
                 '<button onclick="kpiDeleteAchievement(' + r.id + ')" class="opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-700 transition-opacity"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button></div>' +
             '</div>';
         }).join('') : '<p class="text-xs text-subtle p-3 col-span-full">Wala pang naitala.</p>';
@@ -3697,7 +3690,7 @@ function renderKpiScoreboardTab() {
         var rowsHtml = rows.length ? rows.map(function(r, idx) {
             var isTop = idx === 0 && r.combinedScore > 0;
             return '<tr class="border-b border-theme' + (isTop ? ' bg-indigo-tint' : '') + '">' +
-                '<td class="py-3 px-3 text-sm font-bold text-body"><span class="flex items-center gap-2">' + (isTop ? '<i data-lucide="trophy" class="h-4 w-4 text-amber-500"></i>' : '') + escapeHtmlClient(r.username) + '</span></td>' +
+                '<td class="py-3 px-3 text-sm font-bold text-body"><span class="flex items-center gap-2">' + (isTop ? '<i data-lucide="trophy" class="h-4 w-4 text-amber-500"></i>' : '') + escapeHtmlClient(r.fullName || r.username) + '</span></td>' +
                 '<td class="py-3 px-3 text-xs text-body text-center">' + r.uploads + ' <span class="text-subtle">(' + r.uploadScore + '%)</span></td>' +
                 '<td class="py-3 px-3 text-xs text-body text-center">' + r.attendanceDays + ' <span class="text-subtle">(' + r.attendancePct + '%)</span></td>' +
                 '<td class="py-3 px-3 text-xs text-body text-center">' + r.tasksDone + '/' + r.tasksTotal + ' <span class="text-subtle">(' + r.tasksPct + '%)</span></td>' +
@@ -3838,8 +3831,9 @@ function openKpiImportModal() {
 }
 
 function kpiDownloadAttendanceTemplate() {
+    var sampleUsername = (kpiCurrentMembers[0] && kpiCurrentMembers[0].username) || 'TEAM001_ASTA';
     downloadCSV('attendance_import_template', ['Username', 'Date (YYYY-MM-DD)', 'Time In (HH:MM)', 'Time Out (HH:MM)'], [
-        [(kpiCurrentMembers[0] || 'TEAM001_ASTA'), '2026-01-05', '08:00', '17:00']
+        [sampleUsername, '2026-01-05', '08:00', '17:00']
     ]);
 }
 
