@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>CSV to D1 SQL Converter (local only)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 20px; color: #1e293b; }
+  h1 { font-size: 18px; }
+  h2 { font-size: 15px; margin-top: 32px; }
+  p { color: #475569; font-size: 14px; line-height: 1.5; }
+  textarea { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 12px; font-family: monospace; box-sizing: border-box; }
+  .input { height: 140px; }
+  .output { height: 220px; background: #f8fafc; }
+  button { padding: 10px 20px; background: #4f46e5; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; margin-bottom: 12px; }
+  button.small { padding: 6px 14px; font-size: 13px; margin: 0; }
+  button:disabled { background: #cbd5e1; cursor: not-allowed; }
+  .note { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 12px; font-size: 13px; }
+  .stat { font-size: 13px; font-weight: bold; color: #4f46e5; margin: 4px 0 12px; }
+  .warn { color: #b45309; }
+  .batch-bar { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .batch-label { font-size: 13px; font-weight: bold; min-width: 110px; }
+  .copied { color: #059669; font-size: 13px; font-weight: bold; }
+</style>
+</head>
+<body>
+  <h1>📦 CSV → D1 SQL Converter</h1>
+  <p class="note">100% local — walang ipinapadala kahit saan. Steps: sa Google Sheets, i-export yung tab bilang CSV (File → Download → Comma Separated Values), buksan yung CSV file sa Notepad, kopyahin lahat ng laman, i-paste dito.</p>
+
+  <h2>1) "Domain List" tab CSV</h2>
+  <p>Column order dapat: Brand, Domain, Agent, Price, Expiration, Account, Notes, Redirected, PLDT, PLDT Remarks, Globe, Globe Remarks, Converge, Converge Remarks, Dito, Dito Remarks. Unang row (headers) — awtomatikong lalaktawan.</p>
+  <textarea id="domainsCsv" class="input" placeholder="I-paste dito yung CSV content ng Domain List tab..."></textarea>
+  <button onclick="convertDomains()">Convert to SQL</button>
+  <div id="domainsStat" class="stat"></div>
+  <div id="domainsBatchBar" class="batch-bar" style="display:none;">
+    <span id="domainsBatchLabel" class="batch-label"></span>
+    <button class="small" onclick="navBatch('domains', -1)">◀ Prev</button>
+    <button class="small" onclick="navBatch('domains', 1)">Next ▶</button>
+    <button class="small" onclick="copyBatch('domains')">📋 Copy This Batch</button>
+    <span id="domainsCopied" class="copied" style="display:none;">Copied!</span>
+  </div>
+  <textarea id="domainsOut" class="output" readonly placeholder="Lalabas dito yung SQL INSERT statements..."></textarea>
+
+  <h2>2) "DATASHEET" (DPV) tab CSV</h2>
+  <p>Column order dapat: Batch ID, Domain, Team, PLDT, PLDT Remarks, Globe, Globe Remarks, Converge, Converge Remarks, Dito, Dito Remarks, CICC, Agent.</p>
+  <textarea id="dpvCsv" class="input" placeholder="I-paste dito yung CSV content ng DATASHEET tab..."></textarea>
+  <button onclick="convertDpv()">Convert to SQL</button>
+  <div id="dpvStat" class="stat"></div>
+  <div id="dpvBatchBar" class="batch-bar" style="display:none;">
+    <span id="dpvBatchLabel" class="batch-label"></span>
+    <button class="small" onclick="navBatch('dpv', -1)">◀ Prev</button>
+    <button class="small" onclick="navBatch('dpv', 1)">Next ▶</button>
+    <button class="small" onclick="copyBatch('dpv')">📋 Copy This Batch</button>
+    <span id="dpvCopied" class="copied" style="display:none;">Copied!</span>
+  </div>
+  <textarea id="dpvOut" class="output" readonly placeholder="Lalabas dito yung SQL INSERT statements..."></textarea>
+
+  <p class="warn">Awtomatiko nang hinahati sa mga batch (2,000 statements bawat isa) kung malaki yung datos — gamitin yung Prev/Next at "Copy This Batch" button, tapos i-paste + Execute sa D1 Console isa-isa, batch by batch.</p>
+
+  <script>
+    // Detects whether the pasted text is comma-delimited (real CSV file) or tab-delimited
+    // (what you get when you copy/paste cells directly out of Google Sheets instead of
+    // using File > Download > CSV). Looks at the first non-empty line.
+    function detectDelimiter(text) {
+      const firstLine = text.split(/\r?\n/).find(l => l.trim() !== '') || '';
+      const tabCount = (firstLine.match(/\t/g) || []).length;
+      const commaCount = (firstLine.match(/,/g) || []).length;
+      return tabCount > commaCount ? '\t' : ',';
+    }
+
+    // Proper delimited-text parser: handles quoted fields with embedded delimiters/newlines/escaped quotes
+    function parseCSV(text) {
+      const delim = detectDelimiter(text);
+      const rows = [];
+      let row = [], field = '', inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i], next = text[i + 1];
+        if (inQuotes) {
+          if (c === '"' && next === '"') { field += '"'; i++; }
+          else if (c === '"') { inQuotes = false; }
+          else { field += c; }
+        } else {
+          if (c === '"') inQuotes = true;
+          else if (c === delim) { row.push(field); field = ''; }
+          else if (c === '\r') { /* skip */ }
+          else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+          else { field += c; }
+        }
+      }
+      if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+      return rows.filter(r => r.some(cell => cell.trim() !== ''));
+    }
+
+    function sqlStr(v) {
+      v = (v === undefined || v === null) ? '' : String(v);
+      return "'" + v.replace(/'/g, "''") + "'";
+    }
+
+    const BATCH_SIZE = 2000;
+    const batches = { domains: [], dpv: [] }; // arrays of statement-arrays
+    const currentBatchIndex = { domains: 0, dpv: 0 };
+
+    function chunk(arr, size) {
+      const out = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    }
+
+    function renderBatches(kind) {
+      const bar = document.getElementById(kind + 'BatchBar');
+      const label = document.getElementById(kind + 'BatchLabel');
+      const out = document.getElementById(kind + 'Out');
+      const list = batches[kind];
+      if (list.length <= 1) {
+        bar.style.display = 'none';
+        out.value = list.length ? list[0].join('\n') : '';
+        return;
+      }
+      bar.style.display = 'flex';
+      const i = currentBatchIndex[kind];
+      label.innerText = 'Batch ' + (i + 1) + ' of ' + list.length;
+      out.value = list[i].join('\n');
+    }
+
+    function navBatch(kind, dir) {
+      const list = batches[kind];
+      let i = currentBatchIndex[kind] + dir;
+      if (i < 0) i = 0;
+      if (i > list.length - 1) i = list.length - 1;
+      currentBatchIndex[kind] = i;
+      renderBatches(kind);
+    }
+
+    function copyBatch(kind) {
+      const out = document.getElementById(kind + 'Out');
+      out.select();
+      document.execCommand('copy');
+      const copiedEl = document.getElementById(kind + 'Copied');
+      copiedEl.style.display = 'inline';
+      setTimeout(() => { copiedEl.style.display = 'none'; }, 1500);
+    }
+
+    function convertDomains() {
+      const raw = document.getElementById('domainsCsv').value.trim();
+      if (!raw) { alert('Paste the CSV content first.'); return; }
+      const delim = detectDelimiter(raw);
+      const allRows = parseCSV(raw);
+      const rows = allRows.slice(1); // skip header row
+      let out = [];
+      let skipped = 0;
+      let mismatched = 0;
+      rows.forEach(r => {
+        if (r.length !== 16) mismatched++;
+        const brand = (r[0] || '').trim();
+        const domain = (r[1] || '').trim();
+        if (!brand || !domain) { skipped++; return; }
+        const vals = [
+          sqlStr(brand), sqlStr(domain), sqlStr(r[2]), sqlStr(r[3]), sqlStr(r[4]),
+          sqlStr(r[5]), sqlStr(r[6]), sqlStr(r[7]), sqlStr(r[8]), sqlStr(r[9]),
+          sqlStr(r[10]), sqlStr(r[11]), sqlStr(r[12]), sqlStr(r[13]), sqlStr(r[14]), sqlStr(r[15])
+        ];
+        out.push("INSERT OR IGNORE INTO domains (brand, domain, agent, price, expiration, account, notes, redirected, pldt, pldt_remarks, globe, globe_remarks, converge, converge_remarks, dito, dito_remarks) VALUES (" + vals.join(', ') + ");");
+      });
+      batches.domains = chunk(out, BATCH_SIZE);
+      currentBatchIndex.domains = 0;
+      renderBatches('domains');
+      var stat = out.length + ' rows converted' + (skipped ? ', ' + skipped + ' skipped (missing brand/domain)' : '');
+      stat += ' — delimiter detected: ' + (delim === '\t' ? 'TAB' : 'COMMA');
+      if (batches.domains.length > 1) stat += ' — split into ' + batches.domains.length + ' batches of up to ' + BATCH_SIZE;
+      if (mismatched > 0) stat += ' — ⚠️ ' + mismatched + ' row(s) had a different column count than expected (16) — double-check the output columns look right before running it';
+      document.getElementById('domainsStat').innerText = stat;
+    }
+
+    function convertDpv() {
+      const raw = document.getElementById('dpvCsv').value.trim();
+      if (!raw) { alert('Paste the CSV content first.'); return; }
+      const delim = detectDelimiter(raw);
+      const rows = parseCSV(raw).slice(1);
+      let out = [];
+      let skipped = 0;
+      let mismatched = 0;
+      rows.forEach(r => {
+        if (r.length !== 13) mismatched++;
+        const domain = (r[1] || '').trim();
+        if (!domain) { skipped++; return; }
+        const vals = [
+          sqlStr(r[0]), sqlStr(domain), sqlStr(r[2]), sqlStr(r[3]), sqlStr(r[4]),
+          sqlStr(r[5]), sqlStr(r[6]), sqlStr(r[7]), sqlStr(r[8]), sqlStr(r[9]),
+          sqlStr(r[10]), sqlStr(r[11]), sqlStr(r[12])
+        ];
+        out.push("INSERT OR IGNORE INTO dpv_records (batch_id, domain, team, pldt, pldt_remarks, globe, globe_remarks, converge, converge_remarks, dito, dito_remarks, cicc, agent) VALUES (" + vals.join(', ') + ");");
+      });
+      batches.dpv = chunk(out, BATCH_SIZE);
+      currentBatchIndex.dpv = 0;
+      renderBatches('dpv');
+      var stat = out.length + ' rows converted' + (skipped ? ', ' + skipped + ' skipped (missing domain)' : '');
+      stat += ' — delimiter detected: ' + (delim === '\t' ? 'TAB' : 'COMMA');
+      if (batches.dpv.length > 1) stat += ' — split into ' + batches.dpv.length + ' batches of up to ' + BATCH_SIZE;
+      if (mismatched > 0) stat += ' — ⚠️ ' + mismatched + ' row(s) had a different column count than expected (13) — double-check the output columns look right before running it';
+      document.getElementById('dpvStat').innerText = stat;
+    }
+  </script>
+</body>
+</html>
