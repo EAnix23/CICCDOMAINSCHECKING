@@ -149,11 +149,14 @@ const actions = {
   async getUsersData(db, token) {
     try {
       await checkSession(db, token, true);
-      const { results } = await db.prepare("SELECT username, email, image, permissions, team FROM users").all();
+      const { results } = await db.prepare("SELECT username, email, image, permissions, team, hrid_number, position, sub_department, rest_day FROM users").all();
       return results.map(r => {
         let perms = []; try { perms = JSON.parse(r.permissions || "[]"); } catch (e) {}
         // password is never sent to the client anymore — hashes aren't recoverable, and shouldn't be either
-        return { username: r.username, password: "", email: r.email || "", image: r.image || "", permissions: perms, team: r.team || "" };
+        return {
+          username: r.username, password: "", email: r.email || "", image: r.image || "", permissions: perms, team: r.team || "",
+          hridNumber: r.hrid_number || "", position: r.position || "", subDepartment: r.sub_department || "", restDay: r.rest_day || ""
+        };
       });
     } catch (e) { return []; }
   },
@@ -161,8 +164,9 @@ const actions = {
   async saveNewUserBackend(db, token, userObj) {
     await checkSession(db, token, true);
     const hash = await hashPassword(userObj.password);
-    await db.prepare("INSERT INTO users (username, password_hash, email, permissions, team) VALUES (?, ?, ?, ?, ?)")
-      .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "").run();
+    await db.prepare("INSERT INTO users (username, password_hash, email, permissions, team, hrid_number, position, sub_department, rest_day) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "",
+        userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "").run();
     return { success: true, message: "User successfully created!" };
   },
 
@@ -170,11 +174,13 @@ const actions = {
     await checkSession(db, token, true);
     if (userObj.password && userObj.password.trim() !== "") {
       const hash = await hashPassword(userObj.password);
-      await db.prepare("UPDATE users SET username=?, password_hash=?, email=?, permissions=?, team=? WHERE username=?")
-        .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "", userObj.originalUsername).run();
+      await db.prepare("UPDATE users SET username=?, password_hash=?, email=?, permissions=?, team=?, hrid_number=?, position=?, sub_department=?, rest_day=? WHERE username=?")
+        .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "",
+          userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "", userObj.originalUsername).run();
     } else {
-      await db.prepare("UPDATE users SET username=?, email=?, permissions=?, team=? WHERE username=?")
-        .bind(userObj.username, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "", userObj.originalUsername).run();
+      await db.prepare("UPDATE users SET username=?, email=?, permissions=?, team=?, hrid_number=?, position=?, sub_department=?, rest_day=? WHERE username=?")
+        .bind(userObj.username, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "",
+          userObj.hridNumber || "", userObj.position || "", userObj.subDepartment || "", userObj.restDay || "", userObj.originalUsername).run();
     }
     return { success: true, message: "User permissions updated successfully!" };
   },
@@ -474,7 +480,7 @@ const actions = {
   async getKpiTodayTasks(db, token, team) {
     const session = await checkSession(db, token);
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return { autoTasks: [], manualTasks: [], team: "" };
+    if (!targetTeam) return { autoTasks: [], manualTasks: [], members: [], team: "" };
 
     const startSQL = getPHTodayStartSQL();
     const { results: bbcRows } = await db.prepare(
@@ -490,19 +496,21 @@ const actions = {
 
     const todayDate = getPHDateStr();
     const { results: manualTasks } = await db.prepare(
-      "SELECT id, title, status, created_by, created_at FROM kpi_tasks WHERE team = ? AND task_date = ? ORDER BY id DESC"
+      "SELECT id, title, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? AND task_date = ? ORDER BY id DESC"
     ).bind(targetTeam, todayDate).all();
 
-    return { autoTasks, manualTasks, team: targetTeam };
+    const { results: memberRows } = await db.prepare("SELECT username FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
+
+    return { autoTasks, manualTasks, members: memberRows.map(r => r.username), team: targetTeam };
   },
 
-  async addKpiManualTask(db, token, team, title) {
+  async addKpiManualTask(db, token, team, title, assignedTo) {
     const session = await checkSession(db, token);
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
     if (!targetTeam) return { success: false, message: "Walang naka-assign na team sa account mo." };
     if (!title || !title.trim()) return { success: false, message: "Kailangan ng task title." };
-    await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, status, created_by, task_date) VALUES (?, 'manual', ?, 'pending', ?, ?)")
-      .bind(targetTeam, title.trim(), session.username, getPHDateStr()).run();
+    await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, status, created_by, task_date, assigned_to) VALUES (?, 'manual', ?, 'pending', ?, ?, ?)")
+      .bind(targetTeam, title.trim(), session.username, getPHDateStr(), assignedTo || "").run();
     return { success: true, message: "Task added." };
   },
 
@@ -590,6 +598,106 @@ const actions = {
     await checkSession(db, token);
     await db.prepare("DELETE FROM kpi_achievements WHERE id = ?").bind(id).run();
     return { success: true };
+  },
+
+  // Combined KPI Score = Uploads(50%) + Attendance(30%) + Tasks(20%), per team member, over the
+  // last `periodDays` (7 or 30). Uploads is scored relative to the TEAM's own average (no fixed
+  // quota exists), capped at 100 so one outlier can't blow the combined score past 100. Attendance
+  // counts a day only when BOTH Time In and Time Out are logged (a lone Time In doesn't count — no
+  // schedule data exists to know if the day was actually completed). Tasks is scored off tasks
+  // assigned directly to that person; a member with zero assigned tasks gets 100 for that part
+  // rather than being penalized for something that was never given to them.
+  async getKpiScoreboard(db, token, team, periodDays) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return [];
+    const days = (periodDays === 30) ? 30 : 7;
+
+    const { results: memberRows } = await db.prepare("SELECT username FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
+    const members = memberRows.map(r => r.username);
+    if (members.length === 0) return [];
+
+    const startSQL = getPeriodStartSQL(days);
+    const startDate = getPHDateStrDaysAgo(days);
+
+    const { results: bbcRows } = await db.prepare("SELECT agent, COUNT(*) as cnt FROM domains WHERE created_at >= ? AND agent IN (SELECT username FROM users WHERE team = ?) GROUP BY agent").bind(startSQL, targetTeam).all();
+    const { results: dpvRows } = await db.prepare("SELECT agent, COUNT(*) as cnt FROM dpv_records WHERE created_at >= ? AND team = ? AND domain NOT LIKE 'init-%' GROUP BY agent").bind(startSQL, targetTeam).all();
+    const { results: attRows } = await db.prepare("SELECT username, COUNT(*) as cnt FROM kpi_attendance WHERE team = ? AND date >= ? AND time_in != '' AND time_out != '' GROUP BY username").bind(targetTeam, startDate).all();
+    const { results: taskRows } = await db.prepare("SELECT assigned_to, status, COUNT(*) as cnt FROM kpi_tasks WHERE team = ? AND task_date >= ? AND assigned_to != '' GROUP BY assigned_to, status").bind(targetTeam, startDate).all();
+
+    const uploads = {}; members.forEach(m => uploads[m] = 0);
+    bbcRows.forEach(r => { if (uploads[r.agent] !== undefined) uploads[r.agent] += r.cnt; });
+    dpvRows.forEach(r => { if (uploads[r.agent] !== undefined) uploads[r.agent] += r.cnt; });
+
+    const attendance = {}; members.forEach(m => attendance[m] = 0);
+    attRows.forEach(r => { if (attendance[r.username] !== undefined) attendance[r.username] = r.cnt; });
+
+    const taskTotals = {}, taskDone = {};
+    members.forEach(m => { taskTotals[m] = 0; taskDone[m] = 0; });
+    taskRows.forEach(r => {
+      if (taskTotals[r.assigned_to] === undefined) return;
+      taskTotals[r.assigned_to] += r.cnt;
+      if (r.status === "done") taskDone[r.assigned_to] += r.cnt;
+    });
+
+    const uploadValues = members.map(m => uploads[m]);
+    const teamAvgUploads = uploadValues.length ? uploadValues.reduce((a, b) => a + b, 0) / uploadValues.length : 0;
+
+    return members.map(function (m) {
+      const uploadScore = teamAvgUploads > 0 ? Math.min(100, Math.round((uploads[m] / teamAvgUploads) * 100)) : (uploads[m] > 0 ? 100 : 0);
+      const attendancePct = Math.min(100, Math.round((attendance[m] / days) * 100));
+      const tasksPct = taskTotals[m] > 0 ? Math.round((taskDone[m] / taskTotals[m]) * 100) : 100;
+      const combinedScore = Math.round(uploadScore * 0.5 + attendancePct * 0.3 + tasksPct * 0.2);
+      return { username: m, uploads: uploads[m], uploadScore, attendanceDays: attendance[m], attendancePct, tasksDone: taskDone[m], tasksTotal: taskTotals[m], tasksPct, combinedScore };
+    }).sort(function (a, b) { return b.combinedScore - a.combinedScore; });
+  },
+
+  // Raw material for the bi-monthly DTR spreadsheet HR asks for — per-member daily hours computed
+  // strictly from Time In/Time Out pairs. A day with no record, or only one of the two punches, is
+  // left as null rather than guessed at (could be a rest day, an approved leave, or a missed punch —
+  // this system has no schedule data to tell those apart, so it's left for HR to mark by hand).
+  async exportDtrData(db, token, team, startDate, endDate) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return { team: "", dateList: [], members: [] };
+
+    const { results: memberRows } = await db.prepare(
+      "SELECT username, hrid_number as hridNumber, position, sub_department as subDepartment, rest_day as restDay FROM users WHERE team = ? ORDER BY username ASC"
+    ).bind(targetTeam).all();
+
+    const { results: attRows } = await db.prepare(
+      "SELECT username, date, time_in, time_out FROM kpi_attendance WHERE team = ? AND date >= ? AND date <= ? ORDER BY date ASC"
+    ).bind(targetTeam, startDate, endDate).all();
+
+    const byUser = {};
+    attRows.forEach(function (r) {
+      if (!byUser[r.username]) byUser[r.username] = {};
+      if (r.time_in && r.time_out) {
+        const inMin = timeStrToMinutes(r.time_in), outMin = timeStrToMinutes(r.time_out);
+        const diff = outMin - inMin;
+        byUser[r.username][r.date] = diff > 0 ? Math.round((diff / 60) * 10) / 10 : null;
+      } else {
+        byUser[r.username][r.date] = null;
+      }
+    });
+
+    const dateList = [];
+    let cursor = new Date(startDate + "T00:00:00Z");
+    const last = new Date(endDate + "T00:00:00Z");
+    while (cursor <= last) { dateList.push(cursor.toISOString().slice(0, 10)); cursor = new Date(cursor.getTime() + 86400000); }
+
+    const members = memberRows.map(function (u) {
+      const days = {};
+      let totalDays = 0, totalHours = 0;
+      dateList.forEach(function (d) {
+        const h = (byUser[u.username] || {})[d];
+        days[d] = (h === undefined) ? null : h;
+        if (h) { totalDays++; totalHours += h; }
+      });
+      return { username: u.username, hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
+    });
+
+    return { team: targetTeam, dateList: dateList, members: members };
   }
 };
 
@@ -777,6 +885,15 @@ function getPHDateStr() {
 function getPHTimeStr() {
   const phShifted = new Date(Date.now() + 8 * 3600000);
   return phShifted.toISOString().slice(11, 16);
+}
+function getPHDateStrDaysAgo(daysBack) {
+  const phShifted = new Date(Date.now() + 8 * 3600000 - daysBack * 86400000);
+  return phShifted.toISOString().slice(0, 10);
+}
+// "HH:MM" -> minutes since midnight, for computing hours worked between a Time In and Time Out.
+function timeStrToMinutes(str) {
+  const parts = String(str).split(":");
+  return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
 }
 
 function isIspActive(val) {
