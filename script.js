@@ -3796,7 +3796,7 @@ function openKpiImportModal() {
 
 function kpiDownloadAttendanceTemplate() {
     downloadCSV('attendance_import_template', ['Username', 'Date (YYYY-MM-DD)', 'Time In (HH:MM)', 'Time Out (HH:MM)'], [
-        (kpiCurrentMembers[0] || 'TEAM001_ASTA'), '2026-01-05', '08:00', '17:00'
+        [(kpiCurrentMembers[0] || 'TEAM001_ASTA'), '2026-01-05', '08:00', '17:00']
     ]);
 }
 
