@@ -501,7 +501,12 @@ const actions = {
       "SELECT id, title, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? ORDER BY id DESC"
     ).bind(targetTeam).all();
 
-    const { results: memberRows } = await db.prepare("SELECT username FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
+    // Super Admin can assign a task to anyone across every team they manage, not just this one —
+    // an Agent/Admin only ever sees their own team, so they're still limited to targetTeam.
+    const memberResult = session.role === "Super Admin"
+      ? await db.prepare("SELECT username FROM users WHERE team != '' ORDER BY username ASC").all()
+      : await db.prepare("SELECT username FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
+    const { results: memberRows } = memberResult;
 
     return { autoTasks, manualTasks, members: memberRows.map(r => r.username), team: targetTeam };
   },

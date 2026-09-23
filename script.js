@@ -3595,6 +3595,10 @@ function kpiRefreshAttendanceSummary() {
     var showTeamCol = selectedTeams.length > 1;
 
     google.script.run.withSuccessHandler(function(data) {
+        if (data && data.success === false) {
+            tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error: ' + escapeHtmlClient(data.message || 'Unknown error') + '</p>';
+            return;
+        }
         var members = (data && data.members) || [];
         var dateList = (data && data.dateList) || [];
         if (!members.length || !dateList.length) {
