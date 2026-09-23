@@ -495,10 +495,11 @@ const actions = {
     bbcRows.forEach(function (r) { autoTasks.push({ label: "[BBC] " + r.brand + " — " + r.domain, agent: r.agent || "" }); });
     dpvRows.forEach(function (r) { autoTasks.push({ label: "[DPV] " + r.domain, agent: r.agent || "" }); });
 
-    const todayDate = getPHDateStr();
+    // Manual tasks are a persistent Kanban board, not scoped to today — a card created yesterday
+    // and still "In Progress" needs to keep showing up, not vanish once the date rolls over.
     const { results: manualTasks } = await db.prepare(
-      "SELECT id, title, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? AND task_date = ? ORDER BY id DESC"
-    ).bind(targetTeam, todayDate).all();
+      "SELECT id, title, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? ORDER BY id DESC"
+    ).bind(targetTeam).all();
 
     const { results: memberRows } = await db.prepare("SELECT username FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
 
@@ -510,17 +511,18 @@ const actions = {
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
     if (!targetTeam) return { success: false, message: "Walang naka-assign na team sa account mo." };
     if (!title || !title.trim()) return { success: false, message: "Kailangan ng task title." };
-    await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, status, created_by, task_date, assigned_to) VALUES (?, 'manual', ?, 'pending', ?, ?, ?)")
+    await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, status, created_by, task_date, assigned_to) VALUES (?, 'manual', ?, 'todo', ?, ?, ?)")
       .bind(targetTeam, title.trim(), session.username, getPHDateStr(), assignedTo || "").run();
     return { success: true, message: "Task added." };
   },
 
-  async toggleKpiTask(db, token, taskId) {
+  // Kanban-style status move (To Do / In Progress / Done) — replaces the old pending/done toggle.
+  async updateKpiTaskStatus(db, token, taskId, status) {
     await checkSession(db, token);
-    const row = await db.prepare("SELECT id, status FROM kpi_tasks WHERE id = ?").bind(taskId).first();
-    if (!row) return { success: false, message: "Task not found." };
-    const newStatus = row.status === "done" ? "pending" : "done";
-    await db.prepare("UPDATE kpi_tasks SET status=?, updated_at=datetime('now') WHERE id=?").bind(newStatus, taskId).run();
+    const validStatuses = ["todo", "in_progress", "done"];
+    const newStatus = validStatuses.indexOf(status) !== -1 ? status : "todo";
+    const res = await db.prepare("UPDATE kpi_tasks SET status=?, updated_at=datetime('now') WHERE id=?").bind(newStatus, taskId).run();
+    if (res.meta.changes === 0) return { success: false, message: "Task not found." };
     return { success: true, status: newStatus };
   },
 
@@ -657,18 +659,27 @@ const actions = {
   // strictly from Time In/Time Out pairs. A day with no record, or only one of the two punches, is
   // left as null rather than guessed at (could be a rest day, an approved leave, or a missed punch —
   // this system has no schedule data to tell those apart, so it's left for HR to mark by hand).
-  async exportDtrData(db, token, team, startDate, endDate) {
+  async exportDtrData(db, token, team, startDate, endDate, teams) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return { team: "", dateList: [], members: [] };
+    let teamList;
+    if (session.role === "Super Admin" && Array.isArray(teams) && teams.length > 0) {
+      teamList = teams;
+    } else {
+      const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+      if (!targetTeam) return { team: "", dateList: [], members: [] };
+      teamList = [targetTeam];
+    }
+    const placeholders = teamList.map(() => "?").join(",");
 
     const { results: memberRows } = await db.prepare(
-      "SELECT username, hrid_number as hridNumber, position, sub_department as subDepartment, rest_day as restDay, full_name as fullName FROM users WHERE team = ? ORDER BY username ASC"
-    ).bind(targetTeam).all();
+      `SELECT username, team, hrid_number as hridNumber, position, sub_department as subDepartment, rest_day as restDay, full_name as fullName FROM users WHERE team IN (${placeholders}) ORDER BY team ASC, username ASC`
+    ).bind(...teamList).all();
 
+    // Joined against the member list (current team membership) rather than filtered by
+    // kpi_attendance.team directly, so a since-reassigned user's older rows still show up here.
     const { results: attRows } = await db.prepare(
-      "SELECT username, date, time_in, time_out FROM kpi_attendance WHERE team = ? AND date >= ? AND date <= ? ORDER BY date ASC"
-    ).bind(targetTeam, startDate, endDate).all();
+      `SELECT username, date, time_in, time_out FROM kpi_attendance WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ? ORDER BY date ASC`
+    ).bind(...teamList, startDate, endDate).all();
 
     const byUser = {};
     attRows.forEach(function (r) {

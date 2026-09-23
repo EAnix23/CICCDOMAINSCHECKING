@@ -3315,6 +3315,7 @@ function renderLogsInModal(container) {
 var kpiCurrentTeam = '';
 var kpiCurrentTab = 'todo';
 var kpiCurrentMembers = [];
+var kpiAllTeams = [];
 
 function escapeHtmlClient(str) {
     return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -3329,9 +3330,11 @@ function openKpiReport() {
 
     google.script.run.withSuccessHandler(function(teams) {
         var list = teams || [];
+        kpiAllTeams = list;
         if (list.indexOf(kpiCurrentTeam) === -1) { kpiCurrentTeam = list.length ? list[0] : (currentUserTeam || ''); }
         renderKpiShell(list);
     }).withFailureHandler(function() {
+        kpiAllTeams = [];
         renderKpiShell([]);
     }).getKpiTeams(currentSessionToken);
 }
@@ -3409,26 +3412,40 @@ function renderKpiTodoTab() {
             return '<div class="flex items-center gap-3 p-3 bg-app rounded-lg"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500 flex-shrink-0"></i><span class="text-sm text-body flex-1">' + escapeHtmlClient(t.label) + '</span><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(t.agent) + '</span></div>';
         }).join('') : '<p class="text-xs text-subtle p-3">Wala pang na-upload ngayong araw.</p>';
 
-        var manualHtml = manualTasks.length ? manualTasks.map(function(t) {
-            var done = t.status === 'done';
-            return '<div class="flex items-center gap-3 p-3 bg-app rounded-lg group">' +
-                '<input type="checkbox" ' + (done ? 'checked' : '') + ' onchange="kpiToggleTask(' + t.id + ')" class="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 h-4 w-4 flex-shrink-0">' +
-                '<span class="text-sm flex-1 ' + (done ? 'line-through text-subtle' : 'text-body') + '">' + escapeHtmlClient(t.title) + '</span>' +
-                '<span class="text-[10px] font-bold text-indigo-400 uppercase">' + escapeHtmlClient(t.assignedTo || 'Team') + '</span>' +
-                '<button onclick="kpiDeleteTask(' + t.id + ')" class="opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-700 transition-opacity"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>' +
-                '</div>';
-        }).join('') : '<p class="text-xs text-subtle p-3">Wala pang additional task.</p>';
-
         var assigneeOptions = '<option value="">Buong Team</option>' + members.map(function(m) { return '<option value="' + escapeHtmlClient(m) + '">' + escapeHtmlClient(m) + '</option>'; }).join('');
 
-        content.innerHTML =
-            '<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">' +
-                '<div class="panel-card p-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500"></i> Auto-listed Uploads Ngayong Araw</h3><div class="space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">' + autoHtml + '</div></div>' +
-                '<div class="panel-card p-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="list-checks" class="h-4 w-4 text-indigo-500"></i> Additional Task</h3>' +
-                    '<div class="flex flex-col sm:flex-row gap-2 mb-3"><input type="text" id="kpiNewTaskInput" placeholder="Magdagdag ng task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><select id="kpiNewTaskAssignee" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' + assigneeOptions + '</select><button onclick="kpiAddTask()" class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700"><i data-lucide="plus" class="h-4 w-4"></i></button></div>' +
-                    '<div class="space-y-2 max-h-[360px] overflow-y-auto custom-scrollbar">' + manualHtml + '</div>' +
-                '</div>' +
+        var columns = [
+            { key: 'todo', label: 'To Do', color: 'text-slate-500' },
+            { key: 'in_progress', label: 'In Progress', color: 'text-blue-500' },
+            { key: 'done', label: 'Done', color: 'text-emerald-500' }
+        ];
+        var boardHtml = '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">' + columns.map(function(col) {
+            var colTasks = manualTasks.filter(function(t) { return (col.key === 'todo') ? (t.status !== 'in_progress' && t.status !== 'done') : t.status === col.key; });
+            var cardsHtml = colTasks.length ? colTasks.map(function(t) {
+                return '<div class="p-3 bg-panel border border-theme rounded-lg shadow-sm group">' +
+                    '<p class="text-sm font-bold text-body mb-2">' + escapeHtmlClient(t.title) + '</p>' +
+                    '<div class="flex items-center justify-between gap-2">' +
+                        '<span class="text-[10px] font-bold text-indigo-400 uppercase truncate">' + escapeHtmlClient(t.assignedTo || 'Team') + '</span>' +
+                        '<div class="flex items-center gap-1 flex-shrink-0">' +
+                            '<select onchange="kpiChangeTaskStatus(' + t.id + ', this.value)" class="text-[10px] border border-theme rounded px-1 py-1 bg-app text-body">' +
+                                columns.map(function(c) { return '<option value="' + c.key + '"' + (c.key === col.key ? ' selected' : '') + '>' + c.label + '</option>'; }).join('') +
+                            '</select>' +
+                            '<button onclick="kpiDeleteTask(' + t.id + ')" class="opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-700 transition-opacity"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+            }).join('') : '<p class="text-xs text-subtle p-3 text-center">Wala.</p>';
+
+            return '<div class="panel-card p-3">' +
+                '<h4 class="text-xs font-extrabold uppercase tracking-widest mb-3 px-1 ' + col.color + '">' + col.label + ' (' + colTasks.length + ')</h4>' +
+                '<div class="space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">' + cardsHtml + '</div>' +
             '</div>';
+        }).join('') + '</div>';
+
+        content.innerHTML =
+            '<div class="panel-card p-5 mb-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500"></i> Auto-listed Uploads Ngayong Araw</h3><div class="space-y-2 max-h-[240px] overflow-y-auto custom-scrollbar">' + autoHtml + '</div></div>' +
+            '<div class="flex flex-col sm:flex-row gap-2 mb-4"><input type="text" id="kpiNewTaskInput" placeholder="Magdagdag ng task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><select id="kpiNewTaskAssignee" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' + assigneeOptions + '</select><button onclick="kpiAddTask()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 flex items-center gap-1.5"><i data-lucide="plus" class="h-4 w-4"></i> Add</button></div>' +
+            boardHtml;
         if (typeof lucide !== 'undefined') lucide.createIcons();
     }).withFailureHandler(function() {
         content.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading tasks.</p>';
@@ -3447,8 +3464,8 @@ function kpiAddTask() {
     }).addKpiManualTask(currentSessionToken, kpiCurrentTeam, title, assignedTo);
 }
 
-function kpiToggleTask(id) {
-    google.script.run.withSuccessHandler(function() { renderKpiTodoTab(); }).toggleKpiTask(currentSessionToken, id);
+function kpiChangeTaskStatus(id, status) {
+    google.script.run.withSuccessHandler(function() { renderKpiTodoTab(); }).updateKpiTaskStatus(currentSessionToken, id, status);
 }
 
 function kpiDeleteTask(id) {
@@ -3533,6 +3550,18 @@ function renderKpiAttendanceLog() {
         kpiAttendanceSummaryEnd = def.end;
     }
 
+    var isSuperAdmin = currentUserRole === 'Super Admin';
+    var teamPickerHtml = '';
+    if (isSuperAdmin && kpiAllTeams.length > 1) {
+        teamPickerHtml = '<div class="flex flex-wrap items-center gap-3 mb-3 pb-3 border-b border-theme">' +
+            '<span class="text-[10px] font-bold text-subtle uppercase">Teams:</span>' +
+            kpiAllTeams.map(function(t) {
+                var checked = t === kpiCurrentTeam ? ' checked' : '';
+                return '<label class="flex items-center gap-1.5 text-xs text-body cursor-pointer"><input type="checkbox" class="kpi-att-team-chk rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" value="' + escapeHtmlClient(t) + '"' + checked + '> ' + escapeHtmlClient(t) + '</label>';
+            }).join('') +
+        '</div>';
+    }
+
     logEl.innerHTML = '<div class="panel-card p-5">' +
         '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
             '<h3 class="text-sm font-black text-heading">Attendance Summary</h3>' +
@@ -3544,6 +3573,7 @@ function renderKpiAttendanceLog() {
                 '<button onclick="openKpiImportModal()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app flex items-center gap-1.5"><i data-lucide="upload" class="h-3.5 w-3.5"></i> Import</button>' +
             '</div>' +
         '</div>' +
+        teamPickerHtml +
         '<div id="kpiAttSummaryTable"><div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div></div>' +
     '</div>';
     if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -3559,6 +3589,11 @@ function kpiRefreshAttendanceSummary() {
     kpiAttendanceSummaryEnd = endInput ? endInput.value : kpiAttendanceSummaryEnd;
     tableEl.innerHTML = '<div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div>';
 
+    var teamChks = document.querySelectorAll('.kpi-att-team-chk');
+    var selectedTeams = [];
+    teamChks.forEach(function(c) { if (c.checked) selectedTeams.push(c.value); });
+    var showTeamCol = selectedTeams.length > 1;
+
     google.script.run.withSuccessHandler(function(data) {
         var members = (data && data.members) || [];
         var dateList = (data && data.dateList) || [];
@@ -3572,19 +3607,23 @@ function kpiRefreshAttendanceSummary() {
                 var h = m.days[d];
                 return '<td class="py-2 px-2 text-xs text-center ' + (h ? 'text-body font-bold' : 'text-subtle') + '">' + (h === null || h === undefined ? '—' : h) + '</td>';
             }).join('');
-            return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(m.fullName || m.username) + '</td>' + cells +
+            return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(m.fullName || m.username) + '</td>' +
+                (showTeamCol ? '<td class="py-2 px-3 text-[10px] font-bold text-indigo-400 uppercase whitespace-nowrap">' + escapeHtmlClient(m.team || '') + '</td>' : '') +
+                cells +
                 '<td class="py-2 px-3 text-xs font-black text-indigo-600 text-center">' + m.totalDays + '</td>' +
                 '<td class="py-2 px-3 text-xs font-black text-indigo-600 text-center">' + m.totalHours + '</td></tr>';
         }).join('');
 
         tableEl.innerHTML = '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme">' +
-            '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">User</th>' + dateHeaders +
+            '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">User</th>' +
+            (showTeamCol ? '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Team</th>' : '') +
+            dateHeaders +
             '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Days</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Hours</th>' +
             '</tr></thead><tbody>' + bodyRows + '</tbody></table></div>' +
             '<p class="text-[10px] text-subtle mt-3">Bawat cell = oras na na-log (Time In hanggang Time Out). "—" = walang kumpletong Time In/Out sa araw na iyon.</p>';
     }).withFailureHandler(function() {
         tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading attendance summary.</p>';
-    }).exportDtrData(currentSessionToken, kpiCurrentTeam, kpiAttendanceSummaryStart, kpiAttendanceSummaryEnd);
+    }).exportDtrData(currentSessionToken, kpiCurrentTeam, kpiAttendanceSummaryStart, kpiAttendanceSummaryEnd, selectedTeams.length > 1 ? selectedTeams : null);
 }
 
 // ---- Tab 3: Accomplishments / Ongoing Projects / Achievements ----
@@ -3800,6 +3839,30 @@ function kpiDownloadAttendanceTemplate() {
     ]);
 }
 
+// Accepts "YYYY-MM-DD" as-is, or "M/D/YYYY" / "MM/DD/YYYY" — Excel silently reformats a typed
+// YYYY-MM-DD date into the system's regional format (usually M/D/YYYY) the moment it recognizes
+// the cell as a date, so the uploaded CSV rarely matches the template's header literally.
+function kpiNormalizeImportDate(str) {
+    str = (str || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    var m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) { return m[3] + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0'); }
+    return '';
+}
+
+// Accepts "HH:MM", "HH:MM:SS", or Excel's "H:MM AM/PM" and normalizes to 24-hour "HH:MM".
+function kpiNormalizeImportTime(str) {
+    str = (str || '').trim();
+    if (!str) return '';
+    var m = str.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM|am|pm)?$/);
+    if (!m) return str;
+    var h = parseInt(m[1], 10);
+    var suffix = (m[3] || '').toUpperCase();
+    if (suffix === 'PM' && h < 12) h += 12;
+    if (suffix === 'AM' && h === 12) h = 0;
+    return String(h).padStart(2, '0') + ':' + m[2];
+}
+
 function kpiHandleImportFile(event) {
     var file = event.target.files[0];
     if (!file) return;
@@ -3813,10 +3876,10 @@ function kpiHandleImportFile(event) {
             if (!lines[i] || !lines[i].trim()) continue;
             var cols = lines[i].split(',');
             var username = (cols[0] || '').trim();
-            var date = (cols[1] || '').trim();
-            var timeIn = (cols[2] || '').trim();
-            var timeOut = (cols[3] || '').trim();
-            if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped++; continue; }
+            var date = kpiNormalizeImportDate(cols[1]);
+            var timeIn = kpiNormalizeImportTime(cols[2]);
+            var timeOut = kpiNormalizeImportTime(cols[3]);
+            if (!username || !date) { skipped++; continue; }
             rows.push({ username: username, date: date, timeIn: timeIn, timeOut: timeOut });
         }
         kpiImportRows = rows;
