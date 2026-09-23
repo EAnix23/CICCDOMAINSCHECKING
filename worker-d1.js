@@ -699,6 +699,32 @@ const actions = {
     });
 
     return { team: targetTeam, dateList: dateList, members: members };
+  },
+
+  // Bulk-loads historical Time In/Out rows (e.g. from an old spreadsheet) via upsert keyed on
+  // (username, date) — re-importing the same file twice just overwrites those rows instead of
+  // duplicating them, since kpi_attendance has a UNIQUE index on that pair.
+  async importKpiAttendance(db, token, team, rows) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return { success: false, message: "Walang naka-assign na team sa account mo." };
+    if (!Array.isArray(rows) || rows.length === 0) return { success: false, message: "Walang laman ang file." };
+
+    const stmt = db.prepare(
+      "INSERT INTO kpi_attendance (username, team, date, time_in, time_out) VALUES (?, ?, ?, ?, ?) " +
+      "ON CONFLICT(username, date) DO UPDATE SET time_in=excluded.time_in, time_out=excluded.time_out, team=excluded.team"
+    );
+    const batch = [];
+    let skipped = 0;
+    rows.forEach(function (r) {
+      const username = String(r.username || "").trim();
+      const date = String(r.date || "").trim();
+      if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped++; return; }
+      batch.push(stmt.bind(username, targetTeam, date, String(r.timeIn || "").trim(), String(r.timeOut || "").trim()));
+    });
+    if (batch.length === 0) return { success: false, message: "Walang valid na row (maling format ng petsa o username).", imported: 0, skipped: skipped };
+    await db.batch(batch);
+    return { success: true, message: batch.length + " na attendance record na-import" + (skipped > 0 ? (", " + skipped + " na-skip dahil sa maling format") : "") + ".", imported: batch.length, skipped: skipped };
   }
 };
 

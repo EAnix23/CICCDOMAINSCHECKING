@@ -3502,18 +3502,89 @@ function kpiDoTimeOut() {
     }).kpiTimeOut(currentSessionToken);
 }
 
+// Summary grid — one row per member, one column per date, showing hours worked that day (blank
+// when Time In/Out isn't a complete pair). Reuses exportDtrData since it already computes exactly
+// this shape; the CSV "Export DTR" button downloads the same data, this just renders it on-screen.
+var kpiAttendanceSummaryStart = '';
+var kpiAttendanceSummaryEnd = '';
+
+function kpiDefaultCutoff() {
+    var today = new Date();
+    var day = today.getDate();
+    var start, end;
+    if (day <= 15) {
+        start = new Date(today.getFullYear(), today.getMonth(), 1);
+        end = new Date(today.getFullYear(), today.getMonth(), 15);
+    } else {
+        start = new Date(today.getFullYear(), today.getMonth(), 16);
+        end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    }
+    function fmt(d) { return d.toISOString().slice(0, 10); }
+    return { start: fmt(start), end: fmt(end) };
+}
+
 function renderKpiAttendanceLog() {
     var logEl = document.getElementById('kpiAttendanceLog');
     if (!logEl || !kpiCurrentTeam) return;
-    google.script.run.withSuccessHandler(function(rows) {
-        rows = rows || [];
-        var rowsHtml = rows.length ? rows.map(function(r) {
-            return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body">' + escapeHtmlClient(r.username) + '</td><td class="py-2 px-3 text-xs text-subtle">' + escapeHtmlClient(r.date) + '</td><td class="py-2 px-3 text-xs text-body">' + (r.time_in || '—') + '</td><td class="py-2 px-3 text-xs text-body">' + (r.time_out || '—') + '</td></tr>';
-        }).join('') : '<tr><td colspan="4" class="py-4 text-center text-xs text-subtle">Wala pang log.</td></tr>';
 
-        logEl.innerHTML = '<div class="panel-card p-5"><h3 class="text-sm font-black text-heading mb-3">Attendance Log (Last 14 Days)</h3>' +
-            '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme"><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">User</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Date</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Time In</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Time Out</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div></div>';
-    }).getKpiAttendanceLog(currentSessionToken, kpiCurrentTeam);
+    if (!kpiAttendanceSummaryStart) {
+        var def = kpiDefaultCutoff();
+        kpiAttendanceSummaryStart = def.start;
+        kpiAttendanceSummaryEnd = def.end;
+    }
+
+    logEl.innerHTML = '<div class="panel-card p-5">' +
+        '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
+            '<h3 class="text-sm font-black text-heading">Attendance Summary</h3>' +
+            '<div class="flex items-center gap-2 flex-wrap">' +
+                '<input type="date" id="kpiAttSummaryStart" value="' + kpiAttendanceSummaryStart + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                '<span class="text-xs text-subtle">to</span>' +
+                '<input type="date" id="kpiAttSummaryEnd" value="' + kpiAttendanceSummaryEnd + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                '<button onclick="kpiRefreshAttendanceSummary()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Tingnan</button>' +
+                '<button onclick="openKpiImportModal()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app flex items-center gap-1.5"><i data-lucide="upload" class="h-3.5 w-3.5"></i> Import</button>' +
+            '</div>' +
+        '</div>' +
+        '<div id="kpiAttSummaryTable"><div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div></div>' +
+    '</div>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    kpiRefreshAttendanceSummary();
+}
+
+function kpiRefreshAttendanceSummary() {
+    var startInput = document.getElementById('kpiAttSummaryStart');
+    var endInput = document.getElementById('kpiAttSummaryEnd');
+    var tableEl = document.getElementById('kpiAttSummaryTable');
+    if (!tableEl) return;
+    kpiAttendanceSummaryStart = startInput ? startInput.value : kpiAttendanceSummaryStart;
+    kpiAttendanceSummaryEnd = endInput ? endInput.value : kpiAttendanceSummaryEnd;
+    tableEl.innerHTML = '<div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div>';
+
+    google.script.run.withSuccessHandler(function(data) {
+        var members = (data && data.members) || [];
+        var dateList = (data && data.dateList) || [];
+        if (!members.length || !dateList.length) {
+            tableEl.innerHTML = '<p class="text-xs text-subtle p-3">Walang miyembro o petsa sa hanay na ito.</p>';
+            return;
+        }
+        var dateHeaders = dateList.map(function(d) { return '<th class="py-2 px-2 text-[9px] font-extrabold text-subtle uppercase whitespace-nowrap">' + d.slice(5) + '</th>'; }).join('');
+        var bodyRows = members.map(function(m) {
+            var cells = dateList.map(function(d) {
+                var h = m.days[d];
+                return '<td class="py-2 px-2 text-xs text-center ' + (h ? 'text-body font-bold' : 'text-subtle') + '">' + (h === null || h === undefined ? '—' : h) + '</td>';
+            }).join('');
+            return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(m.fullName || m.username) + '</td>' + cells +
+                '<td class="py-2 px-3 text-xs font-black text-indigo-600 text-center">' + m.totalDays + '</td>' +
+                '<td class="py-2 px-3 text-xs font-black text-indigo-600 text-center">' + m.totalHours + '</td></tr>';
+        }).join('');
+
+        tableEl.innerHTML = '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme">' +
+            '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">User</th>' + dateHeaders +
+            '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Days</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Hours</th>' +
+            '</tr></thead><tbody>' + bodyRows + '</tbody></table></div>' +
+            '<p class="text-[10px] text-subtle mt-3">Bawat cell = oras na na-log (Time In hanggang Time Out). "—" = walang kumpletong Time In/Out sa araw na iyon.</p>';
+    }).withFailureHandler(function() {
+        tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading attendance summary.</p>';
+    }).exportDtrData(currentSessionToken, kpiCurrentTeam, kpiAttendanceSummaryStart, kpiAttendanceSummaryEnd);
 }
 
 // ---- Tab 3: Accomplishments / Ongoing Projects / Achievements ----
@@ -3684,6 +3755,110 @@ function kpiRunDtrExport() {
         btn.innerHTML = orig; btn.disabled = false;
         showPremiumToast('Error', 'Hindi na-generate ang DTR export.', 'error');
     }).exportDtrData(currentSessionToken, kpiCurrentTeam, startDate, endDate);
+}
+
+// ---- Import Attendance (CSV: Username, Date YYYY-MM-DD, Time In HH:MM, Time Out HH:MM) ----
+var kpiImportRows = [];
+
+function openKpiImportModal() {
+    if (!kpiCurrentTeam) { showPremiumToast('Kulang', 'Pumili muna ng team.', 'error'); return; }
+    kpiImportRows = [];
+    var modal = document.getElementById('kpiImportModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiImportModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-md flex flex-col">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="upload" class="h-5 w-5 text-indigo-500"></i> Import Attendance</h3>',
+            '      <button onclick="closeSmoothly(\'kpiImportModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app">',
+            '      <button onclick="kpiDownloadAttendanceTemplate()" class="w-full mb-4 px-4 py-2.5 bg-panel border border-theme rounded-xl text-xs font-bold text-body hover:bg-app-hover flex items-center justify-center gap-2"><i data-lucide="file-down" class="h-4 w-4"></i> I-download ang Template (CSV)</button>',
+            '      <p class="text-[10px] text-subtle mb-4">Punan ang template: Username (dapat tugma sa system), Date (YYYY-MM-DD), Time In (HH:MM, 24-hr), Time Out (HH:MM). Pwedeng maraming buwan sa isang file (hal. Enero hanggang ngayon).</p>',
+            '      <input type="file" id="kpiImportFileInput" accept=".csv" onchange="kpiHandleImportFile(event)" class="w-full mb-3 border border-theme bg-panel rounded-lg text-xs text-body px-3 py-2 shadow-sm">',
+            '      <div id="kpiImportPreview" class="text-xs text-subtle mb-4"></div>',
+            '      <button id="btnKpiImportRun" onclick="kpiRunAttendanceImport()" disabled class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4"></i> I-import</button>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiImportModal');
+    }
+    document.getElementById('kpiImportPreview').innerHTML = '';
+    document.getElementById('btnKpiImportRun').disabled = true;
+    var fileInput = document.getElementById('kpiImportFileInput');
+    if (fileInput) fileInput.value = '';
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function kpiDownloadAttendanceTemplate() {
+    downloadCSV('attendance_import_template', ['Username', 'Date (YYYY-MM-DD)', 'Time In (HH:MM)', 'Time Out (HH:MM)'], [
+        (kpiCurrentMembers[0] || 'TEAM001_ASTA'), '2026-01-05', '08:00', '17:00'
+    ]);
+}
+
+function kpiHandleImportFile(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        var text = e.target.result;
+        var lines = text.split(/\r?\n/);
+        var rows = [];
+        var skipped = 0;
+        for (var i = 1; i < lines.length; i++) {
+            if (!lines[i] || !lines[i].trim()) continue;
+            var cols = lines[i].split(',');
+            var username = (cols[0] || '').trim();
+            var date = (cols[1] || '').trim();
+            var timeIn = (cols[2] || '').trim();
+            var timeOut = (cols[3] || '').trim();
+            if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped++; continue; }
+            rows.push({ username: username, date: date, timeIn: timeIn, timeOut: timeOut });
+        }
+        kpiImportRows = rows;
+        var preview = document.getElementById('kpiImportPreview');
+        preview.innerHTML = rows.length
+            ? ('<span class="text-emerald-500 font-bold">' + rows.length + ' valid na row</span>' + (skipped ? (', <span class="text-rose-500">' + skipped + ' na-skip (maling format)</span>') : '') + ' — handa nang i-import.')
+            : '<span class="text-rose-500 font-bold">Walang valid na row nahanap.</span> Siguraduhing tugma ang format sa template.';
+        document.getElementById('btnKpiImportRun').disabled = rows.length === 0;
+    };
+    reader.readAsText(file);
+}
+
+function kpiRunAttendanceImport() {
+    if (!kpiImportRows.length) return;
+    var btn = document.getElementById('btnKpiImportRun');
+    var orig = btn.innerHTML;
+    btn.disabled = true;
+
+    var CHUNK = 300;
+    var chunks = [];
+    for (var i = 0; i < kpiImportRows.length; i += CHUNK) { chunks.push(kpiImportRows.slice(i, i + CHUNK)); }
+    var totalImported = 0, totalSkipped = 0, chunkIdx = 0;
+
+    function runNext() {
+        if (chunkIdx >= chunks.length) {
+            btn.innerHTML = orig; btn.disabled = false;
+            showPremiumToast('Import Done', totalImported + ' na record na-import' + (totalSkipped ? (', ' + totalSkipped + ' na-skip') : '') + '.', 'success');
+            closeSmoothly('kpiImportModal');
+            kpiRefreshAttendanceSummary();
+            return;
+        }
+        btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div> Chunk ' + (chunkIdx + 1) + ' of ' + chunks.length + '...';
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { totalImported += res.imported || 0; totalSkipped += res.skipped || 0; }
+            chunkIdx++;
+            runNext();
+        }).withFailureHandler(function() {
+            chunkIdx++;
+            runNext();
+        }).importKpiAttendance(currentSessionToken, kpiCurrentTeam, chunks[chunkIdx]);
+    }
+    runNext();
 }
 
 // ==========================================
