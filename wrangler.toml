@@ -1,0 +1,11 @@
+name = "bbc-api-gateway"
+main = "worker-d1.js"
+compatibility_date = "2026-06-23"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bbc-sec-db"
+database_id = "0c9b7a7e-a9f4-40ff-bfa3-8da719d57355"
+
+[observability]
+enabled = true

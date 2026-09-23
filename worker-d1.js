@@ -46,16 +46,16 @@ function bufToHex(buf) { return Array.from(buf).map(b => b.toString(16).padStart
 function hexToBuf(hex) { const b = new Uint8Array(hex.length / 2); for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16); return b; }
 
 // ---- Session helpers ----
-async function createSession(db, username, role, permissions) {
+async function createSession(db, username, role, permissions, team) {
   const token = uuid();
   const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 3600 * 1000).toISOString();
-  await db.prepare("INSERT INTO sessions (token, username, role, permissions, expires_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(token, username, role, JSON.stringify(permissions || []), expiresAt).run();
+  await db.prepare("INSERT INTO sessions (token, username, role, permissions, expires_at, team) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(token, username, role, JSON.stringify(permissions || []), expiresAt, team || "").run();
   return token;
 }
 async function validateSession(db, token) {
   if (!token) return null;
-  const row = await db.prepare("SELECT username, role, permissions, expires_at FROM sessions WHERE token = ?").bind(token).first();
+  const row = await db.prepare("SELECT username, role, permissions, expires_at, team FROM sessions WHERE token = ?").bind(token).first();
   if (!row) return null;
   if (new Date(row.expires_at) < new Date()) {
     await db.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run();
@@ -63,7 +63,7 @@ async function validateSession(db, token) {
   }
   let permissions = [];
   try { permissions = JSON.parse(row.permissions || "[]"); } catch (e) {}
-  return { username: row.username, role: row.role, permissions };
+  return { username: row.username, role: row.role, permissions, team: row.team || "" };
 }
 async function checkSession(db, token, requireSuperAdmin) {
   const session = await validateSession(db, token);
@@ -78,7 +78,7 @@ async function checkSession(db, token, requireSuperAdmin) {
 const actions = {
 
   async verifyLogin(db, username, password) {
-    const row = await db.prepare("SELECT username, password_hash, email, image, permissions FROM users WHERE username = ? COLLATE NOCASE")
+    const row = await db.prepare("SELECT username, password_hash, email, image, permissions, team FROM users WHERE username = ? COLLATE NOCASE")
       .bind(String(username).trim()).first();
     if (!row) return { success: false, message: "Invalid credentials. Access Denied." };
 
@@ -92,10 +92,11 @@ const actions = {
     else if (perms.includes("Admin")) role = "Admin";
 
     await actions.saveActivityLogBackend(db, { type: "SYSTEM ACCESS", user: row.username, details: "User logged in (" + role + ")" });
-    const token = await createSession(db, row.username, role, perms);
+    const team = row.team || "";
+    const token = await createSession(db, row.username, role, perms, team);
 
     return {
-      success: true, token, username: row.username, name: row.username, role, permissions: perms,
+      success: true, token, username: row.username, name: row.username, role, permissions: perms, team,
       email: row.email || "",
       avatar: row.image || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
     };
@@ -148,11 +149,11 @@ const actions = {
   async getUsersData(db, token) {
     try {
       await checkSession(db, token, true);
-      const { results } = await db.prepare("SELECT username, email, image, permissions FROM users").all();
+      const { results } = await db.prepare("SELECT username, email, image, permissions, team FROM users").all();
       return results.map(r => {
         let perms = []; try { perms = JSON.parse(r.permissions || "[]"); } catch (e) {}
         // password is never sent to the client anymore — hashes aren't recoverable, and shouldn't be either
-        return { username: r.username, password: "", email: r.email || "", image: r.image || "", permissions: perms };
+        return { username: r.username, password: "", email: r.email || "", image: r.image || "", permissions: perms, team: r.team || "" };
       });
     } catch (e) { return []; }
   },
@@ -160,8 +161,8 @@ const actions = {
   async saveNewUserBackend(db, token, userObj) {
     await checkSession(db, token, true);
     const hash = await hashPassword(userObj.password);
-    await db.prepare("INSERT INTO users (username, password_hash, email, permissions) VALUES (?, ?, ?, ?)")
-      .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || [])).run();
+    await db.prepare("INSERT INTO users (username, password_hash, email, permissions, team) VALUES (?, ?, ?, ?, ?)")
+      .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "").run();
     return { success: true, message: "User successfully created!" };
   },
 
@@ -169,11 +170,11 @@ const actions = {
     await checkSession(db, token, true);
     if (userObj.password && userObj.password.trim() !== "") {
       const hash = await hashPassword(userObj.password);
-      await db.prepare("UPDATE users SET username=?, password_hash=?, email=?, permissions=? WHERE username=?")
-        .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.originalUsername).run();
+      await db.prepare("UPDATE users SET username=?, password_hash=?, email=?, permissions=?, team=? WHERE username=?")
+        .bind(userObj.username, hash, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "", userObj.originalUsername).run();
     } else {
-      await db.prepare("UPDATE users SET username=?, email=?, permissions=? WHERE username=?")
-        .bind(userObj.username, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.originalUsername).run();
+      await db.prepare("UPDATE users SET username=?, email=?, permissions=?, team=? WHERE username=?")
+        .bind(userObj.username, userObj.email || "", JSON.stringify(userObj.permissions || []), userObj.team || "", userObj.originalUsername).run();
     }
     return { success: true, message: "User permissions updated successfully!" };
   },
@@ -452,6 +453,143 @@ const actions = {
       TELEGRAM_CHAT_ID: probe("TELEGRAM_CHAT_ID"),
       AUTOMATION_API_KEY: probe("AUTOMATION_API_KEY")
     };
+  },
+
+  // ============================================================
+  // KPI REPORT — per-team To-Do (auto + manual), Time In/Out, Achievements.
+  // "team" comes from users.team, assigned per-account in User Management.
+  // A non-Super-Admin caller is always pinned to their own session team, no
+  // matter what team they pass in — stops an Agent from reading another team's data.
+  // ============================================================
+
+  async getKpiTeams(db, token) {
+    const session = await checkSession(db, token);
+    if (session.role === "Super Admin") {
+      const { results } = await db.prepare("SELECT DISTINCT team FROM users WHERE team != '' ORDER BY team ASC").all();
+      return results.map(r => r.team);
+    }
+    return session.team ? [session.team] : [];
+  },
+
+  async getKpiTodayTasks(db, token, team) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return { autoTasks: [], manualTasks: [], team: "" };
+
+    const startSQL = getPHTodayStartSQL();
+    const { results: bbcRows } = await db.prepare(
+      `SELECT agent, brand, domain FROM domains WHERE created_at >= ? AND agent IN (SELECT username FROM users WHERE team = ?) ORDER BY agent ASC`
+    ).bind(startSQL, targetTeam).all();
+    const { results: dpvRows } = await db.prepare(
+      `SELECT agent, domain FROM dpv_records WHERE created_at >= ? AND team = ? AND domain NOT LIKE 'init-%' ORDER BY agent ASC`
+    ).bind(startSQL, targetTeam).all();
+
+    const autoTasks = [];
+    bbcRows.forEach(function (r) { autoTasks.push({ label: "[BBC] " + r.brand + " — " + r.domain, agent: r.agent || "" }); });
+    dpvRows.forEach(function (r) { autoTasks.push({ label: "[DPV] " + r.domain, agent: r.agent || "" }); });
+
+    const todayDate = getPHDateStr();
+    const { results: manualTasks } = await db.prepare(
+      "SELECT id, title, status, created_by, created_at FROM kpi_tasks WHERE team = ? AND task_date = ? ORDER BY id DESC"
+    ).bind(targetTeam, todayDate).all();
+
+    return { autoTasks, manualTasks, team: targetTeam };
+  },
+
+  async addKpiManualTask(db, token, team, title) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return { success: false, message: "Walang naka-assign na team sa account mo." };
+    if (!title || !title.trim()) return { success: false, message: "Kailangan ng task title." };
+    await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, status, created_by, task_date) VALUES (?, 'manual', ?, 'pending', ?, ?)")
+      .bind(targetTeam, title.trim(), session.username, getPHDateStr()).run();
+    return { success: true, message: "Task added." };
+  },
+
+  async toggleKpiTask(db, token, taskId) {
+    await checkSession(db, token);
+    const row = await db.prepare("SELECT id, status FROM kpi_tasks WHERE id = ?").bind(taskId).first();
+    if (!row) return { success: false, message: "Task not found." };
+    const newStatus = row.status === "done" ? "pending" : "done";
+    await db.prepare("UPDATE kpi_tasks SET status=?, updated_at=datetime('now') WHERE id=?").bind(newStatus, taskId).run();
+    return { success: true, status: newStatus };
+  },
+
+  async deleteKpiTask(db, token, taskId) {
+    await checkSession(db, token);
+    await db.prepare("DELETE FROM kpi_tasks WHERE id = ?").bind(taskId).run();
+    return { success: true };
+  },
+
+  async getKpiAttendanceToday(db, token) {
+    const session = await checkSession(db, token);
+    const row = await db.prepare("SELECT time_in, time_out FROM kpi_attendance WHERE username = ? AND date = ?")
+      .bind(session.username, getPHDateStr()).first();
+    return row || { time_in: "", time_out: "" };
+  },
+
+  async kpiTimeIn(db, token) {
+    const session = await checkSession(db, token);
+    const today = getPHDateStr();
+    const existing = await db.prepare("SELECT id, time_in FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
+    if (existing && existing.time_in) return { success: false, message: "May Time In ka na ngayong araw." };
+    const nowTime = getPHTimeStr();
+    if (existing) {
+      await db.prepare("UPDATE kpi_attendance SET time_in=? WHERE id=?").bind(nowTime, existing.id).run();
+    } else {
+      await db.prepare("INSERT INTO kpi_attendance (username, team, date, time_in) VALUES (?, ?, ?, ?)")
+        .bind(session.username, session.team || "", today, nowTime).run();
+    }
+    return { success: true, time_in: nowTime };
+  },
+
+  async kpiTimeOut(db, token) {
+    const session = await checkSession(db, token);
+    const today = getPHDateStr();
+    const existing = await db.prepare("SELECT id, time_in, time_out FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
+    if (!existing || !existing.time_in) return { success: false, message: "Wala ka pang Time In ngayong araw." };
+    if (existing.time_out) return { success: false, message: "May Time Out ka na ngayong araw." };
+    const nowTime = getPHTimeStr();
+    await db.prepare("UPDATE kpi_attendance SET time_out=? WHERE id=?").bind(nowTime, existing.id).run();
+    return { success: true, time_out: nowTime };
+  },
+
+  async getKpiAttendanceLog(db, token, team) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return [];
+    const startSQL = getPeriodStartSQL(14);
+    const { results } = await db.prepare(
+      "SELECT username, date, time_in, time_out FROM kpi_attendance WHERE team = ? AND date >= substr(?,1,10) ORDER BY date DESC, username ASC"
+    ).bind(targetTeam, startSQL).all();
+    return results;
+  },
+
+  async getKpiAchievements(db, token, team) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return [];
+    const { results } = await db.prepare(
+      "SELECT id, category, title, description, created_by, created_at FROM kpi_achievements WHERE team = ? ORDER BY id DESC"
+    ).bind(targetTeam).all();
+    return results;
+  },
+
+  async addKpiAchievement(db, token, team, category, title, description) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return { success: false, message: "Walang naka-assign na team sa account mo." };
+    if (!title || !title.trim()) return { success: false, message: "Kailangan ng title." };
+    const cat = ["accomplishment", "ongoing", "achievement"].indexOf(category) !== -1 ? category : "accomplishment";
+    await db.prepare("INSERT INTO kpi_achievements (team, category, title, description, created_by) VALUES (?, ?, ?, ?, ?)")
+      .bind(targetTeam, cat, title.trim(), (description || "").trim(), session.username).run();
+    return { success: true, message: "Naidagdag." };
+  },
+
+  async deleteKpiAchievement(db, token, id) {
+    await checkSession(db, token);
+    await db.prepare("DELETE FROM kpi_achievements WHERE id = ?").bind(id).run();
+    return { success: true };
   }
 };
 
@@ -629,6 +767,16 @@ function getPHTodayStartSQL() {
 // Same format, but N days back from right now — used for the weekly/monthly KPI window.
 function getPeriodStartSQL(daysBack) {
   return new Date(Date.now() - daysBack * 86400000).toISOString().slice(0, 19).replace("T", " ");
+}
+
+// "YYYY-MM-DD" / "HH:MM" for the KPI Report's To-Do list and Time In/Out, in Philippine time.
+function getPHDateStr() {
+  const phShifted = new Date(Date.now() + 8 * 3600000);
+  return phShifted.toISOString().slice(0, 10);
+}
+function getPHTimeStr() {
+  const phShifted = new Date(Date.now() + 8 * 3600000);
+  return phShifted.toISOString().slice(11, 16);
 }
 
 function isIspActive(val) {

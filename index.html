@@ -169,6 +169,11 @@
                         <i data-lucide="layout-dashboard" class="h-4 w-4 group-hover:scale-110 transition-transform"></i>
                         <span class="flex-1 text-left">BBC Dashboard Domain</span>
                     </button>
+
+                    <button onclick="openKpiReport()" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group" id="btnKpiReport">
+                        <i data-lucide="clipboard-list" class="h-4 w-4 group-hover:scale-110 transition-transform"></i>
+                        <span class="flex-1 text-left">KPI Report</span>
+                    </button>
                 </div>
             </div>
 
@@ -287,6 +292,7 @@
                     <div><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Email Address</label><input type="email" id="newEmail" class="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:border-indigo-500 shadow-sm" placeholder="e.g. agent@bbcac.co"></div>
                     <div class="col-span-2"><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Profile Picture (Optional)</label><input type="file" class="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-500 shadow-sm"></div>
                     <div class="col-span-2"><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Default Password</label><div class="flex gap-3"><input type="text" id="newPassword" class="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:border-indigo-500 shadow-sm" placeholder="Auto-generated password"><button onclick="generatePassword()" class="px-4 py-3 bg-slate-50 border border-slate-200 hover:text-indigo-600 rounded-xl text-slate-500 shadow-sm" title="Generate Random Password"><i data-lucide="shuffle" class="h-5 w-5"></i></button></div></div>
+                    <div class="col-span-2"><label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">KPI Team</label><select id="newUserTeam" class="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:border-indigo-500 shadow-sm"><option value="">— Walang Team —</option></select><p class="text-[10px] text-slate-400 mt-1.5">Kontrolado nito kung anong team ang makikita ng user na ito sa KPI Report.</p></div>
                 </div>
                 <div>
                     <label class="block text-[10px] font-bold text-indigo-600 uppercase tracking-widest mb-3 flex items-center gap-2"><i data-lucide="shield" class="h-3.5 w-3.5"></i> Permissions & Access Control</label>
@@ -417,7 +423,7 @@
 
 
 
-    <script src="script.js"></script>
+    <script src="script.js?v=20260923kpi"></script>
 
 
 </body>

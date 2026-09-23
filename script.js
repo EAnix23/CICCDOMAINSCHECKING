@@ -42,6 +42,7 @@ var availableBrandsForPerms = [];
 
 var currentUserRole = 'Admin';
 var currentUserPermissions = [];
+var currentUserTeam = '';
 var currentEditingUser = null;
 var currentSessionToken = null;
 
@@ -132,9 +133,10 @@ document.addEventListener('DOMContentLoaded', function() {
     var savedRole = localStorage.getItem('dg_role');
     var savedPerms = localStorage.getItem('dg_perms');
     var savedToken = localStorage.getItem('dg_token');
+    var savedTeam = localStorage.getItem('dg_team') || '';
     if (savedUser && savedRole && savedToken) {
         currentSessionToken = savedToken;
-        finishLogin(savedUser, savedRole, savedPerms ? JSON.parse(savedPerms) : [], true);
+        finishLogin(savedUser, savedRole, savedPerms ? JSON.parse(savedPerms) : [], true, savedTeam);
     }
 
     ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'].forEach(function(evt) {
@@ -296,7 +298,7 @@ function attemptLogin() {
                 btn.innerHTML = originalHtml; btn.disabled = false;
                 if (response.success) {
                     currentSessionToken = response.token;
-                    finishLogin(response.username, response.role, response.permissions);
+                    finishLogin(response.username, response.role, response.permissions, false, response.team);
                 } else {
                     errorMsg.innerText = response.message || "Invalid credentials."; errorMsg.classList.remove('hidden');
                 }
@@ -321,7 +323,8 @@ function attemptLogin() {
         delete window[uniqueCallback];
 
         if (response.success) {
-            finishLogin(response.username, response.role, response.permissions);
+            currentSessionToken = response.token;
+            finishLogin(response.username, response.role, response.permissions, false, response.team);
         } else {
             errorMsg.innerText = response.message || "Invalid credentials."; errorMsg.classList.remove('hidden');
         }
@@ -335,7 +338,7 @@ function attemptLogin() {
     document.body.appendChild(jsonpScript);
 }
 
-function finishLogin(name, role, perms, isRestore) {
+function finishLogin(name, role, perms, isRestore, team) {
     document.getElementById('loginScreen').classList.add('smooth-hide');
     setTimeout(function() {
         document.getElementById('loginScreen').classList.add('hidden');
@@ -346,10 +349,12 @@ function finishLogin(name, role, perms, isRestore) {
         document.getElementById('adminProfileName').innerText = name;
         currentUserRole = role;
         currentUserPermissions = perms || [];
+        currentUserTeam = team || '';
 
         localStorage.setItem('dg_user', name);
         localStorage.setItem('dg_role', role);
         localStorage.setItem('dg_perms', JSON.stringify(currentUserPermissions));
+        localStorage.setItem('dg_team', currentUserTeam);
         if (currentSessionToken) localStorage.setItem('dg_token', currentSessionToken);
 
         var roleEl = document.querySelector('aside p.tracking-widest');
@@ -396,9 +401,9 @@ function logoutSystem(isAutoKicked) {
             document.getElementById('btnLogin').innerHTML = 'Sign In to Dashboard <i data-lucide="arrow-right" class="h-4 w-4"></i>';
             document.getElementById('btnLogin').disabled = false;
 
-            currentBrandData = []; currentViewData = []; currentUserPermissions = []; postVerifData = []; currentSessionToken = null;
+            currentBrandData = []; currentViewData = []; currentUserPermissions = []; postVerifData = []; currentSessionToken = null; currentUserTeam = '';
 
-            localStorage.removeItem('dg_user'); localStorage.removeItem('dg_role'); localStorage.removeItem('dg_perms'); localStorage.removeItem('dg_token');
+            localStorage.removeItem('dg_user'); localStorage.removeItem('dg_role'); localStorage.removeItem('dg_perms'); localStorage.removeItem('dg_token'); localStorage.removeItem('dg_team');
             clearTimeout(idleTimer);
 
             showPremiumToast(isAutoKicked ? "Session Expired" : "Logged Out", isAutoKicked ? "You were automatically logged out due to 15 minutes of inactivity." : "Session ended securely.", "success");
@@ -1157,12 +1162,13 @@ function renderSettingsUI(usersData) {
             var safeEmail = String(u.email || '').replace(/'/g, "\\'");
             var safePass = String(rawPass).replace(/'/g, "\\'");
             var safePerms = encodeURIComponent(JSON.stringify(u.permissions || []));
+            var safeTeam = String(u.team || '').replace(/'/g, "\\'");
 
             return [
                 '<tr class="border-b border-theme hover:bg-app transition-colors group">',
                 '   <td class="px-6 py-4 flex items-center gap-4">',
                 '       <div class="h-8 w-8 rounded-full bg-app border border-theme flex items-center justify-center text-subtle"><i data-lucide="user" class="h-4 w-4"></i></div>',
-                '       <span class="text-sm font-bold text-heading group-hover:text-indigo-500 transition-colors">' + u.username + '</span>',
+                '       <div><span class="text-sm font-bold text-heading group-hover:text-indigo-500 transition-colors block">' + u.username + '</span>' + (u.team ? '<span class="text-[10px] font-bold text-indigo-400 uppercase tracking-wide">' + escapeHtmlClient(u.team) + '</span>' : '') + '</div>',
                 '   </td>',
                 '   <td class="px-6 py-4 text-sm text-muted">' + (u.email || 'N/A') + '</td>',
                 '   <td class="px-6 py-4">',
@@ -1174,7 +1180,7 @@ function renderSettingsUI(usersData) {
                 '   <td class="px-6 py-4"><span class="px-3 py-1 rounded-md badge-good text-xs font-bold inline-flex items-center w-max gap-2">Activated <i data-lucide="chevron-down" class="h-3 w-3 opacity-50"></i></span></td>',
                 '   <td class="px-6 py-4">' + roleBadge + '</td>',
                 '   <td class="px-6 py-4 flex gap-2">',
-                '       <button onclick="openUserModal(\'' + safeUser + '\', \'' + safeEmail + '\', \'' + safePass + '\', \'' + safePerms + '\')" class="px-3 py-1.5 rounded-lg border border-theme text-subtle hover:text-indigo-500 hover:border-indigo-300 hover:bg-indigo-tint transition-colors flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider"><i data-lucide="edit" class="h-3 w-3"></i> Edit</button>',
+                '       <button onclick="openUserModal(\'' + safeUser + '\', \'' + safeEmail + '\', \'' + safePass + '\', \'' + safePerms + '\', \'' + safeTeam + '\')" class="px-3 py-1.5 rounded-lg border border-theme text-subtle hover:text-indigo-500 hover:border-indigo-300 hover:bg-indigo-tint transition-colors flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider"><i data-lucide="edit" class="h-3 w-3"></i> Edit</button>',
                 '       <button onclick="deleteUserRecord(\'' + safeUser + '\')" class="p-1.5 rounded-lg border border-theme text-subtle hover:text-rose-500 hover:border-rose-300 hover:bg-rose-tint transition-colors"><i data-lucide="trash-2" class="h-4 w-4"></i></button>',
                 '   </td>',
                 '</tr>'
@@ -1211,13 +1217,32 @@ function renderSettingsUI(usersData) {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
-function openUserModal(editUser, editEmail, editPass, editPermsStr) {
+function openUserModal(editUser, editEmail, editPass, editPermsStr, editTeam) {
     var isEdit = !!editUser;
     currentEditingUser = isEdit ? editUser : null;
 
     document.getElementById('newUsername').value = editUser || '';
     document.getElementById('newEmail').value = editEmail || '';
     document.getElementById('newPassword').value = editPass || '';
+
+    function fillTeamDropdown() {
+        var teamSelect = document.getElementById('newUserTeam');
+        if (!teamSelect) return;
+        var teamOptions = '<option value="">— Walang Team —</option>' + (dpvKnownTeams || []).map(function(t) {
+            return '<option value="' + t + '">' + t + '</option>';
+        }).join('');
+        teamSelect.innerHTML = teamOptions;
+        teamSelect.value = editTeam || '';
+    }
+
+    if (dpvKnownTeams && dpvKnownTeams.length) {
+        fillTeamDropdown();
+    } else {
+        google.script.run.withSuccessHandler(function(teams) {
+            dpvKnownTeams = teams || [];
+            fillTeamDropdown();
+        }).withFailureHandler(fillTeamDropdown).getDpvTeams(currentSessionToken);
+    }
 
     var titleEl = document.querySelector('#userSettingsModal h3');
     var btnSave = document.getElementById('btnSaveUser');
@@ -1336,7 +1361,8 @@ function saveNewUser() {
         btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div>';
         btn.disabled = true;
 
-        var payload = { originalUsername: String(currentEditingUser || ''), username: String(user), email: String(email), password: String(pass), permissions: permissions };
+        var team = document.getElementById('newUserTeam') ? document.getElementById('newUserTeam').value : '';
+        var payload = { originalUsername: String(currentEditingUser || ''), username: String(user), email: String(email), password: String(pass), permissions: permissions, team: String(team || '') };
         var safePayload = JSON.parse(JSON.stringify(payload));
         var backendFunc = currentEditingUser ? 'updateUserBackend' : 'saveNewUserBackend';
 
@@ -3266,6 +3292,258 @@ function renderLogsInModal(container) {
         container.innerHTML = logsHtml;
     }
     if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+// ==========================================
+// KPI REPORT — per-team To-Do (auto + manual), Time In/Out, Accomplishments
+// ==========================================
+var kpiCurrentTeam = '';
+var kpiCurrentTab = 'todo';
+
+function escapeHtmlClient(str) {
+    return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function openKpiReport() {
+    var container = document.getElementById('appContent');
+    if (!container) return;
+    setActiveSidebarBtn(document.getElementById('btnKpiReport'));
+    container.innerHTML = skeletonScreen('cards');
+    currentScreenContext = 'kpi';
+
+    google.script.run.withSuccessHandler(function(teams) {
+        var list = teams || [];
+        if (list.indexOf(kpiCurrentTeam) === -1) { kpiCurrentTeam = list.length ? list[0] : (currentUserTeam || ''); }
+        renderKpiShell(list);
+    }).withFailureHandler(function() {
+        renderKpiShell([]);
+    }).getKpiTeams(currentSessionToken);
+}
+
+function renderKpiShell(teams) {
+    var container = document.getElementById('appContent');
+    if (!container) return;
+
+    var isSuperAdmin = currentUserRole === 'Super Admin';
+    var teamSelectorHtml;
+    if (isSuperAdmin) {
+        teamSelectorHtml = teams.length
+            ? '<select id="kpiTeamSelect" onchange="kpiSwitchTeam(this.value)" class="border border-theme bg-panel rounded-lg text-sm font-bold text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                teams.map(function(t) { return '<option value="' + escapeHtmlClient(t) + '"' + (t === kpiCurrentTeam ? ' selected' : '') + '>' + escapeHtmlClient(t) + '</option>'; }).join('') +
+              '</select>'
+            : '<p class="text-xs text-subtle">Wala pang team na naka-assign sa kahit sinong user. Pumunta sa Settings &gt; User Management.</p>';
+    } else {
+        teamSelectorHtml = '<span class="text-sm font-black text-indigo-600">' + (kpiCurrentTeam ? escapeHtmlClient(kpiCurrentTeam) : 'Walang naka-assign na team') + '</span>';
+    }
+
+    container.innerHTML =
+        '<div class="flex items-center justify-between mb-6 flex-wrap gap-3">' +
+            '<div><h2 class="text-xl font-black text-heading">KPI Report</h2><p class="text-xs text-subtle mt-1">To-Do List, Time In / Time Out, at Accomplishments per team.</p></div>' +
+            '<div class="flex items-center gap-2">' + teamSelectorHtml + '</div>' +
+        '</div>' +
+        '<div class="flex gap-2 mb-5 border-b border-theme">' +
+            '<button onclick="kpiSwitchTab(\'todo\')" id="kpiTabBtnTodo" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors">To-Do List</button>' +
+            '<button onclick="kpiSwitchTab(\'attendance\')" id="kpiTabBtnAttendance" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors">Time In / Time Out</button>' +
+            '<button onclick="kpiSwitchTab(\'achievements\')" id="kpiTabBtnAchievements" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors">Accomplishments</button>' +
+        '</div>' +
+        '<div id="kpiTabContent"></div>';
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    kpiSwitchTab(kpiCurrentTab);
+}
+
+function kpiSwitchTeam(team) {
+    kpiCurrentTeam = team;
+    kpiSwitchTab(kpiCurrentTab);
+}
+
+function kpiSwitchTab(tabName) {
+    kpiCurrentTab = tabName;
+    ['Todo', 'Attendance', 'Achievements'].forEach(function(t) {
+        var btn = document.getElementById('kpiTabBtn' + t);
+        if (!btn) return;
+        var isActive = t.toLowerCase() === tabName;
+        btn.className = 'kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ' + (isActive ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-subtle hover:text-body');
+    });
+
+    var content = document.getElementById('kpiTabContent');
+    if (!content) return;
+    content.innerHTML = skeletonScreen('cards');
+
+    if (tabName === 'todo') renderKpiTodoTab();
+    else if (tabName === 'attendance') renderKpiAttendanceTab();
+    else if (tabName === 'achievements') renderKpiAchievementsTab();
+}
+
+// ---- Tab 1: To-Do List (auto-listed uploads + manual tasks) ----
+function renderKpiTodoTab() {
+    var content = document.getElementById('kpiTabContent');
+    if (!content) return;
+    if (!kpiCurrentTeam) { content.innerHTML = '<p class="text-sm text-subtle">Walang naka-assign na team.</p>'; return; }
+
+    google.script.run.withSuccessHandler(function(data) {
+        var autoTasks = (data && data.autoTasks) || [];
+        var manualTasks = (data && data.manualTasks) || [];
+
+        var autoHtml = autoTasks.length ? autoTasks.map(function(t) {
+            return '<div class="flex items-center gap-3 p-3 bg-app rounded-lg"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500 flex-shrink-0"></i><span class="text-sm text-body flex-1">' + escapeHtmlClient(t.label) + '</span><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(t.agent) + '</span></div>';
+        }).join('') : '<p class="text-xs text-subtle p-3">Wala pang na-upload ngayong araw.</p>';
+
+        var manualHtml = manualTasks.length ? manualTasks.map(function(t) {
+            var done = t.status === 'done';
+            return '<div class="flex items-center gap-3 p-3 bg-app rounded-lg group">' +
+                '<input type="checkbox" ' + (done ? 'checked' : '') + ' onchange="kpiToggleTask(' + t.id + ')" class="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 h-4 w-4 flex-shrink-0">' +
+                '<span class="text-sm flex-1 ' + (done ? 'line-through text-subtle' : 'text-body') + '">' + escapeHtmlClient(t.title) + '</span>' +
+                '<span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(t.created_by) + '</span>' +
+                '<button onclick="kpiDeleteTask(' + t.id + ')" class="opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-700 transition-opacity"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>' +
+                '</div>';
+        }).join('') : '<p class="text-xs text-subtle p-3">Wala pang additional task.</p>';
+
+        content.innerHTML =
+            '<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">' +
+                '<div class="panel-card p-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500"></i> Auto-listed Uploads Ngayong Araw</h3><div class="space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">' + autoHtml + '</div></div>' +
+                '<div class="panel-card p-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="list-checks" class="h-4 w-4 text-indigo-500"></i> Additional Task</h3>' +
+                    '<div class="flex gap-2 mb-3"><input type="text" id="kpiNewTaskInput" placeholder="Magdagdag ng task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><button onclick="kpiAddTask()" class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700"><i data-lucide="plus" class="h-4 w-4"></i></button></div>' +
+                    '<div class="space-y-2 max-h-[360px] overflow-y-auto custom-scrollbar">' + manualHtml + '</div>' +
+                '</div>' +
+            '</div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).withFailureHandler(function() {
+        content.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading tasks.</p>';
+    }).getKpiTodayTasks(currentSessionToken, kpiCurrentTeam);
+}
+
+function kpiAddTask() {
+    var input = document.getElementById('kpiNewTaskInput');
+    if (!input || !input.value.trim()) return;
+    var title = input.value.trim();
+    input.value = '';
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) { renderKpiTodoTab(); } else { showPremiumToast('Error', (res && res.message) || 'Hindi na-add ang task.', 'error'); }
+    }).addKpiManualTask(currentSessionToken, kpiCurrentTeam, title);
+}
+
+function kpiToggleTask(id) {
+    google.script.run.withSuccessHandler(function() { renderKpiTodoTab(); }).toggleKpiTask(currentSessionToken, id);
+}
+
+function kpiDeleteTask(id) {
+    google.script.run.withSuccessHandler(function() { renderKpiTodoTab(); }).deleteKpiTask(currentSessionToken, id);
+}
+
+// ---- Tab 2: Time In / Time Out ----
+function renderKpiAttendanceTab() {
+    var content = document.getElementById('kpiTabContent');
+    if (!content) return;
+
+    google.script.run.withSuccessHandler(function(today) {
+        var timeIn = (today && today.time_in) || '';
+        var timeOut = (today && today.time_out) || '';
+
+        var buttonHtml;
+        if (!timeIn) {
+            buttonHtml = '<button onclick="kpiDoTimeIn()" class="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 flex items-center gap-2"><i data-lucide="log-in" class="h-4 w-4"></i> Time In</button>';
+        } else if (!timeOut) {
+            buttonHtml = '<button onclick="kpiDoTimeOut()" class="px-6 py-3 bg-rose-600 text-white rounded-xl text-sm font-black hover:bg-rose-700 flex items-center gap-2"><i data-lucide="log-out" class="h-4 w-4"></i> Time Out</button>';
+        } else {
+            buttonHtml = '<span class="px-6 py-3 bg-app text-subtle rounded-xl text-sm font-black flex items-center gap-2"><i data-lucide="check" class="h-4 w-4"></i> Kumpleto na ang attendance mo ngayong araw</span>';
+        }
+
+        var statusHtml = '<div class="flex items-center gap-6 mt-4 text-sm">' +
+            '<div><span class="text-[10px] font-bold text-subtle uppercase block">Time In</span><span class="font-black text-body">' + (timeIn || '—') + '</span></div>' +
+            '<div><span class="text-[10px] font-bold text-subtle uppercase block">Time Out</span><span class="font-black text-body">' + (timeOut || '—') + '</span></div>' +
+        '</div>';
+
+        content.innerHTML = '<div class="panel-card p-6 flex flex-col items-center text-center mb-5">' +
+            '<p class="text-xs text-subtle mb-4">' + new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
+            buttonHtml + statusHtml +
+        '</div><div id="kpiAttendanceLog"></div>';
+
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        renderKpiAttendanceLog();
+    }).getKpiAttendanceToday(currentSessionToken);
+}
+
+function kpiDoTimeIn() {
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) { showPremiumToast('Time In', 'Na-log ang Time In mo (' + res.time_in + ').', 'success'); renderKpiAttendanceTab(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Hindi na-log.', 'error'); }
+    }).kpiTimeIn(currentSessionToken);
+}
+
+function kpiDoTimeOut() {
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) { showPremiumToast('Time Out', 'Na-log ang Time Out mo (' + res.time_out + ').', 'success'); renderKpiAttendanceTab(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Hindi na-log.', 'error'); }
+    }).kpiTimeOut(currentSessionToken);
+}
+
+function renderKpiAttendanceLog() {
+    var logEl = document.getElementById('kpiAttendanceLog');
+    if (!logEl || !kpiCurrentTeam) return;
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        var rowsHtml = rows.length ? rows.map(function(r) {
+            return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body">' + escapeHtmlClient(r.username) + '</td><td class="py-2 px-3 text-xs text-subtle">' + escapeHtmlClient(r.date) + '</td><td class="py-2 px-3 text-xs text-body">' + (r.time_in || '—') + '</td><td class="py-2 px-3 text-xs text-body">' + (r.time_out || '—') + '</td></tr>';
+        }).join('') : '<tr><td colspan="4" class="py-4 text-center text-xs text-subtle">Wala pang log.</td></tr>';
+
+        logEl.innerHTML = '<div class="panel-card p-5"><h3 class="text-sm font-black text-heading mb-3">Attendance Log (Last 14 Days)</h3>' +
+            '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme"><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">User</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Date</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Time In</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Time Out</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div></div>';
+    }).getKpiAttendanceLog(currentSessionToken, kpiCurrentTeam);
+}
+
+// ---- Tab 3: Accomplishments / Ongoing Projects / Achievements ----
+function renderKpiAchievementsTab() {
+    var content = document.getElementById('kpiTabContent');
+    if (!content) return;
+    if (!kpiCurrentTeam) { content.innerHTML = '<p class="text-sm text-subtle">Walang naka-assign na team.</p>'; return; }
+
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        var catLabels = { accomplishment: 'Accomplishment', ongoing: 'Ongoing Project', achievement: 'Achievement' };
+        var catColors = { accomplishment: 'bg-indigo-50 text-indigo-600', ongoing: 'bg-amber-50 text-amber-600', achievement: 'bg-emerald-50 text-emerald-600' };
+
+        var listHtml = rows.length ? rows.map(function(r) {
+            return '<div class="panel-card p-4 group relative">' +
+                '<span class="text-[10px] font-black uppercase px-2 py-1 rounded-md ' + (catColors[r.category] || catColors.accomplishment) + '">' + (catLabels[r.category] || escapeHtmlClient(r.category)) + '</span>' +
+                '<h4 class="text-sm font-black text-heading mt-2">' + escapeHtmlClient(r.title) + '</h4>' +
+                (r.description ? '<p class="text-xs text-subtle mt-1">' + escapeHtmlClient(r.description) + '</p>' : '') +
+                '<div class="flex items-center justify-between mt-3"><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(r.created_by) + ' • ' + escapeHtmlClient((r.created_at || '').slice(0, 10)) + '</span>' +
+                '<button onclick="kpiDeleteAchievement(' + r.id + ')" class="opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-700 transition-opacity"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button></div>' +
+            '</div>';
+        }).join('') : '<p class="text-xs text-subtle p-3 col-span-full">Wala pang naitala.</p>';
+
+        content.innerHTML =
+            '<div class="panel-card p-5 mb-5">' +
+                '<h3 class="text-sm font-black text-heading mb-3">Magdagdag ng Entry</h3>' +
+                '<div class="flex flex-col md:flex-row gap-2">' +
+                    '<select id="kpiAchCategory" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                        '<option value="accomplishment">Accomplishment</option>' +
+                        '<option value="ongoing">Ongoing Project</option>' +
+                        '<option value="achievement">Achievement</option>' +
+                    '</select>' +
+                    '<input type="text" id="kpiAchTitle" placeholder="Title..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                    '<input type="text" id="kpiAchDesc" placeholder="Detalye (optional)..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                    '<button onclick="kpiAddAchievement()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">Idagdag</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">' + listHtml + '</div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).getKpiAchievements(currentSessionToken, kpiCurrentTeam);
+}
+
+function kpiAddAchievement() {
+    var cat = document.getElementById('kpiAchCategory').value;
+    var title = document.getElementById('kpiAchTitle').value.trim();
+    var desc = document.getElementById('kpiAchDesc').value.trim();
+    if (!title) { showPremiumToast('Kulang', 'Kailangan ng title.', 'error'); return; }
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) { renderKpiAchievementsTab(); } else { showPremiumToast('Error', (res && res.message) || 'Hindi naidagdag.', 'error'); }
+    }).addKpiAchievement(currentSessionToken, kpiCurrentTeam, cat, title, desc);
+}
+
+function kpiDeleteAchievement(id) {
+    google.script.run.withSuccessHandler(function() { renderKpiAchievementsTab(); }).deleteKpiAchievement(currentSessionToken, id);
 }
 
 // ==========================================
