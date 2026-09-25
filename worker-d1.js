@@ -519,8 +519,8 @@ const actions = {
   async addKpiManualTask(db, token, team, title, assignedTo) {
     const session = await checkSession(db, token);
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return { success: false, message: "Walang naka-assign na team sa account mo." };
-    if (!title || !title.trim()) return { success: false, message: "Kailangan ng task title." };
+    if (!targetTeam) return { success: false, message: "No team assigned to your account." };
+    if (!title || !title.trim()) return { success: false, message: "Task title is required." };
     await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, status, created_by, task_date, assigned_to) VALUES (?, 'manual', ?, 'todo', ?, ?, ?)")
       .bind(targetTeam, title.trim(), session.username, getPHDateStr(), assignedTo || "").run();
     return { success: true, message: "Task added." };
@@ -553,9 +553,9 @@ const actions = {
     const session = await checkSession(db, token);
     const today = getPHDateStr();
     const existing = await db.prepare("SELECT id, time_in, time_out, break_start FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
-    if (!existing || !existing.time_in) return { success: false, message: "Wala ka pang Time In ngayong araw." };
-    if (existing.time_out) return { success: false, message: "Tapos ka na sa araw na ito." };
-    if (existing.break_start) return { success: false, message: "May Break Start ka na ngayong araw." };
+    if (!existing || !existing.time_in) return { success: false, message: "You haven't logged a Time In today." };
+    if (existing.time_out) return { success: false, message: "You're already done for today." };
+    if (existing.break_start) return { success: false, message: "You already have a Break Start logged today." };
     const nowTime = getPHTimeStr();
     await db.prepare("UPDATE kpi_attendance SET break_start=? WHERE id=?").bind(nowTime, existing.id).run();
     return { success: true, break_start: nowTime };
@@ -565,8 +565,8 @@ const actions = {
     const session = await checkSession(db, token);
     const today = getPHDateStr();
     const existing = await db.prepare("SELECT id, break_start, break_end FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
-    if (!existing || !existing.break_start) return { success: false, message: "Wala ka pang Break Start ngayong araw." };
-    if (existing.break_end) return { success: false, message: "May Break End ka na ngayong araw." };
+    if (!existing || !existing.break_start) return { success: false, message: "You haven't logged a Break Start today." };
+    if (existing.break_end) return { success: false, message: "You already have a Break End logged today." };
     const nowTime = getPHTimeStr();
     await db.prepare("UPDATE kpi_attendance SET break_end=? WHERE id=?").bind(nowTime, existing.id).run();
     return { success: true, break_end: nowTime };
@@ -576,7 +576,7 @@ const actions = {
     const session = await checkSession(db, token);
     const today = getPHDateStr();
     const existing = await db.prepare("SELECT id, time_in FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
-    if (existing && existing.time_in) return { success: false, message: "May Time In ka na ngayong araw." };
+    if (existing && existing.time_in) return { success: false, message: "You already have a Time In logged today." };
     const nowTime = getPHTimeStr();
     if (existing) {
       await db.prepare("UPDATE kpi_attendance SET time_in=? WHERE id=?").bind(nowTime, existing.id).run();
@@ -591,8 +591,8 @@ const actions = {
     const session = await checkSession(db, token);
     const today = getPHDateStr();
     const existing = await db.prepare("SELECT id, time_in, time_out FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
-    if (!existing || !existing.time_in) return { success: false, message: "Wala ka pang Time In ngayong araw." };
-    if (existing.time_out) return { success: false, message: "May Time Out ka na ngayong araw." };
+    if (!existing || !existing.time_in) return { success: false, message: "You haven't logged a Time In today." };
+    if (existing.time_out) return { success: false, message: "You already have a Time Out logged today." };
     const nowTime = getPHTimeStr();
     await db.prepare("UPDATE kpi_attendance SET time_out=? WHERE id=?").bind(nowTime, existing.id).run();
     return { success: true, time_out: nowTime };
@@ -624,12 +624,12 @@ const actions = {
   async addKpiAchievement(db, token, team, category, title, description) {
     const session = await checkSession(db, token);
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return { success: false, message: "Walang naka-assign na team sa account mo." };
-    if (!title || !title.trim()) return { success: false, message: "Kailangan ng title." };
+    if (!targetTeam) return { success: false, message: "No team assigned to your account." };
+    if (!title || !title.trim()) return { success: false, message: "Title is required." };
     const cat = ["accomplishment", "ongoing", "achievement"].indexOf(category) !== -1 ? category : "accomplishment";
     await db.prepare("INSERT INTO kpi_achievements (team, category, title, description, created_by) VALUES (?, ?, ?, ?, ?)")
       .bind(targetTeam, cat, title.trim(), (description || "").trim(), session.username).run();
-    return { success: true, message: "Naidagdag." };
+    return { success: true, message: "Added." };
   },
 
   async deleteKpiAchievement(db, token, id) {
@@ -789,8 +789,8 @@ const actions = {
   async importKpiAttendance(db, token, team, rows) {
     const session = await checkSession(db, token);
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return { success: false, message: "Walang naka-assign na team sa account mo." };
-    if (!Array.isArray(rows) || rows.length === 0) return { success: false, message: "Walang laman ang file." };
+    if (!targetTeam) return { success: false, message: "No team assigned to your account." };
+    if (!Array.isArray(rows) || rows.length === 0) return { success: false, message: "The file is empty." };
 
     const stmt = db.prepare(
       "INSERT INTO kpi_attendance (username, team, date, time_in, time_out) VALUES (?, ?, ?, ?, ?) " +
@@ -804,9 +804,9 @@ const actions = {
       if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped++; return; }
       batch.push(stmt.bind(username, targetTeam, date, String(r.timeIn || "").trim(), String(r.timeOut || "").trim()));
     });
-    if (batch.length === 0) return { success: false, message: "Walang valid na row (maling format ng petsa o username).", imported: 0, skipped: skipped };
+    if (batch.length === 0) return { success: false, message: "No valid rows (bad date or username format).", imported: 0, skipped: skipped };
     await db.batch(batch);
-    return { success: true, message: batch.length + " na attendance record na-import" + (skipped > 0 ? (", " + skipped + " na-skip dahil sa maling format") : "") + ".", imported: batch.length, skipped: skipped };
+    return { success: true, message: batch.length + " attendance record(s) imported" + (skipped > 0 ? (", " + skipped + " skipped due to bad format") : "") + ".", imported: batch.length, skipped: skipped };
   },
 
   // Feeds the edit modal with whatever's already on file for that day (or blanks, if none yet).
@@ -820,14 +820,14 @@ const actions = {
   // (username, date) same as the CSV import, so editing a day with no existing row just creates it.
   async updateKpiAttendanceRecord(db, token, username, date, timeIn, timeOut, breakStart, breakEnd) {
     const session = await checkSession(db, token, true);
-    if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "Kailangan ng valid na username at petsa." };
+    if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "A valid username and date are required." };
     const userRow = await db.prepare("SELECT team FROM users WHERE username = ?").bind(username).first();
-    if (!userRow) return { success: false, message: "Hindi nahanap ang user." };
+    if (!userRow) return { success: false, message: "User not found." };
     await db.prepare(
       "INSERT INTO kpi_attendance (username, team, date, time_in, time_out, break_start, break_end) VALUES (?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(username, date) DO UPDATE SET time_in=excluded.time_in, time_out=excluded.time_out, break_start=excluded.break_start, break_end=excluded.break_end"
     ).bind(username, userRow.team || "", date, String(timeIn || "").trim(), String(timeOut || "").trim(), String(breakStart || "").trim(), String(breakEnd || "").trim()).run();
-    return { success: true, message: "Na-update ang attendance record." };
+    return { success: true, message: "Attendance record updated." };
   },
 
   // Everyone on the team's plotted day-offs, for the "My Day Offs" panel and — for Super Admin —
@@ -846,12 +846,12 @@ const actions = {
   // action exposed to non-admins); only deleteKpiDayoff (Super Admin only) can undo it.
   async plotKpiDayoff(db, token, date) {
     const session = await checkSession(db, token);
-    if (!session.team) return { success: false, message: "Walang naka-assign na team sa account mo." };
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "Kailangan ng valid na petsa." };
+    if (!session.team) return { success: false, message: "No team assigned to your account." };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "A valid date is required." };
     const existing = await db.prepare("SELECT id FROM kpi_dayoffs WHERE username = ? AND date = ?").bind(session.username, date).first();
-    if (existing) return { success: false, message: "Naka-plot na ang petsang ito." };
+    if (existing) return { success: false, message: "That date is already plotted." };
     await db.prepare("INSERT INTO kpi_dayoffs (username, team, date) VALUES (?, ?, ?)").bind(session.username, session.team, date).run();
-    return { success: true, message: "Na-plot ang Day Off mo." };
+    return { success: true, message: "Your Day Off has been plotted." };
   },
 
   async deleteKpiDayoff(db, token, id) {
