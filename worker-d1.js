@@ -843,6 +843,35 @@ const actions = {
     return { success: true, message: "Attendance record updated." };
   },
 
+  // Single-record delete — Super Admin only, used by the "Delete" button in the edit modal.
+  async deleteKpiAttendanceRecord(db, token, username, date) {
+    await checkSession(db, token, true);
+    await db.prepare("DELETE FROM kpi_attendance WHERE username = ? AND date = ?").bind(username, date).run();
+    return { success: true, message: "Record deleted." };
+  },
+
+  // Bulk-clears every attendance record in a date range for one or more teams — Super Admin only.
+  // Meant for wiping placeholder/test data before importing the real attendance, without having to
+  // click through and delete each cell one at a time.
+  async clearKpiAttendanceRange(db, token, team, startDate, endDate, teams) {
+    const session = await checkSession(db, token, true);
+    let teamList;
+    if (Array.isArray(teams) && teams.length > 0) teamList = teams;
+    else {
+      const t = team || session.team || "";
+      if (!t) return { success: false, message: "No team specified." };
+      teamList = [t];
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate || ""))) {
+      return { success: false, message: "A valid start and end date are required." };
+    }
+    const placeholders = teamList.map(() => "?").join(",");
+    const res = await db.prepare(
+      `DELETE FROM kpi_attendance WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ?`
+    ).bind(...teamList, startDate, endDate).run();
+    return { success: true, message: (res.meta.changes || 0) + " record(s) deleted.", deleted: res.meta.changes || 0 };
+  },
+
   // Everyone on the team's plotted day-offs, for the "My Day Offs" panel and — for Super Admin —
   // the management list they can delete from.
   async getKpiDayoffs(db, token, team) {

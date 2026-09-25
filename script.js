@@ -3781,6 +3781,7 @@ function renderKpiAttendanceLog() {
                 '<input type="date" id="kpiAttSummaryEnd" value="' + kpiAttendanceSummaryEnd + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 shadow-sm focus:outline-none focus:border-indigo-500">' +
                 '<button onclick="kpiRefreshAttendanceSummary()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">View</button>' +
                 '<button onclick="openKpiImportModal()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app flex items-center gap-1.5"><i data-lucide="upload" class="h-3.5 w-3.5"></i> Import</button>' +
+                (isSuperAdmin ? '<button onclick="kpiClearAttendanceRange()" class="px-3 py-1.5 bg-rose-tint text-rose-600 border border-transparent rounded-lg text-xs font-bold hover:bg-rose-100 flex items-center gap-1.5"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i> Clear Range</button>' : '') +
             '</div>' +
         '</div>' +
         teamPickerHtml +
@@ -3788,6 +3789,27 @@ function renderKpiAttendanceLog() {
     '</div>';
     if (typeof lucide !== 'undefined') lucide.createIcons();
     kpiRefreshAttendanceSummary();
+}
+
+// Bulk-clears every attendance record in the currently-shown date range — for wiping placeholder/
+// test data before importing the real attendance, without deleting one cell at a time.
+function kpiClearAttendanceRange() {
+    var startInput = document.getElementById('kpiAttSummaryStart');
+    var endInput = document.getElementById('kpiAttSummaryEnd');
+    var startDate = startInput ? startInput.value : kpiAttendanceSummaryStart;
+    var endDate = endInput ? endInput.value : kpiAttendanceSummaryEnd;
+    if (!startDate || !endDate) { showPremiumToast('Missing', 'Pick a start and end date first.', 'error'); return; }
+
+    var isSuperAdmin = currentUserRole === 'Super Admin';
+    var selectedTeams = (isSuperAdmin && kpiAllTeams.length > 1) ? kpiAllTeams : [];
+    var teamLabel = selectedTeams.length > 1 ? selectedTeams.join(', ') : kpiCurrentTeam;
+
+    showPremiumConfirm('Clear Attendance Range', 'Delete ALL attendance records for ' + teamLabel + ' from ' + startDate + ' to ' + endDate + '? This cannot be undone.', 'Yes, clear it', function() {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { showPremiumToast('Cleared', res.message, 'success'); kpiRefreshAttendanceSummary(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Could not clear.', 'error'); }
+        }).clearKpiAttendanceRange(currentSessionToken, kpiCurrentTeam, startDate, endDate, selectedTeams.length > 1 ? selectedTeams : null);
+    });
 }
 
 function kpiRefreshAttendanceSummary() {
@@ -4081,7 +4103,7 @@ function openKpiAttEditModal(username, date, displayName) {
             '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Break Start</label><input type="time" id="kpiAttEditBreakStart" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
             '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Break End</label><input type="time" id="kpiAttEditBreakEnd" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
             '      </div>',
-            '      <button id="btnKpiAttEditSave" onclick="kpiSaveAttEdit()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="save" class="h-4 w-4"></i> Save</button>',
+            '      <div class="flex gap-2"><button id="btnKpiAttEditSave" onclick="kpiSaveAttEdit()" class="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="save" class="h-4 w-4"></i> Save</button><button onclick="kpiDeleteAttEdit()" class="px-4 py-3 bg-rose-tint text-rose-600 rounded-xl text-sm font-bold hover:bg-rose-100 flex items-center justify-center gap-2"><i data-lucide="trash-2" class="h-4 w-4"></i></button></div>',
             '    </div>',
             '  </div>',
             '</div>'
@@ -4136,6 +4158,23 @@ function kpiSaveAttEdit() {
         btn.innerHTML = orig; btn.disabled = false;
         showPremiumToast('Error', 'Could not save.', 'error');
     }).updateKpiAttendanceRecord(currentSessionToken, username, date, timeIn, timeOut, breakStart, breakEnd);
+}
+
+function kpiDeleteAttEdit() {
+    var modal = document.getElementById('kpiAttEditModal');
+    var username = modal.getAttribute('data-username');
+    var date = modal.getAttribute('data-date');
+    showPremiumConfirm('Delete Record', 'Delete this attendance record for ' + date + '?', 'Yes, delete', function() {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) {
+                showPremiumToast('Deleted', 'Attendance record deleted.', 'success');
+                closeSmoothly('kpiAttEditModal');
+                kpiRefreshAttendanceSummary();
+            } else {
+                showPremiumToast('Error', (res && res.message) || 'Could not delete.', 'error');
+            }
+        }).deleteKpiAttendanceRecord(currentSessionToken, username, date);
+    });
 }
 
 // ---- Import Attendance (CSV: Username, Date YYYY-MM-DD, Time In HH:MM, Time Out HH:MM) ----
