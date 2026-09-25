@@ -807,6 +807,57 @@ const actions = {
     if (batch.length === 0) return { success: false, message: "Walang valid na row (maling format ng petsa o username).", imported: 0, skipped: skipped };
     await db.batch(batch);
     return { success: true, message: batch.length + " na attendance record na-import" + (skipped > 0 ? (", " + skipped + " na-skip dahil sa maling format") : "") + ".", imported: batch.length, skipped: skipped };
+  },
+
+  // Feeds the edit modal with whatever's already on file for that day (or blanks, if none yet).
+  async getKpiAttendanceRecord(db, token, username, date) {
+    await checkSession(db, token, true);
+    const row = await db.prepare("SELECT time_in, time_out, break_start, break_end FROM kpi_attendance WHERE username = ? AND date = ?").bind(username, date).first();
+    return row || { time_in: "", time_out: "", break_start: "", break_end: "" };
+  },
+
+  // Manual correction of one person's one-day record — Super Admin only. Upserts on
+  // (username, date) same as the CSV import, so editing a day with no existing row just creates it.
+  async updateKpiAttendanceRecord(db, token, username, date, timeIn, timeOut, breakStart, breakEnd) {
+    const session = await checkSession(db, token, true);
+    if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "Kailangan ng valid na username at petsa." };
+    const userRow = await db.prepare("SELECT team FROM users WHERE username = ?").bind(username).first();
+    if (!userRow) return { success: false, message: "Hindi nahanap ang user." };
+    await db.prepare(
+      "INSERT INTO kpi_attendance (username, team, date, time_in, time_out, break_start, break_end) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(username, date) DO UPDATE SET time_in=excluded.time_in, time_out=excluded.time_out, break_start=excluded.break_start, break_end=excluded.break_end"
+    ).bind(username, userRow.team || "", date, String(timeIn || "").trim(), String(timeOut || "").trim(), String(breakStart || "").trim(), String(breakEnd || "").trim()).run();
+    return { success: true, message: "Na-update ang attendance record." };
+  },
+
+  // Everyone on the team's plotted day-offs, for the "My Day Offs" panel and — for Super Admin —
+  // the management list they can delete from.
+  async getKpiDayoffs(db, token, team) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return [];
+    const { results } = await db.prepare(
+      "SELECT d.id, d.username, d.date, d.created_at, u.full_name as fullName FROM kpi_dayoffs d LEFT JOIN users u ON u.username = d.username WHERE d.team = ? ORDER BY d.date ASC"
+    ).bind(targetTeam).all();
+    return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
+  },
+
+  // Self-service plot — once a person submits a day-off date it's immutable to them (no delete/edit
+  // action exposed to non-admins); only deleteKpiDayoff (Super Admin only) can undo it.
+  async plotKpiDayoff(db, token, date) {
+    const session = await checkSession(db, token);
+    if (!session.team) return { success: false, message: "Walang naka-assign na team sa account mo." };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "Kailangan ng valid na petsa." };
+    const existing = await db.prepare("SELECT id FROM kpi_dayoffs WHERE username = ? AND date = ?").bind(session.username, date).first();
+    if (existing) return { success: false, message: "Naka-plot na ang petsang ito." };
+    await db.prepare("INSERT INTO kpi_dayoffs (username, team, date) VALUES (?, ?, ?)").bind(session.username, session.team, date).run();
+    return { success: true, message: "Na-plot ang Day Off mo." };
+  },
+
+  async deleteKpiDayoff(db, token, id) {
+    await checkSession(db, token, true);
+    await db.prepare("DELETE FROM kpi_dayoffs WHERE id = ?").bind(id).run();
+    return { success: true };
   }
 };
 

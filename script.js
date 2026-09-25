@@ -43,6 +43,7 @@ var availableBrandsForPerms = [];
 var currentUserRole = 'Admin';
 var currentUserPermissions = [];
 var currentUserTeam = '';
+var currentSessionUsername = '';
 var currentEditingUser = null;
 var currentSessionToken = null;
 
@@ -350,6 +351,7 @@ function finishLogin(name, role, perms, isRestore, team) {
         currentUserRole = role;
         currentUserPermissions = perms || [];
         currentUserTeam = team || '';
+        currentSessionUsername = name || '';
 
         localStorage.setItem('dg_user', name);
         localStorage.setItem('dg_role', role);
@@ -3507,9 +3509,10 @@ function renderKpiAttendanceTab() {
         content.innerHTML = '<div class="panel-card p-6 flex flex-col items-center text-center mb-5">' +
             '<p class="text-xs text-subtle mb-4">' + new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
             buttonHtml + statusHtml +
-        '</div><div id="kpiAttendanceLog"></div>';
+        '</div><div id="kpiDayoffsPanel" class="mb-5"></div><div id="kpiAttendanceLog"></div>';
 
         if (typeof lucide !== 'undefined') lucide.createIcons();
+        renderKpiDayoffsPanel();
         renderKpiAttendanceLog();
     }).getKpiAttendanceToday(currentSessionToken);
 }
@@ -3540,6 +3543,58 @@ function kpiDoBreakEnd() {
         if (res && res.success) { showPremiumToast('Break End', 'Na-log ang Break End mo (' + res.break_end + ').', 'success'); renderKpiAttendanceTab(); }
         else { showPremiumToast('Error', (res && res.message) || 'Hindi na-log.', 'error'); }
     }).kpiBreakEnd(currentSessionToken);
+}
+
+// ---- Day Offs — self-plot once, locked after that; only Super Admin can undo/adjust ----
+function renderKpiDayoffsPanel() {
+    var panelEl = document.getElementById('kpiDayoffsPanel');
+    if (!panelEl || !kpiCurrentTeam) return;
+
+    var isSuperAdmin = currentUserRole === 'Super Admin';
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        var mine = rows.filter(function(r) { return r.username === currentSessionUsername; });
+
+        var chipsHtml = mine.length ? mine.map(function(r) {
+            return '<span class="px-3 py-1.5 bg-indigo-tint text-indigo-600 rounded-lg text-xs font-bold flex items-center gap-1.5"><i data-lucide="calendar-x" class="h-3.5 w-3.5"></i> ' + escapeHtmlClient(r.date) + '</span>';
+        }).join('') : '<p class="text-xs text-subtle">Wala ka pang naka-plot na Day Off.</p>';
+
+        var adminListHtml = '';
+        if (isSuperAdmin) {
+            var allRowsHtml = rows.length ? rows.map(function(r) {
+                return '<div class="flex items-center justify-between py-1.5 border-b border-theme last:border-0"><span class="text-xs text-body">' + escapeHtmlClient(r.fullName) + ' — <span class="font-bold">' + escapeHtmlClient(r.date) + '</span></span>' +
+                    '<button onclick="kpiDeleteDayoffAdmin(' + r.id + ')" class="text-rose-500 hover:text-rose-700"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button></div>';
+            }).join('') : '<p class="text-xs text-subtle">Wala pang naka-plot sa buong team.</p>';
+            adminListHtml = '<div class="mt-4 pt-4 border-t border-theme"><p class="text-[10px] font-bold text-subtle uppercase mb-2">Lahat ng Day Offs ng Team (Super Admin lang makaka-delete)</p>' + allRowsHtml + '</div>';
+        }
+
+        panelEl.innerHTML = '<div class="panel-card p-5">' +
+            '<h3 class="text-sm font-black text-heading mb-3">Aking Day Offs</h3>' +
+            '<div class="flex flex-wrap gap-2 mb-3">' + chipsHtml + '</div>' +
+            '<div class="flex gap-2"><input type="date" id="kpiNewDayoffDate" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"><button onclick="kpiPlotDayoff()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">I-plot</button></div>' +
+            '<p class="text-[10px] text-subtle mt-2">Isang beses lang puwedeng i-plot ang bawat petsa — hindi mo na ito mababago pagkatapos, Super Admin na lang ang makaka-ayos.</p>' +
+            adminListHtml +
+        '</div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).getKpiDayoffs(currentSessionToken, kpiCurrentTeam);
+}
+
+function kpiPlotDayoff() {
+    var input = document.getElementById('kpiNewDayoffDate');
+    if (!input || !input.value) { showPremiumToast('Kulang', 'Pumili ng petsa.', 'error'); return; }
+    var date = input.value;
+    showPremiumConfirm('Kumpirmahin', 'Sigurado ka bang i-plot ang Day Off mo sa ' + date + '? Hindi mo na ito mababago pagkatapos.', 'Oo, i-plot', function() {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { showPremiumToast('Na-plot', res.message, 'success'); renderKpiDayoffsPanel(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Hindi na-plot.', 'error'); }
+        }).plotKpiDayoff(currentSessionToken, date);
+    });
+}
+
+function kpiDeleteDayoffAdmin(id) {
+    showPremiumConfirm('Tanggalin', 'Tanggalin ang naka-plot na Day Off na ito?', 'Oo, tanggalin', function() {
+        google.script.run.withSuccessHandler(function() { renderKpiDayoffsPanel(); }).deleteKpiDayoff(currentSessionToken, id);
+    });
 }
 
 // Summary grid — one row per member, one column per date, showing hours worked that day (blank
@@ -3621,11 +3676,13 @@ function kpiRefreshAttendanceSummary() {
             tableEl.innerHTML = '<p class="text-xs text-subtle p-3">Walang miyembro o petsa sa hanay na ito.</p>';
             return;
         }
+        var canEdit = currentUserRole === 'Super Admin';
         var dateHeaders = dateList.map(function(d) { return '<th class="py-2 px-2 text-[9px] font-extrabold text-subtle uppercase whitespace-nowrap">' + d.slice(5) + '</th>'; }).join('');
         var bodyRows = members.map(function(m) {
             var cells = dateList.map(function(d) {
                 var h = m.days[d];
-                return '<td class="py-2 px-2 text-xs text-center ' + (h ? 'text-body font-bold' : 'text-subtle') + '">' + (h === null || h === undefined ? '—' : h) + '</td>';
+                var clickAttr = canEdit ? ' onclick="openKpiAttEditModal(\'' + m.username.replace(/'/g, "\\'") + '\', \'' + d + '\', \'' + escapeHtmlClient(m.fullName || m.username).replace(/'/g, "\\'") + '\')"' : '';
+                return '<td class="py-2 px-2 text-xs text-center ' + (h ? 'text-body font-bold' : 'text-subtle') + (canEdit ? ' cursor-pointer hover:bg-indigo-tint hover:text-indigo-600 transition-colors' : '') + '"' + clickAttr + ' title="' + (canEdit ? 'I-click para i-edit' : '') + '">' + (h === null || h === undefined ? '—' : h) + '</td>';
             }).join('');
             return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(m.fullName || m.username) + '</td>' +
                 (showTeamCol ? '<td class="py-2 px-3 text-[10px] font-bold text-indigo-400 uppercase whitespace-nowrap">' + escapeHtmlClient(m.team || '') + '</td>' : '') +
@@ -3640,7 +3697,7 @@ function kpiRefreshAttendanceSummary() {
             dateHeaders +
             '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Days</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Hours</th>' +
             '</tr></thead><tbody>' + bodyRows + '</tbody></table></div>' +
-            '<p class="text-[10px] text-subtle mt-3">Bawat cell = oras na na-log (Time In hanggang Time Out). "—" = walang kumpletong Time In/Out sa araw na iyon.</p>';
+            '<p class="text-[10px] text-subtle mt-3">Bawat cell = oras na na-log (Time In hanggang Time Out, bawas ang Break).' + (canEdit ? ' I-click ang cell para i-edit.' : '') + ' "—" = walang kumpletong Time In/Out sa araw na iyon.</p>';
     }).withFailureHandler(function() {
         tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading attendance summary.</p>';
     }).exportDtrData(currentSessionToken, kpiCurrentTeam, kpiAttendanceSummaryStart, kpiAttendanceSummaryEnd, selectedTeams.length > 1 ? selectedTeams : null);
@@ -3861,6 +3918,83 @@ function kpiRunDtrExport() {
         btn.innerHTML = orig; btn.disabled = false;
         showPremiumToast('Error', 'Hindi na-generate ang DTR export.', 'error');
     }).exportDtrData(currentSessionToken, kpiCurrentTeam, startDate, endDate);
+}
+
+// ---- Manual attendance correction (Super Admin, click a cell in Attendance Summary) ----
+function openKpiAttEditModal(username, date, displayName) {
+    var modal = document.getElementById('kpiAttEditModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiAttEditModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-sm flex flex-col">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="pencil" class="h-5 w-5 text-indigo-500"></i> I-edit ang Attendance</h3>',
+            '      <button onclick="closeSmoothly(\'kpiAttEditModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app">',
+            '      <p class="text-sm font-bold text-heading mb-1" id="kpiAttEditName"></p>',
+            '      <p class="text-xs text-subtle mb-4" id="kpiAttEditDate"></p>',
+            '      <div class="grid grid-cols-2 gap-3 mb-3">',
+            '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Time In</label><input type="time" id="kpiAttEditTimeIn" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
+            '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Time Out</label><input type="time" id="kpiAttEditTimeOut" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
+            '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Break Start</label><input type="time" id="kpiAttEditBreakStart" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
+            '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Break End</label><input type="time" id="kpiAttEditBreakEnd" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
+            '      </div>',
+            '      <button id="btnKpiAttEditSave" onclick="kpiSaveAttEdit()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="save" class="h-4 w-4"></i> I-save</button>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiAttEditModal');
+    }
+    modal.setAttribute('data-username', username);
+    modal.setAttribute('data-date', date);
+    document.getElementById('kpiAttEditName').innerText = displayName;
+    document.getElementById('kpiAttEditDate').innerText = date;
+    document.getElementById('kpiAttEditTimeIn').value = '';
+    document.getElementById('kpiAttEditTimeOut').value = '';
+    document.getElementById('kpiAttEditBreakStart').value = '';
+    document.getElementById('kpiAttEditBreakEnd').value = '';
+
+    google.script.run.withSuccessHandler(function(rec) {
+        document.getElementById('kpiAttEditTimeIn').value = (rec && rec.time_in) || '';
+        document.getElementById('kpiAttEditTimeOut').value = (rec && rec.time_out) || '';
+        document.getElementById('kpiAttEditBreakStart').value = (rec && rec.break_start) || '';
+        document.getElementById('kpiAttEditBreakEnd').value = (rec && rec.break_end) || '';
+    }).getKpiAttendanceRecord(currentSessionToken, username, date);
+
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function kpiSaveAttEdit() {
+    var modal = document.getElementById('kpiAttEditModal');
+    var username = modal.getAttribute('data-username');
+    var date = modal.getAttribute('data-date');
+    var timeIn = document.getElementById('kpiAttEditTimeIn').value;
+    var timeOut = document.getElementById('kpiAttEditTimeOut').value;
+    var breakStart = document.getElementById('kpiAttEditBreakStart').value;
+    var breakEnd = document.getElementById('kpiAttEditBreakEnd').value;
+    var btn = document.getElementById('btnKpiAttEditSave');
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div>';
+    btn.disabled = true;
+
+    google.script.run.withSuccessHandler(function(res) {
+        btn.innerHTML = orig; btn.disabled = false;
+        if (res && res.success) {
+            showPremiumToast('Na-save', 'Na-update ang attendance record.', 'success');
+            closeSmoothly('kpiAttEditModal');
+            kpiRefreshAttendanceSummary();
+        } else {
+            showPremiumToast('Error', (res && res.message) || 'Hindi na-save.', 'error');
+        }
+    }).withFailureHandler(function() {
+        btn.innerHTML = orig; btn.disabled = false;
+        showPremiumToast('Error', 'Hindi na-save.', 'error');
+    }).updateKpiAttendanceRecord(currentSessionToken, username, date, timeIn, timeOut, breakStart, breakEnd);
 }
 
 // ---- Import Attendance (CSV: Username, Date YYYY-MM-DD, Time In HH:MM, Time Out HH:MM) ----
