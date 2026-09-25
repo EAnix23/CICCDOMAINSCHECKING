@@ -544,9 +544,32 @@ const actions = {
 
   async getKpiAttendanceToday(db, token) {
     const session = await checkSession(db, token);
-    const row = await db.prepare("SELECT time_in, time_out FROM kpi_attendance WHERE username = ? AND date = ?")
+    const row = await db.prepare("SELECT time_in, time_out, break_start, break_end FROM kpi_attendance WHERE username = ? AND date = ?")
       .bind(session.username, getPHDateStr()).first();
-    return row || { time_in: "", time_out: "" };
+    return row || { time_in: "", time_out: "", break_start: "", break_end: "" };
+  },
+
+  async kpiBreakStart(db, token) {
+    const session = await checkSession(db, token);
+    const today = getPHDateStr();
+    const existing = await db.prepare("SELECT id, time_in, time_out, break_start FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
+    if (!existing || !existing.time_in) return { success: false, message: "Wala ka pang Time In ngayong araw." };
+    if (existing.time_out) return { success: false, message: "Tapos ka na sa araw na ito." };
+    if (existing.break_start) return { success: false, message: "May Break Start ka na ngayong araw." };
+    const nowTime = getPHTimeStr();
+    await db.prepare("UPDATE kpi_attendance SET break_start=? WHERE id=?").bind(nowTime, existing.id).run();
+    return { success: true, break_start: nowTime };
+  },
+
+  async kpiBreakEnd(db, token) {
+    const session = await checkSession(db, token);
+    const today = getPHDateStr();
+    const existing = await db.prepare("SELECT id, break_start, break_end FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
+    if (!existing || !existing.break_start) return { success: false, message: "Wala ka pang Break Start ngayong araw." };
+    if (existing.break_end) return { success: false, message: "May Break End ka na ngayong araw." };
+    const nowTime = getPHTimeStr();
+    await db.prepare("UPDATE kpi_attendance SET break_end=? WHERE id=?").bind(nowTime, existing.id).run();
+    return { success: true, break_end: nowTime };
   },
 
   async kpiTimeIn(db, token) {
@@ -615,18 +638,30 @@ const actions = {
     return { success: true };
   },
 
-  // Combined KPI Score = Uploads(50%) + Attendance(30%) + Tasks(20%), per team member, over the
-  // last `periodDays` (7 or 30). Uploads is scored relative to the TEAM's own average (no fixed
-  // quota exists), capped at 100 so one outlier can't blow the combined score past 100. Attendance
-  // counts a day only when BOTH Time In and Time Out are logged (a lone Time In doesn't count — no
-  // schedule data exists to know if the day was actually completed). Tasks is scored off tasks
-  // assigned directly to that person; a member with zero assigned tasks gets 100 for that part
-  // rather than being penalized for something that was never given to them.
-  async getKpiScoreboard(db, token, team, periodDays) {
+  // Combined KPI Score = Uploads(50%) + Attendance(30%) + Tasks(20%), per team member, over either
+  // a `periodDays` preset (1/7/30 = Daily/Weekly/Monthly) or an explicit [customStart, customEnd]
+  // range. Uploads is scored relative to the TEAM's own average (no fixed quota exists), capped at
+  // 100 so one outlier can't blow the combined score past 100. Attendance counts a day only when
+  // BOTH Time In and Time Out are logged (a lone Time In doesn't count — no schedule data exists to
+  // know if the day was actually completed). Tasks is scored off tasks assigned directly to that
+  // person; a member with zero assigned tasks gets 100 for that part rather than being penalized
+  // for something that was never given to them.
+  async getKpiScoreboard(db, token, team, periodDays, customStart, customEnd) {
     const session = await checkSession(db, token);
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
     if (!targetTeam) return [];
-    const days = (periodDays === 30) ? 30 : 7;
+
+    let days, startSQL, endSQL, startDate, endDate;
+    if (customStart && customEnd) {
+      startDate = customStart; endDate = customEnd;
+      const d1 = new Date(customStart + "T00:00:00Z"), d2 = new Date(customEnd + "T00:00:00Z");
+      days = Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
+      startSQL = customStart + " 00:00:00"; endSQL = customEnd + " 23:59:59";
+    } else {
+      days = (periodDays === 30) ? 30 : (periodDays === 1 ? 1 : 7);
+      startSQL = getPeriodStartSQL(days); endSQL = getPHTodayStartSQL().slice(0, 10) + " 23:59:59";
+      startDate = getPHDateStrDaysAgo(days - 1); endDate = getPHDateStr();
+    }
 
     const { results: memberRows } = await db.prepare("SELECT username, full_name as fullName FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
     const members = memberRows.map(r => r.username);
@@ -634,13 +669,10 @@ const actions = {
     memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; });
     if (members.length === 0) return [];
 
-    const startSQL = getPeriodStartSQL(days);
-    const startDate = getPHDateStrDaysAgo(days);
-
-    const { results: bbcRows } = await db.prepare("SELECT agent, COUNT(*) as cnt FROM domains WHERE created_at >= ? AND agent IN (SELECT username FROM users WHERE team = ?) GROUP BY agent").bind(startSQL, targetTeam).all();
-    const { results: dpvRows } = await db.prepare("SELECT agent, COUNT(*) as cnt FROM dpv_records WHERE created_at >= ? AND team = ? AND domain NOT LIKE 'init-%' GROUP BY agent").bind(startSQL, targetTeam).all();
-    const { results: attRows } = await db.prepare("SELECT username, COUNT(*) as cnt FROM kpi_attendance WHERE team = ? AND date >= ? AND time_in != '' AND time_out != '' GROUP BY username").bind(targetTeam, startDate).all();
-    const { results: taskRows } = await db.prepare("SELECT assigned_to, status, COUNT(*) as cnt FROM kpi_tasks WHERE team = ? AND task_date >= ? AND assigned_to != '' GROUP BY assigned_to, status").bind(targetTeam, startDate).all();
+    const { results: bbcRows } = await db.prepare("SELECT agent, COUNT(*) as cnt FROM domains WHERE created_at >= ? AND created_at <= ? AND agent IN (SELECT username FROM users WHERE team = ?) GROUP BY agent").bind(startSQL, endSQL, targetTeam).all();
+    const { results: dpvRows } = await db.prepare("SELECT agent, COUNT(*) as cnt FROM dpv_records WHERE created_at >= ? AND created_at <= ? AND team = ? AND domain NOT LIKE 'init-%' GROUP BY agent").bind(startSQL, endSQL, targetTeam).all();
+    const { results: attRows } = await db.prepare("SELECT username, COUNT(*) as cnt FROM kpi_attendance WHERE team = ? AND date >= ? AND date <= ? AND time_in != '' AND time_out != '' GROUP BY username").bind(targetTeam, startDate, endDate).all();
+    const { results: taskRows } = await db.prepare("SELECT assigned_to, status, COUNT(*) as cnt FROM kpi_tasks WHERE team = ? AND task_date >= ? AND task_date <= ? AND assigned_to != '' GROUP BY assigned_to, status").bind(targetTeam, startDate, endDate).all();
 
     const uploads = {}; members.forEach(m => uploads[m] = 0);
     bbcRows.forEach(r => { if (uploads[r.agent] !== undefined) uploads[r.agent] += r.cnt; });
@@ -692,7 +724,7 @@ const actions = {
     // Joined against the member list (current team membership) rather than filtered by
     // kpi_attendance.team directly, so a since-reassigned user's older rows still show up here.
     const { results: attRows } = await db.prepare(
-      `SELECT username, date, time_in, time_out FROM kpi_attendance WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ? ORDER BY date ASC`
+      `SELECT username, date, time_in, time_out, break_start, break_end FROM kpi_attendance WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ? ORDER BY date ASC`
     ).bind(...teamList, startDate, endDate).all();
 
     const byUser = {};
@@ -700,8 +732,14 @@ const actions = {
       if (!byUser[r.username]) byUser[r.username] = {};
       if (r.time_in && r.time_out) {
         const inMin = timeStrToMinutes(r.time_in), outMin = timeStrToMinutes(r.time_out);
-        const diff = outMin - inMin;
-        byUser[r.username][r.date] = diff > 0 ? Math.round((diff / 60) * 10) / 10 : null;
+        let diffMin = outMin - inMin;
+        // Deduct the actual logged break (Break Start -> Break End) when present — the raw
+        // Time In/Out span otherwise includes lunch/break time as if it were worked hours.
+        if (r.break_start && r.break_end) {
+          const breakMin = timeStrToMinutes(r.break_end) - timeStrToMinutes(r.break_start);
+          if (breakMin > 0) diffMin -= breakMin;
+        }
+        byUser[r.username][r.date] = diffMin > 0 ? Math.round((diffMin / 60) * 10) / 10 : null;
       } else {
         byUser[r.username][r.date] = null;
       }

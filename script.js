@@ -3480,18 +3480,27 @@ function renderKpiAttendanceTab() {
     google.script.run.withSuccessHandler(function(today) {
         var timeIn = (today && today.time_in) || '';
         var timeOut = (today && today.time_out) || '';
+        var breakStart = (today && today.break_start) || '';
+        var breakEnd = (today && today.break_end) || '';
 
         var buttonHtml;
         if (!timeIn) {
             buttonHtml = '<button onclick="kpiDoTimeIn()" class="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 flex items-center gap-2"><i data-lucide="log-in" class="h-4 w-4"></i> Time In</button>';
+        } else if (breakStart && !breakEnd) {
+            buttonHtml = '<button onclick="kpiDoBreakEnd()" class="px-6 py-3 bg-amber-500 text-white rounded-xl text-sm font-black hover:bg-amber-600 flex items-center gap-2"><i data-lucide="coffee" class="h-4 w-4"></i> Break End</button>';
         } else if (!timeOut) {
-            buttonHtml = '<button onclick="kpiDoTimeOut()" class="px-6 py-3 bg-rose-600 text-white rounded-xl text-sm font-black hover:bg-rose-700 flex items-center gap-2"><i data-lucide="log-out" class="h-4 w-4"></i> Time Out</button>';
+            buttonHtml = '<div class="flex items-center gap-3 flex-wrap justify-center">' +
+                '<button onclick="kpiDoTimeOut()" class="px-6 py-3 bg-rose-600 text-white rounded-xl text-sm font-black hover:bg-rose-700 flex items-center gap-2"><i data-lucide="log-out" class="h-4 w-4"></i> Time Out</button>' +
+                (!breakStart ? '<button onclick="kpiDoBreakStart()" class="px-6 py-3 bg-amber-500 text-white rounded-xl text-sm font-black hover:bg-amber-600 flex items-center gap-2"><i data-lucide="coffee" class="h-4 w-4"></i> Break Start</button>' : '') +
+            '</div>';
         } else {
             buttonHtml = '<span class="px-6 py-3 bg-app text-subtle rounded-xl text-sm font-black flex items-center gap-2"><i data-lucide="check" class="h-4 w-4"></i> Kumpleto na ang attendance mo ngayong araw</span>';
         }
 
-        var statusHtml = '<div class="flex items-center gap-6 mt-4 text-sm">' +
+        var statusHtml = '<div class="flex items-center gap-6 mt-4 text-sm flex-wrap justify-center">' +
             '<div><span class="text-[10px] font-bold text-subtle uppercase block">Time In</span><span class="font-black text-body">' + (timeIn || '—') + '</span></div>' +
+            '<div><span class="text-[10px] font-bold text-subtle uppercase block">Break Start</span><span class="font-black text-body">' + (breakStart || '—') + '</span></div>' +
+            '<div><span class="text-[10px] font-bold text-subtle uppercase block">Break End</span><span class="font-black text-body">' + (breakEnd || '—') + '</span></div>' +
             '<div><span class="text-[10px] font-bold text-subtle uppercase block">Time Out</span><span class="font-black text-body">' + (timeOut || '—') + '</span></div>' +
         '</div>';
 
@@ -3517,6 +3526,20 @@ function kpiDoTimeOut() {
         if (res && res.success) { showPremiumToast('Time Out', 'Na-log ang Time Out mo (' + res.time_out + ').', 'success'); renderKpiAttendanceTab(); }
         else { showPremiumToast('Error', (res && res.message) || 'Hindi na-log.', 'error'); }
     }).kpiTimeOut(currentSessionToken);
+}
+
+function kpiDoBreakStart() {
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) { showPremiumToast('Break Start', 'Na-log ang Break Start mo (' + res.break_start + ').', 'success'); renderKpiAttendanceTab(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Hindi na-log.', 'error'); }
+    }).kpiBreakStart(currentSessionToken);
+}
+
+function kpiDoBreakEnd() {
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) { showPremiumToast('Break End', 'Na-log ang Break End mo (' + res.break_end + ').', 'success'); renderKpiAttendanceTab(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Hindi na-log.', 'error'); }
+    }).kpiBreakEnd(currentSessionToken);
 }
 
 // Summary grid — one row per member, one column per date, showing hours worked that day (blank
@@ -3679,14 +3702,69 @@ function kpiDeleteAchievement(id) {
 
 // ---- Tab 4: KPI Scoreboard (Uploads 50% + Attendance 30% + Tasks 20%, per member) ----
 var kpiScoreboardPeriod = 7;
+var kpiScoreboardCustomStart = '';
+var kpiScoreboardCustomEnd = '';
 
 function renderKpiScoreboardTab() {
     var content = document.getElementById('kpiTabContent');
     if (!content) return;
     if (!kpiCurrentTeam) { content.innerHTML = '<p class="text-sm text-subtle">Walang naka-assign na team.</p>'; return; }
 
+    function periodBtn(days, label) {
+        var active = !kpiScoreboardCustomStart && kpiScoreboardPeriod === days;
+        return '<button onclick="kpiSwitchScoreboardPeriod(' + days + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold ' + (active ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-subtle') + '">' + label + '</button>';
+    }
+
+    content.innerHTML =
+        '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
+            '<h3 class="text-sm font-black text-heading">KPI Analytics</h3>' +
+            '<div class="flex items-center gap-2 flex-wrap">' +
+                periodBtn(1, 'Daily') + periodBtn(7, 'Weekly') + periodBtn(30, 'Monthly') +
+                '<span class="text-xs text-subtle">o</span>' +
+                '<input type="date" id="kpiScoreStart" value="' + kpiScoreboardCustomStart + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                '<span class="text-xs text-subtle">to</span>' +
+                '<input type="date" id="kpiScoreEnd" value="' + kpiScoreboardCustomEnd + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                '<button onclick="kpiApplyScoreboardRange()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Apply</button>' +
+            '</div>' +
+        '</div>' +
+        '<div id="kpiScoreboardBody"><div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div></div>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    kpiLoadScoreboardData();
+}
+
+function kpiApplyScoreboardRange() {
+    var s = document.getElementById('kpiScoreStart').value;
+    var e = document.getElementById('kpiScoreEnd').value;
+    if (!s || !e) { showPremiumToast('Kulang', 'Pumili ng parehong start at end date.', 'error'); return; }
+    kpiScoreboardCustomStart = s;
+    kpiScoreboardCustomEnd = e;
+    renderKpiScoreboardTab();
+}
+
+function kpiSwitchScoreboardPeriod(days) {
+    kpiScoreboardPeriod = days;
+    kpiScoreboardCustomStart = '';
+    kpiScoreboardCustomEnd = '';
+    renderKpiScoreboardTab();
+}
+
+function kpiLoadScoreboardData() {
+    var bodyEl = document.getElementById('kpiScoreboardBody');
+    if (!bodyEl) return;
+
     google.script.run.withSuccessHandler(function(rows) {
         rows = rows || [];
+
+        var chartRows = rows.length ? rows.map(function(r) {
+            var tone = r.combinedScore >= 75 ? 'health-good' : (r.combinedScore >= 50 ? 'health-warn' : 'health-bad');
+            var isTop = rows[0] === r && r.combinedScore > 0;
+            return '<div class="flex items-center gap-3">' +
+                '<span class="text-xs font-bold text-body w-36 truncate flex items-center gap-1">' + (isTop ? '<i data-lucide="trophy" class="h-3.5 w-3.5 text-amber-500 flex-shrink-0"></i>' : '') + escapeHtmlClient(r.fullName || r.username) + '</span>' +
+                '<div class="flex-1 health-track" style="height:0.85rem"><div class="health-fill ' + tone + '" style="width:' + r.combinedScore + '%; height:0.85rem"></div></div>' +
+                '<span class="text-xs font-black text-body w-8 text-right">' + r.combinedScore + '</span>' +
+            '</div>';
+        }).join('') : '<p class="text-xs text-subtle p-3 text-center">Wala pang miyembro sa team na ito.</p>';
+
         var rowsHtml = rows.length ? rows.map(function(r, idx) {
             var isTop = idx === 0 && r.combinedScore > 0;
             return '<tr class="border-b border-theme' + (isTop ? ' bg-indigo-tint' : '') + '">' +
@@ -3698,27 +3776,16 @@ function renderKpiScoreboardTab() {
                 '</tr>';
         }).join('') : '<tr><td colspan="5" class="py-6 text-center text-xs text-subtle">Wala pang miyembro sa team na ito.</td></tr>';
 
-        content.innerHTML =
-            '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
-                '<h3 class="text-sm font-black text-heading">KPI Scoreboard</h3>' +
-                '<div class="flex gap-2">' +
-                    '<button onclick="kpiSwitchScoreboardPeriod(7)" class="px-3 py-1.5 rounded-lg text-xs font-bold ' + (kpiScoreboardPeriod === 7 ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-subtle') + '">Weekly</button>' +
-                    '<button onclick="kpiSwitchScoreboardPeriod(30)" class="px-3 py-1.5 rounded-lg text-xs font-bold ' + (kpiScoreboardPeriod === 30 ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-subtle') + '">Monthly</button>' +
-                '</div>' +
-            '</div>' +
+        bodyEl.innerHTML =
+            '<div class="panel-card p-5 mb-5"><h4 class="text-xs font-black text-heading uppercase tracking-widest mb-4">KPI Score per Miyembro</h4><div class="space-y-3">' + chartRows + '</div></div>' +
             '<div class="panel-card p-5">' +
                 '<p class="text-[10px] text-subtle mb-3">Score = Uploads (50%, laban sa team average) + Attendance (30%, kumpletong Time In/Out) + Tasks (20%, assigned tasks lang).</p>' +
                 '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme"><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">User</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Uploads</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Attendance</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Tasks</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">KPI Score</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
             '</div>';
         if (typeof lucide !== 'undefined') lucide.createIcons();
     }).withFailureHandler(function() {
-        content.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading scoreboard.</p>';
-    }).getKpiScoreboard(currentSessionToken, kpiCurrentTeam, kpiScoreboardPeriod);
-}
-
-function kpiSwitchScoreboardPeriod(days) {
-    kpiScoreboardPeriod = days;
-    renderKpiScoreboardTab();
+        bodyEl.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading scoreboard.</p>';
+    }).getKpiScoreboard(currentSessionToken, kpiCurrentTeam, kpiScoreboardPeriod, kpiScoreboardCustomStart, kpiScoreboardCustomEnd);
 }
 
 // ---- DTR Export (CSV, matches the HR DTR template's columns where the data actually exists) ----
