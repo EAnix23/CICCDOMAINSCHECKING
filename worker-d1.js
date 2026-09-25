@@ -908,7 +908,7 @@ const actions = {
   async fileKpiLeave(db, env, token, leaveType, startDate, endDate, reason, attachmentBase64, attachmentFilename, attachmentType) {
     const session = await checkSession(db, token);
     if (!session.team) return { success: false, message: "No team assigned to your account." };
-    const validTypes = ["VL", "SL", "LWOP", "Bereavement"];
+    const validTypes = ["VL", "SL", "LWOP", "BL"];
     if (validTypes.indexOf(leaveType) === -1) return { success: false, message: "Invalid leave type." };
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate || ""))) {
       return { success: false, message: "A valid start and end date are required." };

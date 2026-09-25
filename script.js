@@ -3509,12 +3509,12 @@ function renderKpiAttendanceTab() {
         content.innerHTML = '<div class="panel-card p-6 flex flex-col items-center text-center mb-5">' +
             '<p class="text-xs text-subtle mb-4">' + new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
             buttonHtml + statusHtml +
-        '</div><div id="kpiDayoffsPanel" class="mb-5"></div><div id="kpiLeavesPanel" class="mb-5"></div><div id="kpiAttendanceLog"></div>';
+        '</div><div id="kpiAttendanceLog" class="mb-5"></div><div id="kpiDayoffsPanel" class="mb-5"></div><div id="kpiLeavesPanel"></div>';
 
         if (typeof lucide !== 'undefined') lucide.createIcons();
+        renderKpiAttendanceLog();
         renderKpiDayoffsPanel();
         renderKpiLeavesPanel();
-        renderKpiAttendanceLog();
     }).getKpiAttendanceToday(currentSessionToken);
 }
 
@@ -3658,7 +3658,7 @@ function openKpiLeaveModal() {
             '    </div>',
             '    <div class="p-6 bg-app">',
             '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Leave Type</label>',
-            '      <select id="kpiLeaveType" class="w-full mb-3 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"><option value="VL">Vacation Leave (VL)</option><option value="SL">Sick Leave (SL)</option><option value="LWOP">Leave Without Pay (LWOP)</option><option value="Bereavement">Bereavement Leave</option></select>',
+            '      <select id="kpiLeaveType" class="w-full mb-3 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"><option value="VL">Vacation Leave (VL)</option><option value="SL">Sick Leave (SL)</option><option value="LWOP">Leave Without Pay (LWOP)</option><option value="BL">Bereavement Leave (BL)</option></select>',
             '      <div class="grid grid-cols-2 gap-3 mb-3">',
             '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Start Date</label><input type="date" id="kpiLeaveStart" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
             '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">End Date</label><input type="date" id="kpiLeaveEnd" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
