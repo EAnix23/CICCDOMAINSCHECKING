@@ -7,5 +7,9 @@ binding = "DB"
 database_name = "bbc-sec-db"
 database_id = "0c9b7a7e-a9f4-40ff-bfa3-8da719d57355"
 
+[[r2_buckets]]
+binding = "LEAVE_ATTACHMENTS"
+bucket_name = "bbc-kpi-leave-attachments"
+
 [observability]
 enabled = true

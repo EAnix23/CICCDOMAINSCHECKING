@@ -3509,10 +3509,11 @@ function renderKpiAttendanceTab() {
         content.innerHTML = '<div class="panel-card p-6 flex flex-col items-center text-center mb-5">' +
             '<p class="text-xs text-subtle mb-4">' + new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
             buttonHtml + statusHtml +
-        '</div><div id="kpiDayoffsPanel" class="mb-5"></div><div id="kpiAttendanceLog"></div>';
+        '</div><div id="kpiDayoffsPanel" class="mb-5"></div><div id="kpiLeavesPanel" class="mb-5"></div><div id="kpiAttendanceLog"></div>';
 
         if (typeof lucide !== 'undefined') lucide.createIcons();
         renderKpiDayoffsPanel();
+        renderKpiLeavesPanel();
         renderKpiAttendanceLog();
     }).getKpiAttendanceToday(currentSessionToken);
 }
@@ -3594,6 +3595,143 @@ function kpiPlotDayoff() {
 function kpiDeleteDayoffAdmin(id) {
     showPremiumConfirm('Remove', 'Remove this plotted Day Off?', 'Yes, remove', function() {
         google.script.run.withSuccessHandler(function() { renderKpiDayoffsPanel(); }).deleteKpiDayoff(currentSessionToken, id);
+    });
+}
+
+// ---- Leave Requests — self-file with optional attachment; Super Admin approves/rejects, and an
+// approved leave then shows up automatically in the Attendance Summary grid ----
+function renderKpiLeavesPanel() {
+    var panelEl = document.getElementById('kpiLeavesPanel');
+    if (!panelEl || !kpiCurrentTeam) return;
+    var isSuperAdmin = currentUserRole === 'Super Admin';
+
+    function statusBadge(s) {
+        var cls = s === 'approved' ? 'bg-emerald-50 text-emerald-600' : (s === 'rejected' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600');
+        return '<span class="text-[10px] font-black uppercase px-2 py-0.5 rounded-md ' + cls + '">' + s + '</span>';
+    }
+
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        var mine = rows.filter(function(r) { return r.username === currentSessionUsername; });
+
+        var mineHtml = mine.length ? mine.map(function(r) {
+            return '<div class="flex items-center justify-between py-2 border-b border-theme last:border-0 flex-wrap gap-1">' +
+                '<div><span class="text-xs font-bold text-body">' + escapeHtmlClient(r.leave_type) + '</span> <span class="text-xs text-subtle">' + escapeHtmlClient(r.start_date) + ' to ' + escapeHtmlClient(r.end_date) + '</span></div>' +
+                statusBadge(r.status) +
+            '</div>';
+        }).join('') : '<p class="text-xs text-subtle">No leave requests filed yet.</p>';
+
+        var adminHtml = '';
+        if (isSuperAdmin) {
+            var pendingCount = rows.filter(function(r) { return r.status === 'pending'; }).length;
+            var allRowsHtml = rows.length ? rows.map(function(r) {
+                var actionsHtml = r.status === 'pending'
+                    ? '<button onclick="kpiReviewLeave(' + r.id + ', \'approved\')" class="text-emerald-500 hover:text-emerald-700 text-xs font-bold mr-2">Approve</button><button onclick="kpiReviewLeave(' + r.id + ', \'rejected\')" class="text-rose-500 hover:text-rose-700 text-xs font-bold">Reject</button>'
+                    : '';
+                var attachHtml = r.attachment_filename ? '<a href="https://bbc-api-gateway.ea-nix.workers.dev/?action=downloadKpiLeaveAttachment&id=' + r.id + '&token=' + encodeURIComponent(currentSessionToken) + '" target="_blank" class="text-indigo-500 hover:text-indigo-700 text-xs font-bold mr-2">View File</a>' : '';
+                return '<div class="flex items-center justify-between py-2 border-b border-theme last:border-0 flex-wrap gap-1">' +
+                    '<div><span class="text-xs font-bold text-body">' + escapeHtmlClient(r.fullName) + '</span> — <span class="text-xs text-body">' + escapeHtmlClient(r.leave_type) + '</span> <span class="text-xs text-subtle">' + escapeHtmlClient(r.start_date) + ' to ' + escapeHtmlClient(r.end_date) + '</span>' + (r.reason ? '<p class="text-[10px] text-subtle mt-0.5">' + escapeHtmlClient(r.reason) + '</p>' : '') + '</div>' +
+                    '<div class="flex items-center gap-2">' + statusBadge(r.status) + attachHtml + actionsHtml + '</div>' +
+                '</div>';
+            }).join('') : '<p class="text-xs text-subtle">No leave requests for this team yet.</p>';
+            adminHtml = '<div class="mt-4 pt-4 border-t border-theme"><p class="text-[10px] font-bold text-subtle uppercase mb-2">All Team Leave Requests' + (pendingCount ? ' (' + pendingCount + ' pending)' : '') + '</p>' + allRowsHtml + '</div>';
+        }
+
+        panelEl.innerHTML = '<div class="panel-card p-5">' +
+            '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-black text-heading">My Leave Requests</h3><button onclick="openKpiLeaveModal()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">File a Leave</button></div>' +
+            mineHtml +
+            adminHtml +
+        '</div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).getKpiLeaves(currentSessionToken, kpiCurrentTeam);
+}
+
+function openKpiLeaveModal() {
+    var modal = document.getElementById('kpiLeaveModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiLeaveModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-md flex flex-col">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="file-text" class="h-5 w-5 text-indigo-500"></i> File a Leave</h3>',
+            '      <button onclick="closeSmoothly(\'kpiLeaveModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app">',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Leave Type</label>',
+            '      <select id="kpiLeaveType" class="w-full mb-3 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"><option value="VL">Vacation Leave (VL)</option><option value="SL">Sick Leave (SL)</option><option value="LWOP">Leave Without Pay (LWOP)</option><option value="Bereavement">Bereavement Leave</option></select>',
+            '      <div class="grid grid-cols-2 gap-3 mb-3">',
+            '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Start Date</label><input type="date" id="kpiLeaveStart" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
+            '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">End Date</label><input type="date" id="kpiLeaveEnd" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
+            '      </div>',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Reason</label>',
+            '      <textarea id="kpiLeaveReason" rows="2" class="w-full mb-3 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></textarea>',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Attachment (Optional — PNG, JPG, or PDF, max 5MB)</label>',
+            '      <input type="file" id="kpiLeaveFile" accept=".png,.jpg,.jpeg,.pdf" class="w-full mb-4 border border-theme bg-panel rounded-lg text-xs text-body px-3 py-2 shadow-sm">',
+            '      <button id="btnKpiLeaveSubmit" onclick="kpiSubmitLeave()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="send" class="h-4 w-4"></i> Submit</button>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiLeaveModal');
+    }
+    document.getElementById('kpiLeaveStart').value = '';
+    document.getElementById('kpiLeaveEnd').value = '';
+    document.getElementById('kpiLeaveReason').value = '';
+    document.getElementById('kpiLeaveFile').value = '';
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function kpiSubmitLeave() {
+    var leaveType = document.getElementById('kpiLeaveType').value;
+    var startDate = document.getElementById('kpiLeaveStart').value;
+    var endDate = document.getElementById('kpiLeaveEnd').value;
+    var reason = document.getElementById('kpiLeaveReason').value.trim();
+    var fileInput = document.getElementById('kpiLeaveFile');
+    var file = fileInput.files[0];
+
+    if (!startDate || !endDate) { showPremiumToast('Missing', 'Pick a start and end date.', 'error'); return; }
+    if (file && file.size > 5 * 1024 * 1024) { showPremiumToast('Too Large', 'File must be 5MB or smaller.', 'error'); return; }
+
+    var btn = document.getElementById('btnKpiLeaveSubmit');
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div>';
+    btn.disabled = true;
+
+    function submit(base64, filename, type) {
+        google.script.run.withSuccessHandler(function(res) {
+            btn.innerHTML = orig; btn.disabled = false;
+            if (res && res.success) {
+                showPremiumToast('Filed', res.message, 'success');
+                closeSmoothly('kpiLeaveModal');
+                renderKpiLeavesPanel();
+            } else {
+                showPremiumToast('Error', (res && res.message) || 'Could not file the leave.', 'error');
+            }
+        }).withFailureHandler(function() {
+            btn.innerHTML = orig; btn.disabled = false;
+            showPremiumToast('Error', 'Could not file the leave.', 'error');
+        }).fileKpiLeave(currentSessionToken, leaveType, startDate, endDate, reason, base64, filename, type);
+    }
+
+    if (file) {
+        var reader = new FileReader();
+        reader.onload = function(e) { submit(e.target.result, file.name, file.type); };
+        reader.readAsDataURL(file);
+    } else {
+        submit('', '', '');
+    }
+}
+
+function kpiReviewLeave(id, status) {
+    var label = status === 'approved' ? 'approve' : 'reject';
+    showPremiumConfirm('Confirm', 'Are you sure you want to ' + label + ' this leave request?', 'Yes, ' + label, function() {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { showPremiumToast('Updated', res.message, 'success'); renderKpiLeavesPanel(); kpiRefreshAttendanceSummary(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Could not update.', 'error'); }
+        }).updateKpiLeaveStatus(currentSessionToken, id, status);
     });
 }
 
@@ -3681,8 +3819,11 @@ function kpiRefreshAttendanceSummary() {
         var bodyRows = members.map(function(m) {
             var cells = dateList.map(function(d) {
                 var h = m.days[d];
+                var isLeave = typeof h === 'string';
                 var clickAttr = canEdit ? ' onclick="openKpiAttEditModal(\'' + m.username.replace(/'/g, "\\'") + '\', \'' + d + '\', \'' + escapeHtmlClient(m.fullName || m.username).replace(/'/g, "\\'") + '\')"' : '';
-                return '<td class="py-2 px-2 text-xs text-center ' + (h ? 'text-body font-bold' : 'text-subtle') + (canEdit ? ' cursor-pointer hover:bg-indigo-tint hover:text-indigo-600 transition-colors' : '') + '"' + clickAttr + ' title="' + (canEdit ? 'Click to edit' : '') + '">' + (h === null || h === undefined ? '—' : h) + '</td>';
+                var cellText = (h === null || h === undefined) ? '—' : (isLeave ? h : h);
+                var cellCls = isLeave ? 'text-amber-600 font-black' : (h ? 'text-body font-bold' : 'text-subtle');
+                return '<td class="py-2 px-2 text-xs text-center ' + cellCls + (canEdit ? ' cursor-pointer hover:bg-indigo-tint hover:text-indigo-600 transition-colors' : '') + '"' + clickAttr + ' title="' + (isLeave ? 'On approved leave (' + h + ')' : (canEdit ? 'Click to edit' : '')) + '">' + cellText + '</td>';
             }).join('');
             return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(m.fullName || m.username) + '</td>' +
                 (showTeamCol ? '<td class="py-2 px-3 text-[10px] font-bold text-indigo-400 uppercase whitespace-nowrap">' + escapeHtmlClient(m.team || '') + '</td>' : '') +
@@ -3697,7 +3838,7 @@ function kpiRefreshAttendanceSummary() {
             dateHeaders +
             '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Days</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Hours</th>' +
             '</tr></thead><tbody>' + bodyRows + '</tbody></table></div>' +
-            '<p class="text-[10px] text-subtle mt-3">Each cell = hours logged (Time In to Time Out, minus Break).' + (canEdit ? ' Click a cell to edit.' : '') + ' "—" = no complete Time In/Out that day.</p>';
+            '<p class="text-[10px] text-subtle mt-3">Each cell = hours logged (Time In to Time Out, minus Break), or the leave type (e.g. VL, SL) on an approved leave day.' + (canEdit ? ' Click a cell to edit.' : '') + ' "—" = no complete Time In/Out that day.</p>';
     }).withFailureHandler(function() {
         tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading attendance summary.</p>';
     }).exportDtrData(currentSessionToken, kpiCurrentTeam, kpiAttendanceSummaryStart, kpiAttendanceSummaryEnd, selectedTeams.length > 1 ? selectedTeams : null);

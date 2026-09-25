@@ -769,13 +769,26 @@ const actions = {
     const last = new Date(endDate + "T00:00:00Z");
     while (cursor <= last) { dateList.push(cursor.toISOString().slice(0, 10)); cursor = new Date(cursor.getTime() + 86400000); }
 
+    // Approved leaves overlay the grid live (rather than writing fake attendance rows) — a date
+    // that already has real logged hours keeps those; only a blank day picks up the leave label.
+    const { results: leaveRows } = await db.prepare(
+      `SELECT username, leave_type, start_date, end_date FROM kpi_leaves WHERE status = 'approved' AND username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND start_date <= ? AND end_date >= ?`
+    ).bind(...teamList, endDate, startDate).all();
+    const byLeave = {};
+    leaveRows.forEach(function (r) {
+      if (!byLeave[r.username]) byLeave[r.username] = {};
+      dateList.forEach(function (d) {
+        if (d >= r.start_date && d <= r.end_date) byLeave[r.username][d] = r.leave_type;
+      });
+    });
+
     const members = memberRows.map(function (u) {
       const days = {};
       let totalDays = 0, totalHours = 0;
       dateList.forEach(function (d) {
         const h = (byUser[u.username] || {})[d];
-        days[d] = (h === undefined) ? null : h;
-        if (h) { totalDays++; totalHours += h; }
+        if (h) { days[d] = h; totalDays++; totalHours += h; }
+        else { days[d] = (byLeave[u.username] || {})[d] || null; }
       });
       return { username: u.username, fullName: u.fullName || "", hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
     });
@@ -858,6 +871,58 @@ const actions = {
     await checkSession(db, token, true);
     await db.prepare("DELETE FROM kpi_dayoffs WHERE id = ?").bind(id).run();
     return { success: true };
+  },
+
+  // Self-service leave filing, with an optional image/PDF attachment stored in R2. Starts as
+  // "pending" — nothing shows up on the Attendance Summary until Super Admin approves it
+  // (exportDtrData overlays approved leaves onto the date grid at read time).
+  async fileKpiLeave(db, env, token, leaveType, startDate, endDate, reason, attachmentBase64, attachmentFilename, attachmentType) {
+    const session = await checkSession(db, token);
+    if (!session.team) return { success: false, message: "No team assigned to your account." };
+    const validTypes = ["VL", "SL", "LWOP", "Bereavement"];
+    if (validTypes.indexOf(leaveType) === -1) return { success: false, message: "Invalid leave type." };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate || ""))) {
+      return { success: false, message: "A valid start and end date are required." };
+    }
+    if (endDate < startDate) return { success: false, message: "End date can't be before the start date." };
+
+    let attachmentKey = "";
+    if (attachmentBase64 && attachmentFilename) {
+      if (!/\.(png|jpe?g|pdf)$/i.test(attachmentFilename)) return { success: false, message: "Only PNG, JPG, or PDF files are allowed." };
+      let bytes;
+      try { bytes = base64ToBytes(attachmentBase64); } catch (e) { return { success: false, message: "Could not read the attachment." }; }
+      if (bytes.length > 5 * 1024 * 1024) return { success: false, message: "File is too large (max 5MB)." };
+      if (!env.LEAVE_ATTACHMENTS) return { success: false, message: "Attachment storage isn't configured on the Worker yet." };
+      attachmentKey = "leaves/" + session.username + "/" + Date.now() + "_" + attachmentFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
+      await env.LEAVE_ATTACHMENTS.put(attachmentKey, bytes, { httpMetadata: { contentType: attachmentType || "application/octet-stream" } });
+    }
+
+    await db.prepare(
+      "INSERT INTO kpi_leaves (username, team, leave_type, start_date, end_date, reason, attachment_key, attachment_filename, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')"
+    ).bind(session.username, session.team, leaveType, startDate, endDate, (reason || "").trim(), attachmentKey, attachmentFilename || "").run();
+    return { success: true, message: "Leave request filed." };
+  },
+
+  // Everyone's leave requests for the team — the filer sees their own in the same list Super Admin
+  // uses to review, so both share one action instead of two near-identical queries.
+  async getKpiLeaves(db, token, team) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return [];
+    const { results } = await db.prepare(
+      "SELECT l.id, l.username, l.leave_type, l.start_date, l.end_date, l.reason, l.attachment_filename, l.status, l.created_at, l.reviewed_by, u.full_name as fullName FROM kpi_leaves l LEFT JOIN users u ON u.username = l.username WHERE l.team = ? ORDER BY l.created_at DESC"
+    ).bind(targetTeam).all();
+    return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
+  },
+
+  // Approve/reject — Super Admin only. Approving doesn't write anything into kpi_attendance; the
+  // date grid picks up approved leaves live (see exportDtrData) so there's one source of truth.
+  async updateKpiLeaveStatus(db, token, id, status) {
+    const session = await checkSession(db, token, true);
+    if (["approved", "rejected", "pending"].indexOf(status) === -1) return { success: false, message: "Invalid status." };
+    const res = await db.prepare("UPDATE kpi_leaves SET status=?, reviewed_by=?, reviewed_at=datetime('now') WHERE id=?").bind(status, session.username, id).run();
+    if (res.meta.changes === 0) return { success: false, message: "Leave request not found." };
+    return { success: true, message: "Leave request " + status + "." };
   }
 };
 
@@ -1054,6 +1119,15 @@ function getPHDateStrDaysAgo(daysBack) {
 function timeStrToMinutes(str) {
   const parts = String(str).split(":");
   return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+}
+
+// Accepts either a raw base64 string or a "data:...;base64,XXXX" data URL (strips the prefix).
+function base64ToBytes(b64) {
+  const cleaned = b64.indexOf(",") !== -1 ? b64.split(",")[1] : b64;
+  const binaryStr = atob(cleaned);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+  return bytes;
 }
 
 function isIspActive(val) {
@@ -1278,6 +1352,21 @@ export default {
         const url = new URL(request.url);
         action = url.searchParams.get("action");
         args = url.searchParams.get("args") ? JSON.parse(url.searchParams.get("args")) : [];
+
+        // Raw file download — can't go through the normal json(actions[action](...)) path since it
+        // streams bytes (image/PDF), not a JSON payload. GET-only, e.g. from an <a href> or new tab.
+        if (action === "downloadKpiLeaveAttachment") {
+          const token = url.searchParams.get("token");
+          const id = url.searchParams.get("id");
+          const session = await checkSession(env.DB, token, true);
+          const row = await env.DB.prepare("SELECT attachment_key, attachment_filename FROM kpi_leaves WHERE id = ?").bind(id).first();
+          if (!row || !row.attachment_key) return new Response("Not found", { status: 404 });
+          const obj = await env.LEAVE_ATTACHMENTS.get(row.attachment_key);
+          if (!obj) return new Response("Not found", { status: 404 });
+          return new Response(obj.body, {
+            headers: { ...corsHeaders(), "Content-Type": (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream", "Content-Disposition": "inline; filename=\"" + row.attachment_filename.replace(/"/g, "") + "\"" }
+          });
+        }
       }
 
       if (!action || typeof actions[action] !== "function") {
@@ -1296,6 +1385,15 @@ export default {
         // env is passed through (not just env.DB) because runExpiringDomainsReportNow needs
         // env.TELEGRAM_BOT_TOKEN / env.TELEGRAM_CHAT_ID, not just the database binding.
         const result = await actions[action](env.DB, params, env);
+        return json(result);
+      }
+
+      // Session-authenticated actions that also need R2 access (leave attachment upload), not just
+      // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
+      // every other action keeps its existing (db, ...args) signature unchanged.
+      const envActions = ["fileKpiLeave"];
+      if (envActions.indexOf(action) !== -1) {
+        const result = await actions[action](env.DB, env, ...args);
         return json(result);
       }
 
