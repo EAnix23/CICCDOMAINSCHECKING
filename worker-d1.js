@@ -648,8 +648,20 @@ const actions = {
   // for something that was never given to them.
   async getKpiScoreboard(db, token, team, periodDays, customStart, customEnd) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return [];
+
+    // Super Admin always sees every team they manage combined here (matches the Attendance
+    // Summary behavior) — a normal user still only ever sees their own single team.
+    let teamList;
+    if (session.role === "Super Admin") {
+      const { results: teamRows } = await db.prepare("SELECT DISTINCT team FROM users WHERE team != '' ORDER BY team ASC").all();
+      teamList = teamRows.map(r => r.team);
+      if (team && teamList.indexOf(team) === -1) teamList.push(team);
+    } else {
+      if (!session.team) return [];
+      teamList = [session.team];
+    }
+    if (teamList.length === 0) return [];
+    const placeholders = teamList.map(() => "?").join(",");
 
     let days, startSQL, endSQL, startDate, endDate;
     if (customStart && customEnd) {
@@ -663,16 +675,16 @@ const actions = {
       startDate = getPHDateStrDaysAgo(days - 1); endDate = getPHDateStr();
     }
 
-    const { results: memberRows } = await db.prepare("SELECT username, full_name as fullName FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
+    const { results: memberRows } = await db.prepare(`SELECT username, team, full_name as fullName FROM users WHERE team IN (${placeholders}) ORDER BY team ASC, username ASC`).bind(...teamList).all();
     const members = memberRows.map(r => r.username);
-    const nameMap = {};
-    memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; });
+    const nameMap = {}, teamMap = {};
+    memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; teamMap[r.username] = r.team; });
     if (members.length === 0) return [];
 
-    const { results: bbcRows } = await db.prepare("SELECT agent, COUNT(*) as cnt FROM domains WHERE created_at >= ? AND created_at <= ? AND agent IN (SELECT username FROM users WHERE team = ?) GROUP BY agent").bind(startSQL, endSQL, targetTeam).all();
-    const { results: dpvRows } = await db.prepare("SELECT agent, COUNT(*) as cnt FROM dpv_records WHERE created_at >= ? AND created_at <= ? AND team = ? AND domain NOT LIKE 'init-%' GROUP BY agent").bind(startSQL, endSQL, targetTeam).all();
-    const { results: attRows } = await db.prepare("SELECT username, COUNT(*) as cnt FROM kpi_attendance WHERE team = ? AND date >= ? AND date <= ? AND time_in != '' AND time_out != '' GROUP BY username").bind(targetTeam, startDate, endDate).all();
-    const { results: taskRows } = await db.prepare("SELECT assigned_to, status, COUNT(*) as cnt FROM kpi_tasks WHERE team = ? AND task_date >= ? AND task_date <= ? AND assigned_to != '' GROUP BY assigned_to, status").bind(targetTeam, startDate, endDate).all();
+    const { results: bbcRows } = await db.prepare(`SELECT agent, COUNT(*) as cnt FROM domains WHERE created_at >= ? AND created_at <= ? AND agent IN (SELECT username FROM users WHERE team IN (${placeholders})) GROUP BY agent`).bind(startSQL, endSQL, ...teamList).all();
+    const { results: dpvRows } = await db.prepare(`SELECT agent, COUNT(*) as cnt FROM dpv_records WHERE created_at >= ? AND created_at <= ? AND team IN (${placeholders}) AND domain NOT LIKE 'init-%' GROUP BY agent`).bind(startSQL, endSQL, ...teamList).all();
+    const { results: attRows } = await db.prepare(`SELECT username, COUNT(*) as cnt FROM kpi_attendance WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ? AND time_in != '' AND time_out != '' GROUP BY username`).bind(...teamList, startDate, endDate).all();
+    const { results: taskRows } = await db.prepare(`SELECT assigned_to, status, COUNT(*) as cnt FROM kpi_tasks WHERE assigned_to IN (SELECT username FROM users WHERE team IN (${placeholders})) AND task_date >= ? AND task_date <= ? GROUP BY assigned_to, status`).bind(...teamList, startDate, endDate).all();
 
     const uploads = {}; members.forEach(m => uploads[m] = 0);
     bbcRows.forEach(r => { if (uploads[r.agent] !== undefined) uploads[r.agent] += r.cnt; });
@@ -689,15 +701,22 @@ const actions = {
       if (r.status === "done") taskDone[r.assigned_to] += r.cnt;
     });
 
-    const uploadValues = members.map(m => uploads[m]);
-    const teamAvgUploads = uploadValues.length ? uploadValues.reduce((a, b) => a + b, 0) / uploadValues.length : 0;
+    // Uploads are scored against each person's OWN team average, not a global one across every
+    // team combined — otherwise a small team gets unfairly squashed against a bigger one's volume.
+    const teamAvgUploads = {};
+    teamList.forEach(function (t) {
+      const teamMembers = members.filter(m => teamMap[m] === t);
+      const vals = teamMembers.map(m => uploads[m]);
+      teamAvgUploads[t] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    });
 
     return members.map(function (m) {
-      const uploadScore = teamAvgUploads > 0 ? Math.min(100, Math.round((uploads[m] / teamAvgUploads) * 100)) : (uploads[m] > 0 ? 100 : 0);
+      const avg = teamAvgUploads[teamMap[m]] || 0;
+      const uploadScore = avg > 0 ? Math.min(100, Math.round((uploads[m] / avg) * 100)) : (uploads[m] > 0 ? 100 : 0);
       const attendancePct = Math.min(100, Math.round((attendance[m] / days) * 100));
       const tasksPct = taskTotals[m] > 0 ? Math.round((taskDone[m] / taskTotals[m]) * 100) : 100;
       const combinedScore = Math.round(uploadScore * 0.5 + attendancePct * 0.3 + tasksPct * 0.2);
-      return { username: m, fullName: nameMap[m] || m, uploads: uploads[m], uploadScore, attendanceDays: attendance[m], attendancePct, tasksDone: taskDone[m], tasksTotal: taskTotals[m], tasksPct, combinedScore };
+      return { username: m, fullName: nameMap[m] || m, team: teamMap[m] || "", uploads: uploads[m], uploadScore, attendanceDays: attendance[m], attendancePct, tasksDone: taskDone[m], tasksTotal: taskTotals[m], tasksPct, combinedScore };
     }).sort(function (a, b) { return b.combinedScore - a.combinedScore; });
   },
 

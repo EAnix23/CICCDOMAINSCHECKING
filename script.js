@@ -3754,12 +3754,14 @@ function kpiLoadScoreboardData() {
 
     google.script.run.withSuccessHandler(function(rows) {
         rows = rows || [];
+        var showTeamCol = rows.some(function(r) { return r.team && r.team !== rows[0].team; });
 
         var chartRows = rows.length ? rows.map(function(r) {
             var tone = r.combinedScore >= 75 ? 'health-good' : (r.combinedScore >= 50 ? 'health-warn' : 'health-bad');
             var isTop = rows[0] === r && r.combinedScore > 0;
+            var teamTag = showTeamCol ? ' <span class="text-[9px] font-bold text-indigo-400 uppercase">(' + escapeHtmlClient(r.team) + ')</span>' : '';
             return '<div class="flex items-center gap-3">' +
-                '<span class="text-xs font-bold text-body w-36 truncate flex items-center gap-1">' + (isTop ? '<i data-lucide="trophy" class="h-3.5 w-3.5 text-amber-500 flex-shrink-0"></i>' : '') + escapeHtmlClient(r.fullName || r.username) + '</span>' +
+                '<span class="text-xs font-bold text-body w-44 truncate flex items-center gap-1">' + (isTop ? '<i data-lucide="trophy" class="h-3.5 w-3.5 text-amber-500 flex-shrink-0"></i>' : '') + escapeHtmlClient(r.fullName || r.username) + teamTag + '</span>' +
                 '<div class="flex-1 health-track" style="height:0.85rem"><div class="health-fill ' + tone + '" style="width:' + r.combinedScore + '%; height:0.85rem"></div></div>' +
                 '<span class="text-xs font-black text-body w-8 text-right">' + r.combinedScore + '</span>' +
             '</div>';
@@ -3769,18 +3771,19 @@ function kpiLoadScoreboardData() {
             var isTop = idx === 0 && r.combinedScore > 0;
             return '<tr class="border-b border-theme' + (isTop ? ' bg-indigo-tint' : '') + '">' +
                 '<td class="py-3 px-3 text-sm font-bold text-body"><span class="flex items-center gap-2">' + (isTop ? '<i data-lucide="trophy" class="h-4 w-4 text-amber-500"></i>' : '') + escapeHtmlClient(r.fullName || r.username) + '</span></td>' +
+                (showTeamCol ? '<td class="py-3 px-3 text-[10px] font-bold text-indigo-400 uppercase whitespace-nowrap">' + escapeHtmlClient(r.team) + '</td>' : '') +
                 '<td class="py-3 px-3 text-xs text-body text-center">' + r.uploads + ' <span class="text-subtle">(' + r.uploadScore + '%)</span></td>' +
                 '<td class="py-3 px-3 text-xs text-body text-center">' + r.attendanceDays + ' <span class="text-subtle">(' + r.attendancePct + '%)</span></td>' +
                 '<td class="py-3 px-3 text-xs text-body text-center">' + r.tasksDone + '/' + r.tasksTotal + ' <span class="text-subtle">(' + r.tasksPct + '%)</span></td>' +
                 '<td class="py-3 px-3 text-sm font-black text-indigo-600 text-center">' + r.combinedScore + '</td>' +
                 '</tr>';
-        }).join('') : '<tr><td colspan="5" class="py-6 text-center text-xs text-subtle">Wala pang miyembro sa team na ito.</td></tr>';
+        }).join('') : '<tr><td colspan="' + (showTeamCol ? 6 : 5) + '" class="py-6 text-center text-xs text-subtle">Wala pang miyembro sa team na ito.</td></tr>';
 
         bodyEl.innerHTML =
             '<div class="panel-card p-5 mb-5"><h4 class="text-xs font-black text-heading uppercase tracking-widest mb-4">KPI Score per Miyembro</h4><div class="space-y-3">' + chartRows + '</div></div>' +
             '<div class="panel-card p-5">' +
-                '<p class="text-[10px] text-subtle mb-3">Score = Uploads (50%, laban sa team average) + Attendance (30%, kumpletong Time In/Out) + Tasks (20%, assigned tasks lang).</p>' +
-                '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme"><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">User</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Uploads</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Attendance</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Tasks</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">KPI Score</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
+                '<p class="text-[10px] text-subtle mb-3">Score = Uploads (50%, laban sa SARILING team average) + Attendance (30%, kumpletong Time In/Out) + Tasks (20%, assigned tasks lang).</p>' +
+                '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme"><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">User</th>' + (showTeamCol ? '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Team</th>' : '') + '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Uploads</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Attendance</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Tasks</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">KPI Score</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
             '</div>';
         if (typeof lucide !== 'undefined') lucide.createIcons();
     }).withFailureHandler(function() {
