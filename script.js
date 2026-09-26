@@ -3837,7 +3837,10 @@ function kpiRefreshAttendanceSummary() {
             return;
         }
         var canEdit = currentUserRole === 'Super Admin';
-        var dateHeaders = dateList.map(function(d) { return '<th class="py-2 px-2 text-[9px] font-extrabold text-subtle uppercase whitespace-nowrap">' + d.slice(5) + '</th>'; }).join('');
+        var dateHeaders = dateList.map(function(d) {
+            var wd = new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+            return '<th class="py-2 px-2 text-[9px] font-extrabold text-subtle uppercase whitespace-nowrap"><span class="block text-indigo-400">' + wd + '</span>' + d.slice(5) + '</th>';
+        }).join('');
         var bodyRows = members.map(function(m) {
             var cells = dateList.map(function(d) {
                 var h = m.days[d];
