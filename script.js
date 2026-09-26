@@ -3841,11 +3841,13 @@ function kpiRefreshAttendanceSummary() {
         var bodyRows = members.map(function(m) {
             var cells = dateList.map(function(d) {
                 var h = m.days[d];
-                var isLeave = typeof h === 'string';
+                var isRD = h === 'RD', isAbsent = h === 'A';
+                var isLeave = typeof h === 'string' && !isRD && !isAbsent;
                 var clickAttr = canEdit ? ' onclick="openKpiAttEditModal(\'' + m.username.replace(/'/g, "\\'") + '\', \'' + d + '\', \'' + escapeHtmlClient(m.fullName || m.username).replace(/'/g, "\\'") + '\')"' : '';
-                var cellText = (h === null || h === undefined) ? '—' : (isLeave ? h : h);
-                var cellCls = isLeave ? 'text-amber-600 font-black' : (h ? 'text-body font-bold' : 'text-subtle');
-                return '<td class="py-2 px-2 text-xs text-center ' + cellCls + (canEdit ? ' cursor-pointer hover:bg-indigo-tint hover:text-indigo-600 transition-colors' : '') + '"' + clickAttr + ' title="' + (isLeave ? 'On approved leave (' + h + ')' : (canEdit ? 'Click to edit' : '')) + '">' + cellText + '</td>';
+                var cellText = (h === null || h === undefined) ? '—' : h;
+                var cellCls = isLeave ? 'text-amber-600 font-black' : (isRD ? 'text-subtle font-bold' : (isAbsent ? 'text-rose-600 font-black' : (h ? 'text-body font-bold' : 'text-subtle')));
+                var cellTitle = isLeave ? 'On approved leave (' + h + ')' : (isRD ? 'Rest Day' : (isAbsent ? 'Absent' : (canEdit ? 'Click to edit' : '')));
+                return '<td class="py-2 px-2 text-xs text-center ' + cellCls + (canEdit ? ' cursor-pointer hover:bg-indigo-tint hover:text-indigo-600 transition-colors' : '') + '"' + clickAttr + ' title="' + cellTitle + '">' + cellText + '</td>';
             }).join('');
             return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(m.fullName || m.username) + '</td>' +
                 (showTeamCol ? '<td class="py-2 px-3 text-[10px] font-bold text-indigo-400 uppercase whitespace-nowrap">' + escapeHtmlClient(m.team || '') + '</td>' : '') +
@@ -3860,7 +3862,7 @@ function kpiRefreshAttendanceSummary() {
             dateHeaders +
             '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Days</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Hours</th>' +
             '</tr></thead><tbody>' + bodyRows + '</tbody></table></div>' +
-            '<p class="text-[10px] text-subtle mt-3">Each cell = hours logged (Time In to Time Out, minus Break), or the leave type (e.g. VL, SL) on an approved leave day.' + (canEdit ? ' Click a cell to edit.' : '') + ' "—" = no complete Time In/Out that day.</p>';
+            '<p class="text-[10px] text-subtle mt-3">Each cell = hours logged (Time In to Time Out, minus Break), the leave type (e.g. VL, SL) on an approved leave day, <span class="text-subtle font-bold">RD</span> = Rest Day, or <span class="text-rose-600 font-bold">A</span> = Absent.' + (canEdit ? ' Click a cell to edit.' : '') + ' "—" = no data for that day.</p>';
     }).withFailureHandler(function() {
         tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading attendance summary.</p>';
     }).exportDtrData(currentSessionToken, kpiCurrentTeam, kpiAttendanceSummaryStart, kpiAttendanceSummaryEnd, selectedTeams.length > 1 ? selectedTeams : null);
@@ -4103,6 +4105,8 @@ function openKpiAttEditModal(username, date, displayName) {
             '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Break Start</label><input type="time" id="kpiAttEditBreakStart" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
             '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Break End</label><input type="time" id="kpiAttEditBreakEnd" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
             '      </div>',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Day Status</label>',
+            '      <select id="kpiAttEditStatus" class="w-full mb-4 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"><option value="">Normal (use Time In/Out above)</option><option value="RD">Rest Day (RD)</option><option value="A">Absent (A)</option></select>',
             '      <div class="flex gap-2"><button id="btnKpiAttEditSave" onclick="kpiSaveAttEdit()" class="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="save" class="h-4 w-4"></i> Save</button><button onclick="kpiDeleteAttEdit()" class="px-4 py-3 bg-rose-tint text-rose-600 rounded-xl text-sm font-bold hover:bg-rose-100 flex items-center justify-center gap-2"><i data-lucide="trash-2" class="h-4 w-4"></i></button></div>',
             '    </div>',
             '  </div>',
@@ -4119,12 +4123,14 @@ function openKpiAttEditModal(username, date, displayName) {
     document.getElementById('kpiAttEditTimeOut').value = '';
     document.getElementById('kpiAttEditBreakStart').value = '';
     document.getElementById('kpiAttEditBreakEnd').value = '';
+    document.getElementById('kpiAttEditStatus').value = '';
 
     google.script.run.withSuccessHandler(function(rec) {
         document.getElementById('kpiAttEditTimeIn').value = (rec && rec.time_in) || '';
         document.getElementById('kpiAttEditTimeOut').value = (rec && rec.time_out) || '';
         document.getElementById('kpiAttEditBreakStart').value = (rec && rec.break_start) || '';
         document.getElementById('kpiAttEditBreakEnd').value = (rec && rec.break_end) || '';
+        document.getElementById('kpiAttEditStatus').value = (rec && rec.day_status) || '';
     }).getKpiAttendanceRecord(currentSessionToken, username, date);
 
     modal.classList.remove('hidden');
@@ -4140,6 +4146,7 @@ function kpiSaveAttEdit() {
     var timeOut = document.getElementById('kpiAttEditTimeOut').value;
     var breakStart = document.getElementById('kpiAttEditBreakStart').value;
     var breakEnd = document.getElementById('kpiAttEditBreakEnd').value;
+    var dayStatus = document.getElementById('kpiAttEditStatus').value;
     var btn = document.getElementById('btnKpiAttEditSave');
     var orig = btn.innerHTML;
     btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div>';
@@ -4157,7 +4164,7 @@ function kpiSaveAttEdit() {
     }).withFailureHandler(function() {
         btn.innerHTML = orig; btn.disabled = false;
         showPremiumToast('Error', 'Could not save.', 'error');
-    }).updateKpiAttendanceRecord(currentSessionToken, username, date, timeIn, timeOut, breakStart, breakEnd);
+    }).updateKpiAttendanceRecord(currentSessionToken, username, date, timeIn, timeOut, breakStart, breakEnd, dayStatus);
 }
 
 function kpiDeleteAttEdit() {
@@ -4259,10 +4266,20 @@ function kpiHandleImportFile(event) {
             var cols = lines[i].split(',');
             var username = (cols[0] || '').trim();
             var date = kpiNormalizeImportDate(cols[1]);
-            var timeIn = kpiNormalizeImportTime(cols[2]);
-            var timeOut = kpiNormalizeImportTime(cols[3]);
             if (!username || !date) { skipped++; continue; }
-            rows.push({ username: username, date: date, timeIn: timeIn, timeOut: timeOut });
+
+            // A source DTR file often writes "Restday" or "Absent" directly in the time column
+            // instead of an actual punch — carry that through as a day status rather than trying
+            // (and failing) to parse it as a time.
+            var rawIn = (cols[2] || '').trim().toLowerCase();
+            var rawOut = (cols[3] || '').trim().toLowerCase();
+            var dayStatus = '';
+            if (rawIn.indexOf('restday') !== -1 || rawIn.indexOf('rest day') !== -1 || rawOut.indexOf('restday') !== -1 || rawOut.indexOf('rest day') !== -1) dayStatus = 'RD';
+            else if (rawIn.indexOf('absent') !== -1 || rawOut.indexOf('absent') !== -1) dayStatus = 'A';
+
+            var timeIn = dayStatus ? '' : kpiNormalizeImportTime(cols[2]);
+            var timeOut = dayStatus ? '' : kpiNormalizeImportTime(cols[3]);
+            rows.push({ username: username, date: date, timeIn: timeIn, timeOut: timeOut, dayStatus: dayStatus });
         }
         kpiImportRows = rows;
         var preview = document.getElementById('kpiImportPreview');

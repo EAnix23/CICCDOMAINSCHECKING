@@ -743,13 +743,17 @@ const actions = {
     // Joined against the member list (current team membership) rather than filtered by
     // kpi_attendance.team directly, so a since-reassigned user's older rows still show up here.
     const { results: attRows } = await db.prepare(
-      `SELECT username, date, time_in, time_out, break_start, break_end FROM kpi_attendance WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ? ORDER BY date ASC`
+      `SELECT username, date, time_in, time_out, break_start, break_end, day_status FROM kpi_attendance WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ? ORDER BY date ASC`
     ).bind(...teamList, startDate, endDate).all();
 
     const byUser = {};
     attRows.forEach(function (r) {
       if (!byUser[r.username]) byUser[r.username] = {};
-      if (r.time_in && r.time_out) {
+      // An explicit day_status (RD = Rest Day, A = Absent) always wins over hours — it's a direct
+      // fact carried over from the source DTR file, not something to recompute from punches.
+      if (r.day_status) {
+        byUser[r.username][r.date] = r.day_status;
+      } else if (r.time_in && r.time_out) {
         const inMin = timeStrToMinutes(r.time_in), outMin = timeStrToMinutes(r.time_out);
         let diffMin = outMin - inMin;
         // Deduct the actual logged break (Break Start -> Break End) when present — the raw
@@ -787,7 +791,8 @@ const actions = {
       let totalDays = 0, totalHours = 0;
       dateList.forEach(function (d) {
         const h = (byUser[u.username] || {})[d];
-        if (h) { days[d] = h; totalDays++; totalHours += h; }
+        if (typeof h === "number" && h) { days[d] = h; totalDays++; totalHours += h; }
+        else if (h) { days[d] = h; } // RD / A — a status label, not worked hours
         else { days[d] = (byLeave[u.username] || {})[d] || null; }
       });
       return { username: u.username, team: u.team || "", fullName: u.fullName || "", hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
@@ -806,8 +811,8 @@ const actions = {
     if (!Array.isArray(rows) || rows.length === 0) return { success: false, message: "The file is empty." };
 
     const stmt = db.prepare(
-      "INSERT INTO kpi_attendance (username, team, date, time_in, time_out) VALUES (?, ?, ?, ?, ?) " +
-      "ON CONFLICT(username, date) DO UPDATE SET time_in=excluded.time_in, time_out=excluded.time_out, team=excluded.team"
+      "INSERT INTO kpi_attendance (username, team, date, time_in, time_out, day_status) VALUES (?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(username, date) DO UPDATE SET time_in=excluded.time_in, time_out=excluded.time_out, day_status=excluded.day_status, team=excluded.team"
     );
     const batch = [];
     let skipped = 0;
@@ -815,7 +820,8 @@ const actions = {
       const username = String(r.username || "").trim();
       const date = String(r.date || "").trim();
       if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped++; return; }
-      batch.push(stmt.bind(username, targetTeam, date, String(r.timeIn || "").trim(), String(r.timeOut || "").trim()));
+      const dayStatus = ["RD", "A"].indexOf(r.dayStatus) !== -1 ? r.dayStatus : "";
+      batch.push(stmt.bind(username, targetTeam, date, String(r.timeIn || "").trim(), String(r.timeOut || "").trim(), dayStatus));
     });
     if (batch.length === 0) return { success: false, message: "No valid rows (bad date or username format).", imported: 0, skipped: skipped };
     await db.batch(batch);
@@ -825,21 +831,24 @@ const actions = {
   // Feeds the edit modal with whatever's already on file for that day (or blanks, if none yet).
   async getKpiAttendanceRecord(db, token, username, date) {
     await checkSession(db, token, true);
-    const row = await db.prepare("SELECT time_in, time_out, break_start, break_end FROM kpi_attendance WHERE username = ? AND date = ?").bind(username, date).first();
-    return row || { time_in: "", time_out: "", break_start: "", break_end: "" };
+    const row = await db.prepare("SELECT time_in, time_out, break_start, break_end, day_status FROM kpi_attendance WHERE username = ? AND date = ?").bind(username, date).first();
+    return row || { time_in: "", time_out: "", break_start: "", break_end: "", day_status: "" };
   },
 
   // Manual correction of one person's one-day record — Super Admin only. Upserts on
   // (username, date) same as the CSV import, so editing a day with no existing row just creates it.
-  async updateKpiAttendanceRecord(db, token, username, date, timeIn, timeOut, breakStart, breakEnd) {
+  // dayStatus ("RD"/"A") overrides the punches in exportDtrData, so both are stored even if a Time
+  // In/Out was also entered — the status wins on display, but the raw punches aren't discarded.
+  async updateKpiAttendanceRecord(db, token, username, date, timeIn, timeOut, breakStart, breakEnd, dayStatus) {
     const session = await checkSession(db, token, true);
     if (!username || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "A valid username and date are required." };
     const userRow = await db.prepare("SELECT team FROM users WHERE username = ?").bind(username).first();
     if (!userRow) return { success: false, message: "User not found." };
+    const cleanStatus = ["RD", "A"].indexOf(dayStatus) !== -1 ? dayStatus : "";
     await db.prepare(
-      "INSERT INTO kpi_attendance (username, team, date, time_in, time_out, break_start, break_end) VALUES (?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(username, date) DO UPDATE SET time_in=excluded.time_in, time_out=excluded.time_out, break_start=excluded.break_start, break_end=excluded.break_end"
-    ).bind(username, userRow.team || "", date, String(timeIn || "").trim(), String(timeOut || "").trim(), String(breakStart || "").trim(), String(breakEnd || "").trim()).run();
+      "INSERT INTO kpi_attendance (username, team, date, time_in, time_out, break_start, break_end, day_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(username, date) DO UPDATE SET time_in=excluded.time_in, time_out=excluded.time_out, break_start=excluded.break_start, break_end=excluded.break_end, day_status=excluded.day_status"
+    ).bind(username, userRow.team || "", date, String(timeIn || "").trim(), String(timeOut || "").trim(), String(breakStart || "").trim(), String(breakEnd || "").trim(), cleanStatus).run();
     return { success: true, message: "Attendance record updated." };
   },
 
