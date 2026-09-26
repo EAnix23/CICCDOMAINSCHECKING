@@ -382,22 +382,32 @@ const actions = {
 
   // Matches the first name the checker.js operator typed against users.full_name, so the bot can
   // attribute every check it submits to a real system username without requiring a login/token.
-  // Tries an exact full-name match first (in case they typed "First Last" to disambiguate), then
-  // falls back to matching only the first word of full_name.
+  // full_name is stored inconsistently across teams — "LASTNAME, FIRSTNAME" for some (Team 001),
+  // plain "FIRSTNAME LASTNAME" for others (Team 002) — so the first-name extraction has to handle
+  // both: split on the comma when present (first name is what follows it), otherwise take the
+  // first word. Tries an exact full-name match first (lets someone disambiguate by typing more).
   async resolveKpiOperator(db, params) {
     const raw = String(params.name || '').trim();
     if (!raw) return { success: false, message: "Pakilagay ang pangalan." };
     const nameLower = raw.toLowerCase();
+    function firstNameOf(fullName) {
+      const s = (fullName || '').trim();
+      if (s.indexOf(',') !== -1) {
+        const afterComma = s.split(',').slice(1).join(',').trim();
+        return (afterComma.split(/\s+/)[0] || '').toLowerCase();
+      }
+      return (s.split(/\s+/)[0] || '').toLowerCase();
+    }
     const { results } = await db.prepare("SELECT username, full_name as fullName, team FROM users WHERE full_name != ''").all();
     const all = results || [];
     const exact = all.filter(u => (u.fullName || '').trim().toLowerCase() === nameLower);
     if (exact.length === 1) return { success: true, username: exact[0].username, fullName: exact[0].fullName, team: exact[0].team };
-    const firstMatches = all.filter(u => (u.fullName || '').trim().split(/\s+/)[0].toLowerCase() === nameLower);
+    const firstMatches = all.filter(u => firstNameOf(u.fullName) === nameLower);
     if (firstMatches.length === 1) return { success: true, username: firstMatches[0].username, fullName: firstMatches[0].fullName, team: firstMatches[0].team };
     if (firstMatches.length > 1) {
       return {
         success: false, ambiguous: true,
-        message: "May " + firstMatches.length + " user na ang first name ay '" + raw + "': " + firstMatches.map(m => m.fullName + " (" + m.username + ")").join(", ") + ". I-type ang buong pangalan (First Last) para malinaw.",
+        message: "May " + firstMatches.length + " user na ang first name ay '" + raw + "': " + firstMatches.map(m => m.fullName + " (" + m.username + ")").join(", ") + ". I-type ang buong pangalan para malinaw.",
       };
     }
     return { success: false, message: "Walang user na nahanap sa system na ang pangalan ay '" + raw + "'. I-check kung tama ang Full Name sa User Management." };
@@ -988,7 +998,7 @@ const actions = {
   async fileKpiLeave(db, env, token, leaveType, startDate, endDate, reason, attachmentBase64, attachmentFilename, attachmentType) {
     const session = await checkSession(db, token);
     if (!session.team) return { success: false, message: "No team assigned to your account." };
-    const validTypes = ["VL", "SL", "LWOP", "BL"];
+    const validTypes = ["VL", "SL", "LWOP", "BL", "PL"];
     if (validTypes.indexOf(leaveType) === -1) return { success: false, message: "Invalid leave type." };
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate || ""))) {
       return { success: false, message: "A valid start and end date are required." };

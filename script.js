@@ -3658,7 +3658,7 @@ function openKpiLeaveModal() {
             '    </div>',
             '    <div class="p-6 bg-app">',
             '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Leave Type</label>',
-            '      <select id="kpiLeaveType" class="w-full mb-3 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"><option value="VL">Vacation Leave (VL)</option><option value="SL">Sick Leave (SL)</option><option value="LWOP">Leave Without Pay (LWOP)</option><option value="BL">Bereavement Leave (BL)</option></select>',
+            '      <select id="kpiLeaveType" class="w-full mb-3 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"><option value="VL">Vacation Leave (VL)</option><option value="SL">Sick Leave (SL)</option><option value="LWOP">Leave Without Pay (LWOP)</option><option value="BL">Bereavement Leave (BL)</option><option value="PL">Paternity Leave (PL)</option></select>',
             '      <div class="grid grid-cols-2 gap-3 mb-3">',
             '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Start Date</label><input type="date" id="kpiLeaveStart" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
             '        <div><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">End Date</label><input type="date" id="kpiLeaveEnd" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></div>',
