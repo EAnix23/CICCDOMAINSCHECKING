@@ -380,11 +380,36 @@ const actions = {
     return { success: true, domains: rows.map(function (r) { return r.domain; }) };
   },
 
+  // Matches the first name the checker.js operator typed against users.full_name, so the bot can
+  // attribute every check it submits to a real system username without requiring a login/token.
+  // Tries an exact full-name match first (in case they typed "First Last" to disambiguate), then
+  // falls back to matching only the first word of full_name.
+  async resolveKpiOperator(db, params) {
+    const raw = String(params.name || '').trim();
+    if (!raw) return { success: false, message: "Pakilagay ang pangalan." };
+    const nameLower = raw.toLowerCase();
+    const { results } = await db.prepare("SELECT username, full_name as fullName, team FROM users WHERE full_name != ''").all();
+    const all = results || [];
+    const exact = all.filter(u => (u.fullName || '').trim().toLowerCase() === nameLower);
+    if (exact.length === 1) return { success: true, username: exact[0].username, fullName: exact[0].fullName, team: exact[0].team };
+    const firstMatches = all.filter(u => (u.fullName || '').trim().split(/\s+/)[0].toLowerCase() === nameLower);
+    if (firstMatches.length === 1) return { success: true, username: firstMatches[0].username, fullName: firstMatches[0].fullName, team: firstMatches[0].team };
+    if (firstMatches.length > 1) {
+      return {
+        success: false, ambiguous: true,
+        message: "May " + firstMatches.length + " user na ang first name ay '" + raw + "': " + firstMatches.map(m => m.fullName + " (" + m.username + ")").join(", ") + ". I-type ang buong pangalan (First Last) para malinaw.",
+      };
+    }
+    return { success: false, message: "Walang user na nahanap sa system na ang pangalan ay '" + raw + "'. I-check kung tama ang Full Name sa User Management." };
+  },
+
   // Writes one ISP's check result back. target 'dpv' (default) updates dpv_records by domain
   // (unique); target 'brand' updates the domains table by brand+domain (its unique key) and also
   // requires params.brand. Optional params.redirectedUrl records a REDIRECTED result: for 'brand'
   // it's written straight into domains.redirected; for 'dpv' (which has no such column) it's
   // logged into activity_logs instead, mirroring the old separate "REDIRECTED DOMAINS" tab.
+  // params.operatorUsername/operatorTeam (set by checker.js after resolveKpiOperator) get logged
+  // into kpi_domain_checks so the KPI dashboard can show who actually checked which domains.
   async submitDomainCheckResult(db, params) {
     var target = (params.target === 'brand') ? 'brand' : 'dpv';
     var isp = String(params.isp || '').toLowerCase();
@@ -421,6 +446,11 @@ const actions = {
           details: (params.batch ? params.batch + " | " : "") + params.domain + " -> " + params.redirectedUrl
         });
       }
+    }
+
+    if (params.operatorUsername) {
+      await db.prepare("INSERT INTO kpi_domain_checks (username, team, target, batch, domain, isp, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(params.operatorUsername, params.operatorTeam || '', target, params.batch || '', params.domain, isp, status).run();
     }
     return { success: true, message: "Updated " + isp.toUpperCase() + " for " + params.domain };
   },
@@ -718,6 +748,47 @@ const actions = {
       const combinedScore = Math.round(uploadScore * 0.5 + attendancePct * 0.3 + tasksPct * 0.2);
       return { username: m, fullName: nameMap[m] || m, team: teamMap[m] || "", uploads: uploads[m], uploadScore, attendanceDays: attendance[m], attendancePct, tasksDone: taskDone[m], tasksTotal: taskTotals[m], tasksPct, combinedScore };
     }).sort(function (a, b) { return b.combinedScore - a.combinedScore; });
+  },
+
+  // Per-agent domain-check completion: of the domains a person uploaded (agent=username, their own
+  // BBC + DPV rows), how many have they actually run through checker.js at least once (any ISP)?
+  // This is cumulative/all-time by design — the point is "did they finish checking everything
+  // assigned to them," not a daily/weekly snapshot — separate from the period-based KPI Scoreboard.
+  async getKpiDomainCheckStats(db, token) {
+    const session = await checkSession(db, token);
+    let teamList;
+    if (session.role === "Super Admin") {
+      const { results: teamRows } = await db.prepare("SELECT DISTINCT team FROM users WHERE team != '' ORDER BY team ASC").all();
+      teamList = teamRows.map(r => r.team);
+    } else {
+      if (!session.team) return [];
+      teamList = [session.team];
+    }
+    if (teamList.length === 0) return [];
+    const placeholders = teamList.map(() => "?").join(",");
+
+    const { results: memberRows } = await db.prepare(`SELECT username, team, full_name as fullName FROM users WHERE team IN (${placeholders}) ORDER BY team ASC, username ASC`).bind(...teamList).all();
+    const members = memberRows.map(r => r.username);
+    if (members.length === 0) return [];
+    const nameMap = {}, teamMap = {};
+    memberRows.forEach(r => { nameMap[r.username] = r.fullName || r.username; teamMap[r.username] = r.team; });
+
+    const { results: bbcRows } = await db.prepare(`SELECT agent, COUNT(*) as cnt FROM domains WHERE agent IN (SELECT username FROM users WHERE team IN (${placeholders})) GROUP BY agent`).bind(...teamList).all();
+    const { results: dpvRows } = await db.prepare(`SELECT agent, COUNT(*) as cnt FROM dpv_records WHERE team IN (${placeholders}) AND domain NOT LIKE 'init-%' GROUP BY agent`).bind(...teamList).all();
+    const { results: checkedRows } = await db.prepare(`SELECT username, COUNT(DISTINCT domain) as cnt FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) GROUP BY username`).bind(...teamList).all();
+
+    const assigned = {}; members.forEach(m => assigned[m] = 0);
+    bbcRows.forEach(r => { if (assigned[r.agent] !== undefined) assigned[r.agent] += r.cnt; });
+    dpvRows.forEach(r => { if (assigned[r.agent] !== undefined) assigned[r.agent] += r.cnt; });
+
+    const checked = {}; members.forEach(m => checked[m] = 0);
+    checkedRows.forEach(r => { if (checked[r.username] !== undefined) checked[r.username] = r.cnt; });
+
+    return members.map(function (m) {
+      const a = assigned[m], c = Math.min(checked[m], a);
+      const pct = a > 0 ? Math.round((c / a) * 100) : (checked[m] > 0 ? 100 : 0);
+      return { username: m, fullName: nameMap[m] || m, team: teamMap[m] || "", assigned: a, checked: checked[m], pct };
+    }).sort(function (a, b) { return b.pct - a.pct; });
   },
 
   // Raw material for the bi-monthly DTR spreadsheet HR asks for — per-member daily hours computed
@@ -1413,7 +1484,7 @@ export default {
 
       // Machine-to-machine actions: gated by a shared secret (env.AUTOMATION_API_KEY), not a user
       // session — the domain-checker script has no human logging in to hand it a token.
-      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow"];
+      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow"];
       if (automationActions.indexOf(action) !== -1) {
         const apiKey = args[0];
         const params = args[1] || {};

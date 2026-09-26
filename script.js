@@ -4006,14 +4006,48 @@ function kpiLoadScoreboardData() {
 
         bodyEl.innerHTML =
             '<div class="panel-card p-5 mb-5"><h4 class="text-xs font-black text-heading uppercase tracking-widest mb-4">KPI Score per Member</h4><div class="space-y-3">' + chartRows + '</div></div>' +
-            '<div class="panel-card p-5">' +
+            '<div class="panel-card p-5 mb-5">' +
                 '<p class="text-[10px] text-subtle mb-3">Score = Uploads (50%, vs. their OWN team average) + Attendance (30%, complete Time In/Out) + Tasks (20%, assigned tasks only).</p>' +
                 '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme"><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">User</th>' + (showTeamCol ? '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Team</th>' : '') + '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Uploads</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Attendance</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Tasks</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">KPI Score</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
-            '</div>';
+            '</div>' +
+            '<div id="kpiDomainCheckBody"><div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div></div>';
         if (typeof lucide !== 'undefined') lucide.createIcons();
+        kpiLoadDomainCheckStats();
     }).withFailureHandler(function() {
         bodyEl.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading scoreboard.</p>';
     }).getKpiScoreboard(currentSessionToken, kpiCurrentTeam, kpiScoreboardPeriod, kpiScoreboardCustomStart, kpiScoreboardCustomEnd);
+}
+
+// ---- Domain-Check Completion (from checker.js/Playwright ISP-checking bot) ----
+// All-time, not period-scoped: shows whether each agent has actually run ISP checks on every
+// domain they themselves uploaded (agent=username on domains/dpv_records), based on the
+// kpi_domain_checks log written by submitDomainCheckResult once checker.js identifies its operator.
+function kpiLoadDomainCheckStats() {
+    var el = document.getElementById('kpiDomainCheckBody');
+    if (!el) return;
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        var showTeamCol = rows.some(function(r) { return r.team && r.team !== rows[0].team; });
+        var rowsHtml = rows.length ? rows.map(function(r) {
+            var tone = r.pct >= 100 ? 'text-emerald-500' : (r.pct >= 50 ? 'text-amber-500' : 'text-rose-500');
+            return '<tr class="border-b border-theme">' +
+                '<td class="py-3 px-3 text-sm font-bold text-body">' + escapeHtmlClient(r.fullName || r.username) + '</td>' +
+                (showTeamCol ? '<td class="py-3 px-3 text-[10px] font-bold text-indigo-400 uppercase whitespace-nowrap">' + escapeHtmlClient(r.team) + '</td>' : '') +
+                '<td class="py-3 px-3 text-xs text-body text-center">' + r.assigned + '</td>' +
+                '<td class="py-3 px-3 text-xs text-body text-center">' + r.checked + '</td>' +
+                '<td class="py-3 px-3 text-sm font-black text-center ' + tone + '">' + r.pct + '%</td>' +
+                '</tr>';
+        }).join('') : '<tr><td colspan="' + (showTeamCol ? 5 : 4) + '" class="py-6 text-center text-xs text-subtle">No domain-check data yet.</td></tr>';
+
+        el.innerHTML =
+            '<div class="panel-card p-5">' +
+                '<h4 class="text-xs font-black text-heading uppercase tracking-widest mb-2">Domain Check Completion (ISP Checker Bot)</h4>' +
+                '<p class="text-[10px] text-subtle mb-3">All-time: domains they uploaded (Assigned) vs. domains they have run through checker.js at least once (Checked). Not period-scoped.</p>' +
+                '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme"><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">User</th>' + (showTeamCol ? '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Team</th>' : '') + '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Assigned</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Checked</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Completion</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
+            '</div>';
+    }).withFailureHandler(function() {
+        el.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading domain check stats.</p>';
+    }).getKpiDomainCheckStats(currentSessionToken);
 }
 
 // ---- DTR Export (CSV, matches the HR DTR template's columns where the data actually exists) ----
