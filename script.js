@@ -3615,18 +3615,36 @@ function renderKpiAttendanceTab() {
     }).getKpiAttendanceToday(currentSessionToken);
 }
 
+// Best-effort location grab — resolves with {lat,lng} or {} (permission denied, no GPS, or timed
+// out after 5s). Time In/Out never blocks on this; a declined/unavailable location just punches
+// in with no coordinates, same as before this feature existed.
+function kpiGetLocation() {
+    return new Promise(function(resolve) {
+        if (!navigator.geolocation) { resolve({}); return; }
+        navigator.geolocation.getCurrentPosition(
+            function(pos) { resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
+            function() { resolve({}); },
+            { timeout: 5000, maximumAge: 60000 }
+        );
+    });
+}
+
 function kpiDoTimeIn() {
-    google.script.run.withSuccessHandler(function(res) {
-        if (res && res.success) { showPremiumToast('Time In', 'Your Time In was logged (' + res.time_in + ').', 'success'); renderKpiAttendanceTab(); }
-        else { showPremiumToast('Error', (res && res.message) || 'Could not log.', 'error'); }
-    }).kpiTimeIn(currentSessionToken);
+    kpiGetLocation().then(function(loc) {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { showPremiumToast('Time In', 'Your Time In was logged (' + res.time_in + ').', 'success'); renderKpiAttendanceTab(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Could not log.', 'error'); }
+        }).kpiTimeIn(currentSessionToken, loc.lat, loc.lng);
+    });
 }
 
 function kpiDoTimeOut() {
-    google.script.run.withSuccessHandler(function(res) {
-        if (res && res.success) { showPremiumToast('Time Out', 'Your Time Out was logged (' + res.time_out + ').', 'success'); renderKpiAttendanceTab(); }
-        else { showPremiumToast('Error', (res && res.message) || 'Could not log.', 'error'); }
-    }).kpiTimeOut(currentSessionToken);
+    kpiGetLocation().then(function(loc) {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { showPremiumToast('Time Out', 'Your Time Out was logged (' + res.time_out + ').', 'success'); renderKpiAttendanceTab(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Could not log.', 'error'); }
+        }).kpiTimeOut(currentSessionToken, loc.lat, loc.lng);
+    });
 }
 
 function kpiDoBreakStart() {
@@ -3949,7 +3967,7 @@ function kpiRefreshAttendanceSummary() {
                 var cellTitle = isLeave ? 'On approved leave (' + h + ')' : (isRD ? 'Rest Day' : (isAbsent ? 'Absent' : (canEdit ? 'Click to edit' : '')));
                 return '<td class="py-2 px-2 text-xs text-center ' + cellCls + (canEdit ? ' cursor-pointer hover:bg-indigo-tint hover:text-indigo-600 transition-colors' : '') + '"' + clickAttr + ' title="' + cellTitle + '">' + cellText + '</td>';
             }).join('');
-            return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(m.fullName || m.username) + '</td>' +
+            return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap cursor-pointer hover:text-indigo-500 hover:underline" onclick="openKpiAttendanceDetailModal(\'' + m.username.replace(/'/g, "\\'") + '\')" title="View Time In/Out detail">' + escapeHtmlClient(m.fullName || m.username) + '</td>' +
                 (showTeamCol ? '<td class="py-2 px-3 text-[10px] font-bold text-indigo-400 uppercase whitespace-nowrap">' + escapeHtmlClient(m.team || '') + '</td>' : '') +
                 cells +
                 '<td class="py-2 px-3 text-xs font-black text-indigo-600 text-center">' + m.totalDays + '</td>' +
@@ -3966,6 +3984,150 @@ function kpiRefreshAttendanceSummary() {
     }).withFailureHandler(function() {
         tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading attendance summary.</p>';
     }).exportDtrData(currentSessionToken, kpiCurrentTeam, kpiAttendanceSummaryStart, kpiAttendanceSummaryEnd, selectedTeams.length > 1 ? selectedTeams : null);
+}
+
+// ---- Attendance Detail modal (click a name in the Attendance Summary) ----
+// Per-day Time In/Break/Time Out, GPS coordinates captured at each punch (if the person granted
+// browser location permission), and Late vs. their schedule-on-that-date. Super Admin also gets a
+// Schedule history panel here, since shift times change per cutoff/season.
+var kpiAttDetailUsername = '';
+
+function openKpiAttendanceDetailModal(username) {
+    kpiAttDetailUsername = username;
+    var modal = document.getElementById('kpiAttDetailModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiAttDetailModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-3xl flex flex-col max-h-[90vh]">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app flex-shrink-0">',
+            '      <h3 id="kpiAttDetailTitle" class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="clock" class="h-5 w-5 text-indigo-500"></i> Attendance Detail</h3>',
+            '      <button onclick="closeSmoothly(\'kpiAttDetailModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app overflow-y-auto custom-scrollbar" id="kpiAttDetailBody"></div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiAttDetailModal');
+    }
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    kpiLoadAttendanceDetail();
+}
+
+function kpiLoadAttendanceDetail() {
+    var body = document.getElementById('kpiAttDetailBody');
+    if (!body) return;
+    var start = kpiAttendanceSummaryStart, end = kpiAttendanceSummaryEnd;
+    body.innerHTML = '<div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div>';
+    var isSuperAdmin = currentUserRole === 'Super Admin';
+
+    google.script.run.withSuccessHandler(function(data) {
+        if (!data || data.success === false) {
+            body.innerHTML = '<p class="text-xs text-rose-500 p-3">' + escapeHtmlClient((data && data.message) || 'Error loading detail.') + '</p>';
+            return;
+        }
+        document.getElementById('kpiAttDetailTitle').innerHTML = '<i data-lucide="clock" class="h-5 w-5 text-indigo-500"></i> ' + escapeHtmlClient(data.fullName);
+        var s = data.summary || {};
+
+        function mapLink(lat, lng) {
+            if (lat === null || lat === undefined || lng === null || lng === undefined) return '';
+            return ' <a href="https://www.google.com/maps?q=' + lat + ',' + lng + '" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300" title="View location on map"><i data-lucide="map-pin" class="h-3 w-3 inline"></i></a>';
+        }
+
+        var rowsHtml = (data.days || []).map(function(d) {
+            var wd = new Date(d.date + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+            var statusHtml;
+            if (d.status === 'RD') statusHtml = '<span class="text-subtle font-bold">Rest Day</span>';
+            else if (d.status === 'A') statusHtml = '<span class="text-rose-600 font-bold">Absent</span>';
+            else if (d.status) statusHtml = '<span class="text-amber-600 font-bold">' + escapeHtmlClient(d.status) + '</span>';
+            else if (!d.timeIn) statusHtml = '<span class="text-subtle">—</span>';
+            else if (d.lateMinutes) statusHtml = '<span class="text-rose-600 font-black">Late ' + d.lateMinutes + 'm</span>';
+            else statusHtml = '<span class="text-emerald-500 font-bold">On time</span>';
+
+            return '<tr class="border-b border-theme">' +
+                '<td class="py-2 px-3 text-xs text-body whitespace-nowrap"><span class="text-indigo-400 font-bold">' + wd + '</span> ' + d.date.slice(5) + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body text-center">' + (d.timeIn ? escapeHtmlClient(d.timeIn) + mapLink(d.timeInLat, d.timeInLng) : '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body text-center">' + (d.breakStart ? escapeHtmlClient(d.breakStart) + '–' + escapeHtmlClient(d.breakEnd || '—') : '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body text-center">' + (d.timeOut ? escapeHtmlClient(d.timeOut) + mapLink(d.timeOutLat, d.timeOutLng) : '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body text-center">' + (d.hours !== null && d.hours !== undefined ? d.hours : '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-center">' + statusHtml + '</td>' +
+            '</tr>';
+        }).join('');
+
+        var scheduleSectionHtml = '';
+        if (isSuperAdmin) {
+            scheduleSectionHtml =
+                '<div class="panel-card p-4 mt-5">' +
+                    '<div class="flex items-center justify-between mb-3"><h4 class="text-xs font-black text-heading uppercase tracking-widest">Schedule History</h4></div>' +
+                    '<div id="kpiScheduleBody"><div class="flex justify-center py-4"><div class="spinner border-t-indigo-500"></div></div></div>' +
+                '</div>';
+        }
+
+        body.innerHTML =
+            '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">' +
+                '<div class="panel-card p-3 text-center"><p class="text-lg font-black text-body">' + s.totalPresent + '</p><p class="text-[9px] font-bold text-subtle uppercase">Days Present</p></div>' +
+                '<div class="panel-card p-3 text-center"><p class="text-lg font-black ' + (s.totalLate > 0 ? 'text-rose-500' : 'text-body') + '">' + s.totalLate + '</p><p class="text-[9px] font-bold text-subtle uppercase">Late Days</p></div>' +
+                '<div class="panel-card p-3 text-center"><p class="text-lg font-black text-body">' + (s.avgTimeIn || '—') + '</p><p class="text-[9px] font-bold text-subtle uppercase">Avg Time In</p></div>' +
+                '<div class="panel-card p-3 text-center"><p class="text-lg font-black text-body">' + s.avgHours + '</p><p class="text-[9px] font-bold text-subtle uppercase">Avg Hrs/Day</p></div>' +
+            '</div>' +
+            '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme">' +
+                '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Date</th>' +
+                '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Time In</th>' +
+                '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Break</th>' +
+                '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Time Out</th>' +
+                '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Hours</th>' +
+                '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Status</th>' +
+            '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
+            '<p class="text-[9px] text-subtle mt-2">Location pin only appears when the person allowed browser location access at the moment they punched in/out.</p>' +
+            scheduleSectionHtml;
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        if (isSuperAdmin) kpiLoadScheduleHistory();
+    }).withFailureHandler(function() {
+        body.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading detail.</p>';
+    }).getKpiAttendanceDetail(currentSessionToken, kpiAttDetailUsername, start, end);
+}
+
+function kpiLoadScheduleHistory() {
+    var el = document.getElementById('kpiScheduleBody');
+    if (!el) return;
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        var rowsHtml = rows.length ? rows.map(function(r) {
+            return '<div class="flex items-center gap-2 py-1.5 border-b border-theme/60 last:border-0">' +
+                '<span class="text-xs font-bold text-body w-20">' + escapeHtmlClient(r.scheduledTimeIn) + '</span>' +
+                '<span class="text-[10px] text-subtle flex-1">effective ' + escapeHtmlClient(r.effectiveFrom) + (r.note ? ' — ' + escapeHtmlClient(r.note) : '') + '</span>' +
+                '<button onclick="kpiDeleteScheduleEntry(' + r.id + ')" class="text-rose-500 hover:text-rose-700"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>' +
+            '</div>';
+        }).join('') : '<p class="text-[10px] text-subtle">No schedule set — Late is not tracked until one is added.</p>';
+
+        el.innerHTML = rowsHtml +
+            '<div class="flex flex-col sm:flex-row gap-2 mt-3 pt-3 border-t border-theme">' +
+                '<input type="time" id="kpiNewScheduleTime" value="11:00" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5">' +
+                '<input type="date" id="kpiNewScheduleDate" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5">' +
+                '<input type="text" id="kpiNewScheduleNote" placeholder="Note (optional)..." class="flex-1 border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5">' +
+                '<button onclick="kpiAddScheduleEntry()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Add</button>' +
+            '</div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).withFailureHandler(function() {
+        el.innerHTML = '<p class="text-xs text-rose-500">Error loading schedule.</p>';
+    }).getKpiSchedules(currentSessionToken, kpiAttDetailUsername);
+}
+
+function kpiAddScheduleEntry() {
+    var time = document.getElementById('kpiNewScheduleTime').value;
+    var date = document.getElementById('kpiNewScheduleDate').value;
+    var note = document.getElementById('kpiNewScheduleNote').value.trim();
+    if (!time || !date) { showPremiumToast('Missing', 'Pick a Time In and effective-from date.', 'error'); return; }
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) { kpiLoadScheduleHistory(); kpiLoadAttendanceDetail(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Could not save schedule.', 'error'); }
+    }).addKpiSchedule(currentSessionToken, kpiAttDetailUsername, time, date, note);
+}
+
+function kpiDeleteScheduleEntry(id) {
+    google.script.run.withSuccessHandler(function() { kpiLoadScheduleHistory(); kpiLoadAttendanceDetail(); }).deleteKpiSchedule(currentSessionToken, id);
 }
 
 // ---- Tab 3: Accomplishments / Ongoing Projects / Achievements ----

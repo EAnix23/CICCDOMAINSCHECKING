@@ -612,29 +612,33 @@ const actions = {
     return { success: true, break_end: nowTime };
   },
 
-  async kpiTimeIn(db, token) {
+  // lat/lng are optional — captured client-side via the browser Geolocation API (permission-gated);
+  // a person who declines the permission just punches in with no coordinates, same as before.
+  async kpiTimeIn(db, token, lat, lng) {
     const session = await checkSession(db, token);
     const today = getPHDateStr();
     const existing = await db.prepare("SELECT id, time_in FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
     if (existing && existing.time_in) return { success: false, message: "You already have a Time In logged today." };
     const nowTime = getPHTimeStr();
+    const latVal = (typeof lat === "number") ? lat : null, lngVal = (typeof lng === "number") ? lng : null;
     if (existing) {
-      await db.prepare("UPDATE kpi_attendance SET time_in=? WHERE id=?").bind(nowTime, existing.id).run();
+      await db.prepare("UPDATE kpi_attendance SET time_in=?, time_in_lat=?, time_in_lng=? WHERE id=?").bind(nowTime, latVal, lngVal, existing.id).run();
     } else {
-      await db.prepare("INSERT INTO kpi_attendance (username, team, date, time_in) VALUES (?, ?, ?, ?)")
-        .bind(session.username, session.team || "", today, nowTime).run();
+      await db.prepare("INSERT INTO kpi_attendance (username, team, date, time_in, time_in_lat, time_in_lng) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(session.username, session.team || "", today, nowTime, latVal, lngVal).run();
     }
     return { success: true, time_in: nowTime };
   },
 
-  async kpiTimeOut(db, token) {
+  async kpiTimeOut(db, token, lat, lng) {
     const session = await checkSession(db, token);
     const today = getPHDateStr();
     const existing = await db.prepare("SELECT id, time_in, time_out FROM kpi_attendance WHERE username = ? AND date = ?").bind(session.username, today).first();
     if (!existing || !existing.time_in) return { success: false, message: "You haven't logged a Time In today." };
     if (existing.time_out) return { success: false, message: "You already have a Time Out logged today." };
     const nowTime = getPHTimeStr();
-    await db.prepare("UPDATE kpi_attendance SET time_out=? WHERE id=?").bind(nowTime, existing.id).run();
+    const latVal = (typeof lat === "number") ? lat : null, lngVal = (typeof lng === "number") ? lng : null;
+    await db.prepare("UPDATE kpi_attendance SET time_out=?, time_out_lat=?, time_out_lng=? WHERE id=?").bind(nowTime, latVal, lngVal, existing.id).run();
     return { success: true, time_out: nowTime };
   },
 
@@ -1139,6 +1143,113 @@ const actions = {
        ON CONFLICT(assignment_id, task_date) DO UPDATE SET attachment_key = excluded.attachment_key, attachment_filename = excluded.attachment_filename, completed_at = datetime('now')`
     ).bind(assignmentId, assignment.username, date, key, attachmentFilename).run();
     return { success: true, message: "Na-mark as done." };
+  },
+
+  // ---- Schedule history (per-cutoff/seasonal shift changes) + Attendance Detail view ----
+  // Super Admin logs a new scheduled Time In effective from a given date; the applicable schedule
+  // for any date is the latest row with effective_from <= that date, so past cutoffs' Late
+  // calculations stay correct even after the shift changes later on.
+  async addKpiSchedule(db, token, username, scheduledTimeIn, effectiveFrom, note) {
+    const session = await checkSession(db, token, true);
+    if (!username) return { success: false, message: "Username is required." };
+    if (!/^\d{2}:\d{2}$/.test(String(scheduledTimeIn || ""))) return { success: false, message: "A valid Time In (HH:MM) is required." };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveFrom || ""))) return { success: false, message: "A valid effective-from date is required." };
+    await db.prepare("INSERT INTO kpi_schedules (username, scheduled_time_in, effective_from, note, created_by) VALUES (?, ?, ?, ?, ?)")
+      .bind(username, scheduledTimeIn, effectiveFrom, (note || "").trim(), session.username).run();
+    return { success: true, message: "Schedule saved." };
+  },
+
+  async getKpiSchedules(db, token, username) {
+    await checkSession(db, token, true);
+    if (!username) return [];
+    const { results } = await db.prepare(
+      "SELECT id, scheduled_time_in as scheduledTimeIn, effective_from as effectiveFrom, note, created_by as createdBy, created_at as createdAt FROM kpi_schedules WHERE username = ? ORDER BY effective_from DESC"
+    ).bind(username).all();
+    return results;
+  },
+
+  async deleteKpiSchedule(db, token, id) {
+    await checkSession(db, token, true);
+    await db.prepare("DELETE FROM kpi_schedules WHERE id = ?").bind(id).run();
+    return { success: true };
+  },
+
+  // Per-person daily detail — click-through from the Attendance Summary grid. Includes GPS
+  // coordinates captured at each punch (if the person granted location permission) and a Late
+  // computation against whatever schedule was in effect on that specific date.
+  async getKpiAttendanceDetail(db, token, username, startDate, endDate) {
+    const session = await checkSession(db, token);
+    if (session.role !== "Super Admin" && session.username !== username) {
+      return { success: false, message: "You can only view your own attendance detail." };
+    }
+    const userRow = await db.prepare("SELECT username, full_name as fullName, team FROM users WHERE username = ?").bind(username).first();
+    if (!userRow) return { success: false, message: "User not found." };
+
+    const { results: schedules } = await db.prepare(
+      "SELECT scheduled_time_in as scheduledTimeIn, effective_from as effectiveFrom FROM kpi_schedules WHERE username = ? ORDER BY effective_from ASC"
+    ).bind(username).all();
+    function scheduleFor(date) {
+      let applicable = "";
+      schedules.forEach(function (s) { if (s.effectiveFrom <= date) applicable = s.scheduledTimeIn; });
+      return applicable;
+    }
+
+    const { results: attRows } = await db.prepare(
+      "SELECT date, time_in, time_out, break_start, break_end, day_status, time_in_lat, time_in_lng, time_out_lat, time_out_lng FROM kpi_attendance WHERE username = ? AND date >= ? AND date <= ? ORDER BY date ASC"
+    ).bind(username, startDate, endDate).all();
+    const byDate = {};
+    attRows.forEach(function (r) { byDate[r.date] = r; });
+
+    const { results: leaveRows } = await db.prepare(
+      "SELECT leave_type, start_date, end_date FROM kpi_leaves WHERE status = 'approved' AND username = ? AND start_date <= ? AND end_date >= ?"
+    ).bind(username, endDate, startDate).all();
+
+    const dateList = [];
+    let cursor = new Date(startDate + "T00:00:00Z");
+    const last = new Date(endDate + "T00:00:00Z");
+    while (cursor <= last) { dateList.push(cursor.toISOString().slice(0, 10)); cursor = new Date(cursor.getTime() + 86400000); }
+
+    let totalPresent = 0, totalLate = 0, totalHours = 0, timeInMinutesSum = 0, timeInCount = 0;
+    const days = dateList.map(function (d) {
+      const r = byDate[d];
+      const leave = leaveRows.find(function (lv) { return d >= lv.start_date && d <= lv.end_date; });
+      const blank = { date: d, status: "", timeIn: "", timeOut: "", breakStart: "", breakEnd: "", hours: null, scheduledTimeIn: "", lateMinutes: null, timeInLat: null, timeInLng: null, timeOutLat: null, timeOutLng: null };
+      if (r && r.day_status) return Object.assign({}, blank, { status: r.day_status });
+      if (!r || !r.time_in) return Object.assign({}, blank, { status: leave ? leave.leave_type : "" });
+
+      let hours = null;
+      if (r.time_in && r.time_out) {
+        let diffMin = timeStrToMinutes(r.time_out) - timeStrToMinutes(r.time_in);
+        if (r.break_start && r.break_end) diffMin -= (timeStrToMinutes(r.break_end) - timeStrToMinutes(r.break_start));
+        hours = diffMin > 0 ? Math.round((diffMin / 60) * 10) / 10 : null;
+      }
+      const sched = scheduleFor(d);
+      let lateMinutes = null;
+      if (sched) {
+        lateMinutes = timeStrToMinutes(r.time_in) - timeStrToMinutes(sched);
+        if (lateMinutes < 0) lateMinutes = 0;
+      }
+      totalPresent++;
+      if (hours) totalHours += hours;
+      if (lateMinutes) totalLate++;
+      timeInMinutesSum += timeStrToMinutes(r.time_in); timeInCount++;
+      return {
+        date: d, status: "", timeIn: r.time_in, timeOut: r.time_out || "", breakStart: r.break_start || "", breakEnd: r.break_end || "",
+        hours: hours, scheduledTimeIn: sched, lateMinutes: lateMinutes,
+        timeInLat: r.time_in_lat, timeInLng: r.time_in_lng, timeOutLat: r.time_out_lat, timeOutLng: r.time_out_lng
+      };
+    });
+
+    return {
+      success: true, username: userRow.username, fullName: userRow.fullName || userRow.username, team: userRow.team || "",
+      days: days,
+      summary: {
+        totalPresent: totalPresent, totalLate: totalLate,
+        avgTimeIn: timeInCount > 0 ? minutesToTimeStr(Math.round(timeInMinutesSum / timeInCount)) : "",
+        avgHours: totalPresent > 0 ? Math.round((totalHours / totalPresent) * 10) / 10 : 0,
+        totalHours: Math.round(totalHours * 10) / 10
+      }
+    };
   }
 };
 
@@ -1335,6 +1446,10 @@ function getPHDateStrDaysAgo(daysBack) {
 function timeStrToMinutes(str) {
   const parts = String(str).split(":");
   return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+}
+function minutesToTimeStr(total) {
+  const h = Math.floor(total / 60) % 24, m = total % 60;
+  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
 }
 
 // Accepts either a raw base64 string or a "data:...;base64,XXXX" data URL (strips the prefix).
