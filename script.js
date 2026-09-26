@@ -3446,12 +3446,109 @@ function renderKpiTodoTab() {
 
         content.innerHTML =
             '<div class="panel-card p-5 mb-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500"></i> Today\'s Auto-listed Uploads</h3><div class="space-y-2 max-h-[240px] overflow-y-auto custom-scrollbar">' + autoHtml + '</div></div>' +
+            '<div class="panel-card p-5 mb-5"><h3 class="text-sm font-black text-heading mb-1 flex items-center gap-2"><i data-lucide="camera" class="h-4 w-4 text-indigo-500"></i> Daily Brand Status</h3><p class="text-[10px] text-subtle mb-3">Send the status update on each assigned brand\'s Telegram group, then attach a screenshot here to mark it done for today.</p><div id="kpiChecklistBody"><div class="flex justify-center py-6"><div class="spinner border-t-indigo-500"></div></div></div></div>' +
             '<div class="flex flex-col sm:flex-row gap-2 mb-4"><input type="text" id="kpiNewTaskInput" placeholder="Add a task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><select id="kpiNewTaskAssignee" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' + assigneeOptions + '</select><button onclick="kpiAddTask()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 flex items-center gap-1.5"><i data-lucide="plus" class="h-4 w-4"></i> Add</button></div>' +
             boardHtml;
         if (typeof lucide !== 'undefined') lucide.createIcons();
+        kpiLoadChecklistPanel();
     }).withFailureHandler(function() {
         content.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading tasks.</p>';
     }).getKpiTodayTasks(currentSessionToken, kpiCurrentTeam);
+}
+
+// ---- Daily Checklist (Brand Status Update, Competitor Promotion Check, ...) ----
+// Fixed per-agent assignment list; each item needs a photo attached before it counts done today.
+// Super Admin sees every agent's checklist (view-only, no approval step); an agent sees only theirs.
+var KPI_CHECKLIST_CATEGORY_LABELS = { brand_status: 'Brand Status Update', competitor_promo: 'Competitor Promotion Check' };
+
+function kpiChecklistAttachmentUrl(completionId) {
+    return 'https://bbc-api-gateway.ea-nix.workers.dev/?action=downloadKpiChecklistAttachment&id=' + completionId + '&token=' + encodeURIComponent(currentSessionToken);
+}
+
+function kpiLoadChecklistPanel() {
+    var el = document.getElementById('kpiChecklistBody');
+    if (!el) return;
+    google.script.run.withSuccessHandler(function(items) {
+        items = items || [];
+        if (items.length === 0) {
+            el.innerHTML = '<p class="text-xs text-subtle p-3 text-center">No daily checklist assigned yet.</p>';
+            return;
+        }
+        var byUser = {};
+        items.forEach(function(i) {
+            if (!byUser[i.username]) byUser[i.username] = { fullName: i.fullName || i.username, team: i.team, items: [] };
+            byUser[i.username].items.push(i);
+        });
+
+        var usersHtml = Object.keys(byUser).sort().map(function(u) {
+            var group = byUser[u];
+            var doneCount = group.items.filter(function(i) { return i.done; }).length;
+            var totalCount = group.items.length;
+            var pct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+            var byCat = {};
+            group.items.forEach(function(i) { (byCat[i.category] = byCat[i.category] || []).push(i); });
+
+            var catHtml = Object.keys(byCat).map(function(cat) {
+                var rows = byCat[cat].map(function(i) {
+                    var typeBadge = i.subtype1 ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-app text-subtle mr-1">' + escapeHtmlClient(i.subtype1) + '</span>' : '';
+                    var platBadge = i.subtype2 ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-app text-subtle mr-1">' + escapeHtmlClient(i.subtype2) + '</span>' : '';
+                    var linkBtn = i.refLink ? '<a href="' + escapeHtmlClient(i.refLink) + '" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 mr-2" title="Open Telegram group"><i data-lucide="external-link" class="h-3.5 w-3.5"></i></a>' : '';
+                    var actionHtml = i.done
+                        ? '<a href="' + kpiChecklistAttachmentUrl(i.completionId) + '" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500"><i data-lucide="check-circle-2" class="h-3.5 w-3.5"></i> Done</a>'
+                        : '<button onclick="kpiChecklistMarkDone(' + i.id + ')" class="px-2.5 py-1 bg-indigo-600 text-white rounded-md text-[10px] font-bold hover:bg-indigo-700 flex items-center gap-1"><i data-lucide="camera" class="h-3 w-3"></i> Mark Done</button>';
+                    return '<div class="flex items-center gap-1 py-2 px-1 border-b border-theme/60 last:border-0">' +
+                        '<span class="text-xs font-bold text-body flex-1 truncate">' + escapeHtmlClient(i.label) + '</span>' +
+                        typeBadge + platBadge + linkBtn +
+                        '<span class="ml-1 flex-shrink-0">' + actionHtml + '</span>' +
+                    '</div>';
+                }).join('');
+                return '<div class="mt-3 first:mt-0"><p class="text-[9px] font-extrabold text-subtle uppercase tracking-widest mb-1">' + (KPI_CHECKLIST_CATEGORY_LABELS[cat] || cat) + '</p>' + rows + '</div>';
+            }).join('');
+
+            return '<details class="rounded-xl border border-theme bg-panel overflow-hidden mb-2">' +
+                '<summary class="cursor-pointer list-none flex items-center gap-3 px-4 py-3 hover:bg-app transition-colors select-none">' +
+                    '<span class="h-9 w-9 rounded-full bg-indigo-tint text-indigo-500 font-black text-[11px] flex items-center justify-center flex-shrink-0">' + escapeHtmlClient(kpiInitials(group.fullName)) + '</span>' +
+                    '<div class="flex-1 min-w-0"><div class="text-sm font-bold text-body truncate">' + escapeHtmlClient(group.fullName) + '</div><div class="text-[10px] text-subtle">' + doneCount + ' / ' + totalCount + ' done today</div></div>' +
+                    '<div class="hidden sm:block w-24 health-track" style="height:0.6rem"><div class="health-fill ' + kpiCompletionTone(pct) + '" style="width:' + pct + '%; height:0.6rem"></div></div>' +
+                    '<span class="text-sm font-black ' + kpiCompletionTextTone(pct) + ' w-12 text-right">' + pct + '%</span>' +
+                    '<i data-lucide="chevron-down" class="h-4 w-4 text-subtle flex-shrink-0"></i>' +
+                '</summary>' +
+                '<div class="border-t border-theme bg-app/40 px-4 py-2">' + catHtml + '</div>' +
+            '</details>';
+        }).join('');
+
+        el.innerHTML = usersHtml;
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).withFailureHandler(function() {
+        el.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading checklist.</p>';
+    }).getKpiChecklistToday(currentSessionToken, '');
+}
+
+function kpiChecklistMarkDone(assignmentId) {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/webp';
+    input.onchange = function() {
+        var file = input.files[0];
+        if (!file) return;
+        if (file.size > 5 * 1024 * 1024) { showPremiumToast('Too Large', 'File must be 5MB or smaller.', 'error'); return; }
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            google.script.run.withSuccessHandler(function(res) {
+                if (res && res.success) {
+                    showPremiumToast('Done', res.message, 'success');
+                    kpiLoadChecklistPanel();
+                } else {
+                    showPremiumToast('Error', (res && res.message) || 'Could not mark as done.', 'error');
+                }
+            }).withFailureHandler(function() {
+                showPremiumToast('Error', 'Could not mark as done.', 'error');
+            }).completeKpiChecklistItem(currentSessionToken, assignmentId, '', e.target.result, file.name, file.type);
+        };
+        reader.readAsDataURL(file);
+    };
+    input.click();
 }
 
 function kpiAddTask() {

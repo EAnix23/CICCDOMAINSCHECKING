@@ -1072,6 +1072,73 @@ const actions = {
     const res = await db.prepare("UPDATE kpi_leaves SET status=?, reviewed_by=?, reviewed_at=datetime('now') WHERE id=?").bind(status, session.username, id).run();
     if (res.meta.changes === 0) return { success: false, message: "Leave request not found." };
     return { success: true, message: "Leave request " + status + "." };
+  },
+
+  // ---- Daily Checklist (Brand Status Update, Competitor Promotion Check, ...) ----
+  // Generic system: a fixed per-agent assignment list (kpi_checklist_assignments, one row per
+  // brand/competitor/etc a person is responsible for) plus a per-day completion log
+  // (kpi_checklist_completions) that requires a photo attachment before an item counts as done.
+  // New categories (e.g. "competitor_promo") reuse both tables — just a different `category` value.
+
+  // Non-Super-Admin gets only their own list; Super Admin gets everyone's (for the review/overview
+  // view), for the given day (defaults to today, PH time).
+  async getKpiChecklistToday(db, token, dateStr) {
+    const session = await checkSession(db, token);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || "")) ? dateStr : getPHDateStr();
+    let usernames;
+    if (session.role === "Super Admin") {
+      const { results } = await db.prepare("SELECT username FROM users WHERE username != ''").all();
+      usernames = results.map(r => r.username);
+    } else {
+      usernames = [session.username];
+    }
+    if (usernames.length === 0) return [];
+    const placeholders = usernames.map(() => "?").join(",");
+    const { results: assignments } = await db.prepare(
+      `SELECT a.id, a.username, a.team, a.category, a.label, a.subtype1, a.subtype2, a.ref_link, u.full_name as fullName
+       FROM kpi_checklist_assignments a LEFT JOIN users u ON u.username = a.username
+       WHERE a.username IN (${placeholders}) AND a.active = 1 ORDER BY a.username ASC, a.category ASC, a.label ASC`
+    ).bind(...usernames).all();
+    if (assignments.length === 0) return [];
+    const { results: completions } = await db.prepare(
+      `SELECT id, assignment_id, attachment_filename, completed_at FROM kpi_checklist_completions WHERE task_date = ? AND username IN (${placeholders})`
+    ).bind(date, ...usernames).all();
+    const doneMap = {};
+    completions.forEach(function (c) { doneMap[c.assignment_id] = c; });
+    return assignments.map(function (a) {
+      const c = doneMap[a.id];
+      return {
+        id: a.id, username: a.username, fullName: a.fullName || a.username, team: a.team,
+        category: a.category, label: a.label, subtype1: a.subtype1, subtype2: a.subtype2, refLink: a.ref_link,
+        done: !!c, completedAt: c ? c.completed_at : null, completionId: c ? c.id : null
+      };
+    });
+  },
+
+  // Uploads the proof photo to R2 (reusing the leave-attachments bucket, under its own key prefix)
+  // and marks the item done for that day. An agent can only complete their own assignments; Super
+  // Admin can too (e.g. filing on someone's behalf), matching how fileKpiLeave/other actions work.
+  async completeKpiChecklistItem(db, env, token, assignmentId, dateStr, attachmentBase64, attachmentFilename, attachmentType) {
+    const session = await checkSession(db, token);
+    const assignment = await db.prepare("SELECT id, username FROM kpi_checklist_assignments WHERE id = ?").bind(assignmentId).first();
+    if (!assignment) return { success: false, message: "Assignment not found." };
+    if (session.role !== "Super Admin" && assignment.username !== session.username) {
+      return { success: false, message: "Hindi mo ito assigned na task." };
+    }
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || "")) ? dateStr : getPHDateStr();
+    if (!attachmentBase64 || !attachmentFilename) return { success: false, message: "Kailangan ng picture bago ma-mark done." };
+    if (!/\.(png|jpe?g|webp)$/i.test(attachmentFilename)) return { success: false, message: "Larawan lang (PNG/JPG/WEBP) ang tinatanggap." };
+    let bytes;
+    try { bytes = base64ToBytes(attachmentBase64); } catch (e) { return { success: false, message: "Could not read the picture." }; }
+    if (bytes.length > 5 * 1024 * 1024) return { success: false, message: "Max 5MB lang ang picture." };
+    if (!env.LEAVE_ATTACHMENTS) return { success: false, message: "Attachment storage isn't configured on the Worker yet." };
+    const key = "checklist/" + assignment.username + "/" + date + "/" + assignmentId + "_" + Date.now() + "_" + attachmentFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
+    await env.LEAVE_ATTACHMENTS.put(key, bytes, { httpMetadata: { contentType: attachmentType || "image/png" } });
+    await db.prepare(
+      `INSERT INTO kpi_checklist_completions (assignment_id, username, task_date, attachment_key, attachment_filename) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(assignment_id, task_date) DO UPDATE SET attachment_key = excluded.attachment_key, attachment_filename = excluded.attachment_filename, completed_at = datetime('now')`
+    ).bind(assignmentId, assignment.username, date, key, attachmentFilename).run();
+    return { success: true, message: "Na-mark as done." };
   }
 };
 
@@ -1516,6 +1583,22 @@ export default {
             headers: { ...corsHeaders(), "Content-Type": (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream", "Content-Disposition": "inline; filename=\"" + row.attachment_filename.replace(/"/g, "") + "\"" }
           });
         }
+
+        // Same streaming pattern, for a checklist item's proof photo — the owning agent can view
+        // their own proof, not just Super Admin (unlike leave attachments, which are admin-only).
+        if (action === "downloadKpiChecklistAttachment") {
+          const token = url.searchParams.get("token");
+          const id = url.searchParams.get("id");
+          const session = await checkSession(env.DB, token);
+          const row = await env.DB.prepare("SELECT username, attachment_key, attachment_filename FROM kpi_checklist_completions WHERE id = ?").bind(id).first();
+          if (!row || !row.attachment_key) return new Response("Not found", { status: 404 });
+          if (session.role !== "Super Admin" && session.username !== row.username) return new Response("Forbidden", { status: 403 });
+          const obj = await env.LEAVE_ATTACHMENTS.get(row.attachment_key);
+          if (!obj) return new Response("Not found", { status: 404 });
+          return new Response(obj.body, {
+            headers: { ...corsHeaders(), "Content-Type": (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream", "Content-Disposition": "inline; filename=\"" + row.attachment_filename.replace(/"/g, "") + "\"" }
+          });
+        }
       }
 
       if (!action || typeof actions[action] !== "function") {
@@ -1540,7 +1623,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);
