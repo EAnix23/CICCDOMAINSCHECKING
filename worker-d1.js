@@ -790,7 +790,7 @@ const actions = {
         if (h) { days[d] = h; totalDays++; totalHours += h; }
         else { days[d] = (byLeave[u.username] || {})[d] || null; }
       });
-      return { username: u.username, fullName: u.fullName || "", hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
+      return { username: u.username, team: u.team || "", fullName: u.fullName || "", hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
     });
 
     return { team: teamList.join(", "), dateList: dateList, members: members };
