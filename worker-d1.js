@@ -783,21 +783,51 @@ const actions = {
     const nameMap = {}, teamMap = {};
     memberRows.forEach(r => { nameMap[r.username] = r.fullName || r.username; teamMap[r.username] = r.team; });
 
-    const { results: bbcRows } = await db.prepare(`SELECT agent, COUNT(*) as cnt FROM domains WHERE agent IN (SELECT username FROM users WHERE team IN (${placeholders})) GROUP BY agent`).bind(...teamList).all();
-    const { results: dpvRows } = await db.prepare(`SELECT agent, COUNT(*) as cnt FROM dpv_records WHERE team IN (${placeholders}) AND domain NOT LIKE 'init-%' GROUP BY agent`).bind(...teamList).all();
-    const { results: checkedRows } = await db.prepare(`SELECT username, COUNT(DISTINCT domain) as cnt FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) GROUP BY username`).bind(...teamList).all();
+    // Assigned, broken down by Brand (BBC DOMAIN) and by Batch (DATASHEET/DPV) — batch_id is DPV's
+    // natural grouping key the same way brand is BBC's.
+    const { results: bbcRows } = await db.prepare(`SELECT agent, brand, COUNT(*) as cnt FROM domains WHERE agent IN (SELECT username FROM users WHERE team IN (${placeholders})) GROUP BY agent, brand`).bind(...teamList).all();
+    const { results: dpvRows } = await db.prepare(`SELECT agent, batch_id as batch, COUNT(*) as cnt FROM dpv_records WHERE team IN (${placeholders}) AND domain NOT LIKE 'init-%' GROUP BY agent, batch_id`).bind(...teamList).all();
+    // Checked, from the kpi_domain_checks log — its "batch" column already holds the brand name for
+    // target='brand' rows (checker.js sends the same value as both batch and brand for BBC checks)
+    // and the batch id for target='dpv' rows, so grouping by (target, batch) lines up with the above.
+    const { results: checkedRows } = await db.prepare(`SELECT username, target, batch, COUNT(DISTINCT domain) as cnt FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) GROUP BY username, target, batch`).bind(...teamList).all();
 
-    const assigned = {}; members.forEach(m => assigned[m] = 0);
-    bbcRows.forEach(r => { if (assigned[r.agent] !== undefined) assigned[r.agent] += r.cnt; });
-    dpvRows.forEach(r => { if (assigned[r.agent] !== undefined) assigned[r.agent] += r.cnt; });
+    const assignedMap = {}; members.forEach(m => assignedMap[m] = {});
+    bbcRows.forEach(r => {
+      if (assignedMap[r.agent] === undefined) return;
+      const key = "brand|" + (r.brand || "UNKNOWN");
+      assignedMap[r.agent][key] = (assignedMap[r.agent][key] || 0) + r.cnt;
+    });
+    dpvRows.forEach(r => {
+      if (assignedMap[r.agent] === undefined) return;
+      const key = "dpv|" + (r.batch || "UNKNOWN");
+      assignedMap[r.agent][key] = (assignedMap[r.agent][key] || 0) + r.cnt;
+    });
 
-    const checked = {}; members.forEach(m => checked[m] = 0);
-    checkedRows.forEach(r => { if (checked[r.username] !== undefined) checked[r.username] = r.cnt; });
+    const checkedMap = {}; members.forEach(m => checkedMap[m] = {});
+    checkedRows.forEach(r => {
+      if (checkedMap[r.username] === undefined) return;
+      const key = r.target + "|" + (r.batch || "UNKNOWN");
+      checkedMap[r.username][key] = (checkedMap[r.username][key] || 0) + r.cnt;
+    });
 
     return members.map(function (m) {
-      const a = assigned[m], c = Math.min(checked[m], a);
-      const pct = a > 0 ? Math.round((c / a) * 100) : (checked[m] > 0 ? 100 : 0);
-      return { username: m, fullName: nameMap[m] || m, team: teamMap[m] || "", assigned: a, checked: checked[m], pct };
+      const keys = new Set(Object.keys(assignedMap[m]).concat(Object.keys(checkedMap[m])));
+      const breakdown = Array.from(keys).map(function (key) {
+        const sep = key.indexOf("|");
+        const type = key.slice(0, sep), label = key.slice(sep + 1);
+        const a = assignedMap[m][key] || 0;
+        const rawChecked = checkedMap[m][key] || 0;
+        const cappedChecked = a > 0 ? Math.min(rawChecked, a) : rawChecked;
+        const pct = a > 0 ? Math.round((cappedChecked / a) * 100) : (rawChecked > 0 ? 100 : 0);
+        return { type: type === "brand" ? "BBC" : "DPV", label: label, assigned: a, checked: rawChecked, pct: pct };
+      }).sort(function (x, y) { return x.type !== y.type ? (x.type === "BBC" ? -1 : 1) : x.label.localeCompare(y.label); });
+
+      const totalAssigned = breakdown.reduce((s, b) => s + b.assigned, 0);
+      const totalChecked = breakdown.reduce((s, b) => s + Math.min(b.checked, b.assigned || b.checked), 0);
+      const pct = totalAssigned > 0 ? Math.round((totalChecked / totalAssigned) * 100) : (totalChecked > 0 ? 100 : 0);
+
+      return { username: m, fullName: nameMap[m] || m, team: teamMap[m] || "", assigned: totalAssigned, checked: totalChecked, pct: pct, breakdown: breakdown };
     }).sort(function (a, b) { return b.pct - a.pct; });
   },
 
