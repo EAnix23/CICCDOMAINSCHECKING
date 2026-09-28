@@ -1322,6 +1322,143 @@ const actions = {
         totalHours: Math.round(totalHours * 10) / 10
       }
     };
+  },
+
+  // ---- Payment Gateway / BSP QR Reporting ----
+  // Replaces the standalone "BSP QR Data Reporting Portal" HTML+Apps-Script tool — submissions now
+  // go straight into bsp_submissions via this Worker, with files in R2 instead of Google Drive.
+  // "automated" = scanned/parsed QR payload; "manual" = hand-entered Cash In/Out transaction.
+  async submitBspSubmission(db, env, token, payload) {
+    const session = await checkSession(db, token);
+    if (!session.team) return { success: false, message: "No team assigned to your account." };
+    payload = payload || {};
+    const mode = payload.mode === "manual" ? "manual" : "automated";
+
+    async function uploadFile(base64, filename, mime) {
+      if (!base64 || !filename) return "";
+      let bytes;
+      try { bytes = base64ToBytes(base64); } catch (e) { throw new Error("Could not read the file: " + filename); }
+      if (bytes.length > 20 * 1024 * 1024) throw new Error("File too large (max 20MB): " + filename);
+      if (!env.LEAVE_ATTACHMENTS) throw new Error("Attachment storage isn't configured on the Worker yet.");
+      const key = "bsp/" + session.username + "/" + Date.now() + "_" + String(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
+      await env.LEAVE_ATTACHMENTS.put(key, bytes, { httpMetadata: { contentType: mime || "application/octet-stream" } });
+      return key;
+    }
+
+    try {
+      if (mode === "automated") {
+        if (!String(payload.brandName || "").trim() || !String(payload.domainLink || "").trim()) {
+          return { success: false, message: "Brand at Domain URL ay required." };
+        }
+        const qrImageRef = payload.imageBase64 ? await uploadFile(payload.imageBase64, payload.filename || "qr.jpg", payload.mimeType) : "";
+        const proofRef = (payload.evidenceMode === "upload" && payload.proofFileBase64)
+          ? await uploadFile(payload.proofFileBase64, payload.proofFileName, payload.proofFileMime)
+          : String(payload.proofLink || "").trim();
+        const emv = payload.emvData || {};
+        const tagRaw = function (tag) { return (emv[tag] && emv[tag].raw) || ""; };
+        await db.prepare(
+          `INSERT INTO bsp_submissions (mode, username, team, submitted_at, brand, domain_link, payment_vendor, raw_qr_payload, qr_image_ref, proof_ref, merchant_name, merchant_city, mcc, currency, qr_amount, emv_tags_json, source)
+           VALUES ('automated', ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live')`
+        ).bind(
+          session.username, session.team, String(payload.brandName).trim(), String(payload.domainLink).trim(),
+          payload.paymentVendor || "", payload.rawQR || "", qrImageRef, proofRef,
+          tagRaw("59"), tagRaw("60"), tagRaw("52"), tagRaw("53"), tagRaw("54"), JSON.stringify(emv)
+        ).run();
+        return { success: true, message: "QR data submitted." };
+      } else {
+        if (!String(payload.brandName || "").trim()) return { success: false, message: "Brand is required." };
+        const proofRef = await uploadFile(payload.proofBase64, payload.proofName, payload.proofMime);
+        const screenshotRef = await uploadFile(payload.screenshotBase64, payload.screenshotName, payload.screenshotMime);
+        const amountVal = payload.amount !== undefined && payload.amount !== null && payload.amount !== "" ? parseFloat(payload.amount) : null;
+        await db.prepare(
+          `INSERT INTO bsp_submissions (mode, username, team, submitted_at, brand, domain_link, transaction_type, amount, bank, bank_account_name, bank_account_number, reference_number, proof_ref, screenshot_ref, source)
+           VALUES ('manual', ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live')`
+        ).bind(
+          session.username, session.team, String(payload.brandName).trim(), payload.domainLink || "",
+          payload.transactionType || "", amountVal, payload.bank || "", payload.bankAccountName || "",
+          payload.bankAccountNumber || "", payload.referenceNumber || "", proofRef, screenshotRef
+        ).run();
+        return { success: true, message: "Manual entry submitted." };
+      }
+    } catch (e) {
+      return { success: false, message: e.message || "Submission failed." };
+    }
+  },
+
+  // List view — Super Admin sees the whole team (or every team they manage); an agent sees only
+  // their own submissions. Newest first, capped so the modal/table stays fast to render.
+  async getBspSubmissions(db, token, startDate, endDate, mode, limit) {
+    const session = await checkSession(db, token);
+    let usernames;
+    if (session.role === "Super Admin") {
+      const { results } = await db.prepare("SELECT username FROM users WHERE team IN (SELECT DISTINCT team FROM users WHERE team != '')").all();
+      usernames = results.map(r => r.username);
+    } else {
+      usernames = [session.username];
+    }
+    if (usernames.length === 0) return [];
+    const placeholders = usernames.map(() => "?").join(",");
+    const params = [...usernames];
+    let sql = `SELECT b.id, b.mode, b.username, u.full_name as fullName, b.team, b.submitted_at as submittedAt, b.brand, b.domain_link as domainLink,
+               b.payment_vendor as paymentVendor, b.transaction_type as transactionType, b.amount, b.bank, b.reference_number as referenceNumber,
+               b.proof_ref as proofRef, b.screenshot_ref as screenshotRef, b.qr_image_ref as qrImageRef
+               FROM bsp_submissions b LEFT JOIN users u ON u.username = b.username WHERE b.username IN (${placeholders})`;
+    if (startDate) { sql += " AND b.submitted_at >= ?"; params.push(startDate + " 00:00:00"); }
+    if (endDate) { sql += " AND b.submitted_at <= ?"; params.push(endDate + " 23:59:59"); }
+    if (mode) { sql += " AND b.mode = ?"; params.push(mode); }
+    sql += " ORDER BY b.submitted_at DESC LIMIT ?";
+    params.push(Math.min(limit || 200, 500));
+    const { results } = await db.prepare(sql).bind(...params).all();
+    return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
+  },
+
+  // KPI stats — Total Submissions, Active Investigators, and Average Handling Time (gap between a
+  // person's successive submissions, in seconds) mirroring the old Google Sheet "Investigator
+  // Performance" dashboard, per the team's confirmed definition of AHT.
+  async getBspStats(db, token, startDate, endDate) {
+    const session = await checkSession(db, token);
+    let usernames;
+    if (session.role === "Super Admin") {
+      const { results } = await db.prepare("SELECT username, full_name as fullName FROM users WHERE team != ''").all();
+      usernames = results;
+    } else {
+      if (!session.team) return { totalSubmissions: 0, activeInvestigators: 0, avgHandlingTimeSeconds: 0, perInvestigator: [] };
+      const { results } = await db.prepare("SELECT username, full_name as fullName FROM users WHERE team = ?").bind(session.team).all();
+      usernames = results;
+    }
+    const nameMap = {}; usernames.forEach(u => { nameMap[u.username] = u.fullName || u.username; });
+    const usernameList = usernames.map(u => u.username);
+    if (usernameList.length === 0) return { totalSubmissions: 0, activeInvestigators: 0, avgHandlingTimeSeconds: 0, perInvestigator: [] };
+    const placeholders = usernameList.map(() => "?").join(",");
+    const params = [...usernameList];
+    let sql = `SELECT username, submitted_at FROM bsp_submissions WHERE username IN (${placeholders})`;
+    if (startDate) { sql += " AND submitted_at >= ?"; params.push(startDate + " 00:00:00"); }
+    if (endDate) { sql += " AND submitted_at <= ?"; params.push(endDate + " 23:59:59"); }
+    sql += " ORDER BY username ASC, submitted_at ASC";
+    const { results: rows } = await db.prepare(sql).bind(...params).all();
+
+    const byUser = {};
+    rows.forEach(function (r) { (byUser[r.username] = byUser[r.username] || []).push(r.submitted_at); });
+
+    const perInvestigator = Object.keys(byUser).map(function (u) {
+      const times = byUser[u].map(t => new Date(t.replace(" ", "T") + "Z").getTime()).sort((a, b) => a - b);
+      let gapSum = 0, gapCount = 0;
+      for (let i = 1; i < times.length; i++) {
+        const gap = (times[i] - times[i - 1]) / 1000;
+        if (gap > 0 && gap < 3600) { gapSum += gap; gapCount++; } // ignore >1hr gaps (breaks/idle, not handling time)
+      }
+      return {
+        username: u, fullName: nameMap[u] || u, totalSubmissions: times.length,
+        avgHandlingTimeSeconds: gapCount > 0 ? Math.round(gapSum / gapCount) : 0
+      };
+    }).sort(function (a, b) { return b.totalSubmissions - a.totalSubmissions; });
+
+    const totalSubmissions = rows.length;
+    const activeInvestigators = perInvestigator.filter(p => p.totalSubmissions > 0).length;
+    const allGaps = perInvestigator.filter(p => p.avgHandlingTimeSeconds > 0);
+    const avgHandlingTimeSeconds = allGaps.length > 0 ? Math.round(allGaps.reduce((s, p) => s + p.avgHandlingTimeSeconds, 0) / allGaps.length) : 0;
+
+    return { totalSubmissions: totalSubmissions, activeInvestigators: activeInvestigators, avgHandlingTimeSeconds: avgHandlingTimeSeconds, perInvestigator: perInvestigator };
   }
 };
 
@@ -1789,6 +1926,26 @@ export default {
             headers: { ...corsHeaders(), "Content-Type": (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream", "Content-Disposition": "inline; filename=\"" + row.attachment_filename.replace(/"/g, "") + "\"" }
           });
         }
+
+        // BSP submission file (proof / screenshot / QR image) — historical rows store an external
+        // Drive link in the ref column (redirected straight there), live rows store an R2 key
+        // (streamed like the other attachment routes).
+        if (action === "downloadBspAttachment") {
+          const token = url.searchParams.get("token");
+          const id = url.searchParams.get("id");
+          const field = url.searchParams.get("field");
+          const session = await checkSession(env.DB, token);
+          const col = field === "screenshot" ? "screenshot_ref" : (field === "qrimage" ? "qr_image_ref" : "proof_ref");
+          const row = await env.DB.prepare(`SELECT username, ${col} as ref FROM bsp_submissions WHERE id = ?`).bind(id).first();
+          if (!row || !row.ref) return new Response("Not found", { status: 404 });
+          if (session.role !== "Super Admin" && session.username !== row.username) return new Response("Forbidden", { status: 403 });
+          if (/^https?:\/\//i.test(row.ref)) return Response.redirect(row.ref, 302);
+          const obj = await env.LEAVE_ATTACHMENTS.get(row.ref);
+          if (!obj) return new Response("Not found", { status: 404 });
+          return new Response(obj.body, {
+            headers: { ...corsHeaders(), "Content-Type": (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream" }
+          });
+        }
       }
 
       if (!action || typeof actions[action] !== "function") {
@@ -1813,7 +1970,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave", "completeKpiChecklistItem"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);

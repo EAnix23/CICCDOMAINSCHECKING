@@ -1477,6 +1477,9 @@ function openCyberguardSub(reportType) {
                 jsonpScript.src = targetUrl + "&callback=" + callbackName;
                 document.body.appendChild(jsonpScript);
             }
+        } else if (reportType === 'Payment Gateway') {
+            renderPaymentGatewayModule(container);
+            container.style.opacity = '1';
         } else {
             container.innerHTML = '<div class="h-full flex flex-col relative bg-app"><div class="px-8 py-6 border-b border-theme bg-panel flex-shrink-0"><h2 class="text-2xl font-bold text-heading flex items-center gap-2"><i data-lucide="' + pageIcon + '" class="h-6 w-6 text-indigo-500"></i> Cyberguard: ' + reportType + '</h2><p class="text-sm text-muted mt-1">Aggregated security monitoring and reports for ' + reportType + '.</p></div><div class="flex-1 p-8 flex items-center justify-center flex-col text-subtle"><i data-lucide="layout-template" class="h-16 w-16 mb-4 opacity-20 text-indigo-500"></i><h3 class="text-lg font-bold text-muted">' + reportType + ' Module</h3><p class="text-sm text-subtle mt-2">The reporting interface for this section is ready for development.</p></div></div>';
             if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -1485,6 +1488,427 @@ function openCyberguardSub(reportType) {
     }, 150);
 
     applyPermissionsToUI();
+}
+
+// ============================================================
+// PAYMENT GATEWAY / BSP QR REPORTING
+// Replaces the standalone "BSP QR Data Reporting Portal" HTML+Apps-Script tool. Submissions go
+// straight to bsp_submissions via the Worker; files land in R2 instead of Google Drive.
+// ============================================================
+var pgMode = 'automated';       // 'automated' | 'manual'
+var pgTab = 'submit';           // 'submit' | 'records'
+var pgEvidenceMode = 'link';    // 'link' | 'upload', automated-mode proof source
+var pgRawQRPayload = '';
+var pgEmvData = {};
+var pgImageBase64 = '', pgImageMime = '', pgImageFilename = '';
+var pgStatsStart = '', pgStatsEnd = '';
+
+var PG_TAG_NAMES = { '00': 'Payload Format Indicator', '01': 'Point of Initiation Method', '52': 'Merchant Category Code (MCC)', '53': 'Transaction Currency', '54': 'Transaction Amount', '58': 'Country Code', '59': 'Merchant Name', '60': 'Merchant City', '62': 'Additional Data Field Template', '63': 'CRC' };
+var PG_SUB_TAG_NAMES = { '00': 'Globally Unique Identifier (GUI)', '01': 'Merchant / Account ID', '02': 'Merchant / Account ID', '03': 'Reference / Store ID', '05': 'Additional Merchant Data' };
+function pgGetTagName(tag) { var n = parseInt(tag, 10); if (n >= 26 && n <= 51) return 'Merchant Account Information'; return PG_TAG_NAMES[tag] || 'Unknown Tag'; }
+
+function pgDefaultDates() {
+    var end = new Date(); var start = new Date(); start.setDate(start.getDate() - 6);
+    function fmt(d) { return d.toISOString().slice(0, 10); }
+    return { start: fmt(start), end: fmt(end) };
+}
+
+function renderPaymentGatewayModule(container) {
+    if (!pgStatsStart) { var def = pgDefaultDates(); pgStatsStart = def.start; pgStatsEnd = def.end; }
+    container.innerHTML =
+        '<div class="h-full flex flex-col relative bg-app overflow-hidden">' +
+            '<div class="px-8 py-6 border-b border-theme bg-panel flex-shrink-0">' +
+                '<h2 class="text-2xl font-bold text-heading flex items-center gap-2"><i data-lucide="credit-card" class="h-6 w-6 text-indigo-500"></i> Payment Gateway — BSP QR Reporting</h2>' +
+                '<p class="text-sm text-muted mt-1">Scan or manually log QR/payment evidence for BSP reporting.</p>' +
+            '</div>' +
+            '<div class="flex-1 overflow-y-auto custom-scrollbar p-6">' +
+                '<div id="pgKpiCards" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"></div>' +
+                '<div class="flex items-center gap-2 mb-5">' +
+                    '<button onclick="pgSwitchTab(\'submit\')" id="pgTabSubmitBtn" class="px-4 py-2 rounded-lg text-sm font-bold"></button>' +
+                    '<button onclick="pgSwitchTab(\'records\')" id="pgTabRecordsBtn" class="px-4 py-2 rounded-lg text-sm font-bold"></button>' +
+                '</div>' +
+                '<div id="pgTabBody"></div>' +
+            '</div>' +
+        '</div>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    pgLoadKpiCards();
+    pgSwitchTab('submit');
+}
+
+function pgLoadKpiCards() {
+    var el = document.getElementById('pgKpiCards');
+    if (!el) return;
+    google.script.run.withSuccessHandler(function(stats) {
+        stats = stats || {};
+        el.innerHTML =
+            '<div class="panel-card p-4 text-center"><p class="text-xl font-black text-body">' + (stats.totalSubmissions || 0) + '</p><p class="text-[9px] font-bold text-subtle uppercase mt-1">Total Submissions</p></div>' +
+            '<div class="panel-card p-4 text-center"><p class="text-xl font-black text-body">' + (stats.activeInvestigators || 0) + '</p><p class="text-[9px] font-bold text-subtle uppercase mt-1">Active Investigators</p></div>' +
+            '<div class="panel-card p-4 text-center"><p class="text-xl font-black text-body">' + (stats.avgHandlingTimeSeconds || 0) + 's</p><p class="text-[9px] font-bold text-subtle uppercase mt-1">Avg Handling Time</p></div>' +
+            '<div class="panel-card p-4 text-center"><div class="flex items-center justify-center gap-2"><input type="date" id="pgStatsStart" value="' + pgStatsStart + '" class="border border-theme bg-panel rounded text-[10px] text-body px-1 py-1 w-24"><input type="date" id="pgStatsEnd" value="' + pgStatsEnd + '" class="border border-theme bg-panel rounded text-[10px] text-body px-1 py-1 w-24"></div><button onclick="pgApplyStatsRange()" class="mt-1.5 px-2 py-1 bg-indigo-600 text-white rounded text-[9px] font-bold">Apply Range</button></div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).getBspStats(currentSessionToken, pgStatsStart, pgStatsEnd);
+}
+
+function pgApplyStatsRange() {
+    var s = document.getElementById('pgStatsStart').value, e = document.getElementById('pgStatsEnd').value;
+    if (!s || !e) return;
+    pgStatsStart = s; pgStatsEnd = e;
+    pgLoadKpiCards();
+    if (pgTab === 'records') pgRenderRecordsTab();
+}
+
+function pgSwitchTab(tab) {
+    pgTab = tab;
+    document.getElementById('pgTabSubmitBtn').className = 'px-4 py-2 rounded-lg text-sm font-bold ' + (tab === 'submit' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body');
+    document.getElementById('pgTabSubmitBtn').textContent = 'Submit';
+    document.getElementById('pgTabRecordsBtn').className = 'px-4 py-2 rounded-lg text-sm font-bold ' + (tab === 'records' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body');
+    document.getElementById('pgTabRecordsBtn').textContent = 'Records';
+    if (tab === 'submit') pgRenderSubmitTab(); else pgRenderRecordsTab();
+}
+
+// ---- Submit tab ----
+function pgRenderSubmitTab() {
+    var body = document.getElementById('pgTabBody');
+    if (!body) return;
+    body.innerHTML =
+        '<div class="panel-card p-5 max-w-2xl">' +
+            '<div class="flex items-center gap-2 mb-5 bg-app rounded-xl p-1 border border-theme">' +
+                '<button onclick="pgSwitchMode(\'automated\')" id="pgModeAutoBtn" class="flex-1 px-3 py-2 rounded-lg text-xs font-bold"></button>' +
+                '<button onclick="pgSwitchMode(\'manual\')" id="pgModeManualBtn" class="flex-1 px-3 py-2 rounded-lg text-xs font-bold"></button>' +
+            '</div>' +
+            '<div id="pgFormBody"></div>' +
+        '</div>';
+    pgSwitchMode(pgMode);
+}
+
+function pgSwitchMode(mode) {
+    pgMode = mode;
+    document.getElementById('pgModeAutoBtn').className = 'flex-1 px-3 py-2 rounded-lg text-xs font-bold ' + (mode === 'automated' ? 'bg-indigo-600 text-white' : 'text-subtle');
+    document.getElementById('pgModeAutoBtn').textContent = 'Automated (QR)';
+    document.getElementById('pgModeManualBtn').className = 'flex-1 px-3 py-2 rounded-lg text-xs font-bold ' + (mode === 'manual' ? 'bg-indigo-600 text-white' : 'text-subtle');
+    document.getElementById('pgModeManualBtn').textContent = 'Manual Entry';
+    if (mode === 'automated') pgRenderAutomatedForm(); else pgRenderManualForm();
+}
+
+function pgRenderAutomatedForm() {
+    pgRawQRPayload = ''; pgEmvData = {}; pgImageBase64 = ''; pgImageMime = ''; pgImageFilename = '';
+    var form = document.getElementById('pgFormBody');
+    form.innerHTML =
+        '<div class="mb-4">' +
+            '<label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">QR Image</label>' +
+            '<div id="pgDropZone" onclick="document.getElementById(\'pgQrFile\').click()" class="border-2 border-dashed border-theme rounded-xl p-8 text-center bg-app cursor-pointer hover:border-indigo-500 transition-colors">' +
+                '<p class="text-sm text-subtle">Drag & Drop QR Image Here<br><br>or <span class="text-indigo-500 font-bold">Browse File</span></p>' +
+                '<input type="file" id="pgQrFile" accept="image/*" class="hidden">' +
+            '</div>' +
+            '<div id="pgQrStatus" class="text-xs font-bold text-center mt-2 text-subtle">Awaiting image source...</div>' +
+        '</div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Payment Vendor / Bank</label><input type="text" id="pgVendor" placeholder="e.g. GCash, Maya, UnionBank" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<div class="mb-4">' +
+            '<label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Evidence Source</label>' +
+            '<div class="flex gap-2 mb-2">' +
+                '<button type="button" onclick="pgSwitchEvidence(\'link\')" id="pgEvLinkBtn" class="flex-1 px-3 py-2 rounded-lg text-xs font-bold border"></button>' +
+                '<button type="button" onclick="pgSwitchEvidence(\'upload\')" id="pgEvUploadBtn" class="flex-1 px-3 py-2 rounded-lg text-xs font-bold border"></button>' +
+            '</div>' +
+            '<input type="url" id="pgProofLink" placeholder="https://drive.google.com/..." class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2">' +
+            '<input type="file" id="pgProofFile" accept="video/*,image/*,application/pdf" class="hidden w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2">' +
+        '</div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Illegal Site / Brand Name</label><input type="text" id="pgBrand" placeholder="e.g. IllegalCasino123" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<div class="mb-5"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Domain URL</label><input type="url" id="pgDomain" placeholder="https://malicious-domain.com" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<button id="pgPreviewBtn" onclick="pgPreviewAutomated()" disabled class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">Extract &amp; Preview Data</button>';
+
+    pgSwitchEvidence('link');
+    var fileInput = document.getElementById('pgQrFile');
+    fileInput.addEventListener('change', function(e) { if (e.target.files[0]) pgProcessQrFile(e.target.files[0]); });
+    var dz = document.getElementById('pgDropZone');
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function(evt) { dz.addEventListener(evt, function(e) { e.preventDefault(); e.stopPropagation(); }, false); });
+    dz.addEventListener('drop', function(e) { var files = e.dataTransfer.files; if (files.length > 0) { fileInput.files = files; pgProcessQrFile(files[0]); } }, false);
+}
+
+function pgSwitchEvidence(mode) {
+    pgEvidenceMode = mode;
+    document.getElementById('pgEvLinkBtn').className = 'flex-1 px-3 py-2 rounded-lg text-xs font-bold border ' + (mode === 'link' ? 'bg-indigo-tint border-indigo-500 text-indigo-500' : 'border-theme text-subtle');
+    document.getElementById('pgEvLinkBtn').textContent = 'Via Link';
+    document.getElementById('pgEvUploadBtn').className = 'flex-1 px-3 py-2 rounded-lg text-xs font-bold border ' + (mode === 'upload' ? 'bg-indigo-tint border-indigo-500 text-indigo-500' : 'border-theme text-subtle');
+    document.getElementById('pgEvUploadBtn').textContent = 'Via Upload File';
+    document.getElementById('pgProofLink').classList.toggle('hidden', mode !== 'link');
+    document.getElementById('pgProofFile').classList.toggle('hidden', mode !== 'upload');
+}
+
+function pgProcessQrFile(file) {
+    var statusEl = document.getElementById('pgQrStatus');
+    statusEl.textContent = 'Processing & scanning QR image...';
+    statusEl.className = 'text-xs font-bold text-center mt-2 text-subtle';
+
+    var reader = new FileReader();
+    reader.onload = function(event) {
+        var img = new Image();
+        img.onload = function() {
+            var canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+            var MAX_DIMEN = 1000, w = img.width, h = img.height;
+            if (w > h && w > MAX_DIMEN) { h *= MAX_DIMEN / w; w = MAX_DIMEN; }
+            else if (h > MAX_DIMEN) { w *= MAX_DIMEN / h; h = MAX_DIMEN; }
+            canvas.width = w; canvas.height = h;
+            ctx.drawImage(img, 0, 0, w, h);
+            var compUrl = canvas.toDataURL('image/jpeg', 0.8);
+            pgImageMime = 'image/jpeg'; pgImageFilename = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
+            pgImageBase64 = compUrl.split(',')[1];
+
+            var byteStr = atob(pgImageBase64), n = byteStr.length, u8 = new Uint8Array(n);
+            while (n--) u8[n] = byteStr.charCodeAt(n);
+            var qrFile = new File([u8], pgImageFilename, { type: pgImageMime });
+
+            var html5QrCode = new Html5Qrcode('pgQrReaderHidden');
+            html5QrCode.scanFile(qrFile, false).then(function(decodedText) {
+                pgRawQRPayload = decodedText;
+                statusEl.textContent = '✓ QR Successfully Decoded.';
+                statusEl.className = 'text-xs font-bold text-center mt-2 text-emerald-500';
+                document.getElementById('pgPreviewBtn').disabled = false;
+            }).catch(function() {
+                statusEl.textContent = '✗ No QR code found. Please ensure image is clear.';
+                statusEl.className = 'text-xs font-bold text-center mt-2 text-rose-500';
+                document.getElementById('pgPreviewBtn').disabled = true;
+            });
+        };
+        img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function pgParseEMVFlat(qrString) {
+    var parsed = {}, i = 0;
+    while (i < qrString.length) {
+        try {
+            var tag = qrString.substring(i, i + 2);
+            var length = parseInt(qrString.substring(i + 2, i + 4), 10);
+            if (isNaN(length) || length <= 0) break;
+            parsed[tag] = qrString.substring(i + 4, i + 4 + length);
+            i += 4 + length;
+        } catch (e) { break; }
+    }
+    return parsed;
+}
+function pgSafeParseNested(str) {
+    var parsed = {}, i = 0;
+    if (!/^\d{4}/.test(str)) return null;
+    while (i < str.length) {
+        var tag = str.substring(i, i + 2), lenStr = str.substring(i + 2, i + 4);
+        if (!/^\d{2}$/.test(tag) || !/^\d{2}$/.test(lenStr)) return null;
+        var length = parseInt(lenStr, 10);
+        if (isNaN(length) || length <= 0 || i + 4 + length > str.length) return null;
+        parsed[tag] = str.substring(i + 4, i + 4 + length);
+        i += 4 + length;
+    }
+    return Object.keys(parsed).length > 0 ? parsed : null;
+}
+
+function pgPreviewAutomated() {
+    var flat = pgParseEMVFlat(pgRawQRPayload);
+    pgEmvData = {};
+    for (var tag in flat) {
+        var val = flat[tag], tagNum = parseInt(tag, 10), nested = null;
+        if ((tagNum >= 26 && tagNum <= 51) || tagNum === 62 || tagNum === 64) nested = pgSafeParseNested(val);
+        pgEmvData[tag] = { raw: val, nested: nested };
+    }
+    var merchantName = flat['59'] || 'Unknown Merchant';
+
+    var emvHtml = '';
+    for (var t in pgEmvData) {
+        var data = pgEmvData[t];
+        emvHtml += '<div class="border border-theme rounded-lg mb-2 overflow-hidden">' +
+            '<div class="px-3 py-2 bg-app flex items-center gap-2 flex-wrap"><span class="bg-panel text-indigo-400 font-black text-[11px] px-2 py-0.5 rounded border border-theme">' + t + '</span><span class="text-xs font-bold text-body flex-1">' + escapeHtmlClient(pgGetTagName(t)) + '</span></div>' +
+            '<div class="px-3 py-2 font-mono text-[11px] text-body break-all">' + escapeHtmlClient(data.raw) + '</div>' +
+        '</div>';
+    }
+
+    var modalHtml = [
+        '<div id="pgPreviewModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+        '  <div class="modal-shell w-full max-w-2xl flex flex-col max-h-[90vh]">',
+        '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app flex-shrink-0">',
+        '      <h3 class="text-lg font-black text-heading">QR Data Extract — <span class="text-indigo-500">' + escapeHtmlClient(merchantName) + '</span></h3>',
+        '      <button onclick="closeSmoothly(\'pgPreviewModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint"><i data-lucide="x" class="h-5 w-5"></i></button>',
+        '    </div>',
+        '    <div class="p-6 bg-app overflow-y-auto custom-scrollbar">',
+        '      <p class="text-[10px] font-black text-subtle uppercase tracking-widest mb-2">Decoded EMV Fields</p>',
+        emvHtml,
+        '    </div>',
+        '    <div class="px-6 py-4 border-t border-theme bg-app flex justify-end gap-2 flex-shrink-0">',
+        '      <button onclick="closeSmoothly(\'pgPreviewModal\')" class="px-4 py-2 border border-theme rounded-lg text-sm font-bold text-body hover:bg-panel">Cancel</button>',
+        '      <button id="pgSubmitAutoBtn" onclick="pgSubmitAutomated()" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">Submit to BSP Database</button>',
+        '    </div>',
+        '  </div>',
+        '</div>'
+    ].join('\n');
+
+    var existing = document.getElementById('pgPreviewModal');
+    if (existing) existing.remove();
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    var modal = document.getElementById('pgPreviewModal');
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function pgSubmitAutomated() {
+    var brandName = document.getElementById('pgBrand').value.trim();
+    var domainLink = document.getElementById('pgDomain').value.trim();
+    if (!brandName || !domainLink) { showPremiumToast('Missing', 'Brand and Domain URL are required.', 'error'); return; }
+
+    var btn = document.getElementById('pgSubmitAutoBtn');
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div>';
+    btn.disabled = true;
+
+    function doSubmit(proofFileBase64, proofFileMime, proofFileName) {
+        var payload = {
+            mode: 'automated', evidenceMode: pgEvidenceMode, rawQR: pgRawQRPayload, emvData: pgEmvData,
+            imageBase64: pgImageBase64, mimeType: pgImageMime, filename: pgImageFilename,
+            paymentVendor: document.getElementById('pgVendor').value.trim(),
+            proofLink: document.getElementById('pgProofLink').value.trim(),
+            proofFileBase64: proofFileBase64, proofFileMime: proofFileMime, proofFileName: proofFileName,
+            brandName: brandName, domainLink: domainLink
+        };
+        google.script.run.withSuccessHandler(function(res) {
+            btn.innerHTML = orig; btn.disabled = false;
+            if (res && res.success) {
+                showPremiumToast('Submitted', res.message, 'success');
+                closeSmoothly('pgPreviewModal');
+                pgRenderAutomatedForm();
+                pgLoadKpiCards();
+            } else {
+                showPremiumToast('Error', (res && res.message) || 'Submission failed.', 'error');
+            }
+        }).withFailureHandler(function() {
+            btn.innerHTML = orig; btn.disabled = false;
+            showPremiumToast('Error', 'Submission failed.', 'error');
+        }).submitBspSubmission(currentSessionToken, payload);
+    }
+
+    if (pgEvidenceMode === 'upload') {
+        var fileInput = document.getElementById('pgProofFile');
+        var file = fileInput.files[0];
+        if (!file) { btn.innerHTML = orig; btn.disabled = false; showPremiumToast('Missing', 'Pick an evidence file to upload.', 'error'); return; }
+        var reader = new FileReader();
+        reader.onload = function(e) { doSubmit(e.target.result.split(',')[1], file.type, file.name); };
+        reader.readAsDataURL(file);
+    } else {
+        doSubmit(null, null, null);
+    }
+}
+
+// ---- Manual entry form ----
+function pgRenderManualForm() {
+    var form = document.getElementById('pgFormBody');
+    form.innerHTML =
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Brand</label><input type="text" id="pgManBrand" placeholder="e.g. IllegalCasino123" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Domain Link</label><input type="url" id="pgManDomain" placeholder="https://malicious-domain.com" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Transaction Type</label><select id="pgManTxType" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"><option value="CASH IN">CASH IN</option><option value="CASH OUT">CASH OUT</option></select></div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Amount</label><input type="number" step="0.01" id="pgManAmount" placeholder="0.00" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Proof / Evidence (Video or Image)</label><input type="file" id="pgManProof" accept="video/*,image/*" class="w-full text-xs text-subtle"></div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Screenshot of Transaction</label><input type="file" id="pgManScreenshot" accept="image/*" class="w-full text-xs text-subtle"></div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Bank</label><input type="text" id="pgManBank" placeholder="e.g. GCash, Maya, BDO" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Bank Name (Account Name)</label><input type="text" id="pgManBankName" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<div class="mb-4"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Bank Account Number</label><input type="text" id="pgManBankAcc" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<div class="mb-5"><label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Reference Number</label><input type="text" id="pgManRefNum" class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>' +
+        '<button id="pgManSubmitBtn" onclick="pgSubmitManual()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700">Submit Manual Entry</button>';
+}
+
+function pgFileToBase64(inputId) {
+    return new Promise(function(resolve, reject) {
+        var input = document.getElementById(inputId);
+        if (!input || !input.files || input.files.length === 0) { resolve(null); return; }
+        var file = input.files[0];
+        var reader = new FileReader();
+        reader.onload = function() { resolve({ base64: reader.result.split(',')[1], mime: file.type, name: file.name }); };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function pgSubmitManual() {
+    var brand = document.getElementById('pgManBrand').value.trim();
+    if (!brand) { showPremiumToast('Missing', 'Brand is required.', 'error'); return; }
+    var btn = document.getElementById('pgManSubmitBtn');
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div>';
+    btn.disabled = true;
+
+    Promise.all([pgFileToBase64('pgManProof'), pgFileToBase64('pgManScreenshot')]).then(function(results) {
+        var proof = results[0], screenshot = results[1];
+        var payload = {
+            mode: 'manual', brandName: brand, domainLink: document.getElementById('pgManDomain').value.trim(),
+            transactionType: document.getElementById('pgManTxType').value, amount: document.getElementById('pgManAmount').value,
+            bank: document.getElementById('pgManBank').value.trim(), bankAccountName: document.getElementById('pgManBankName').value.trim(),
+            bankAccountNumber: document.getElementById('pgManBankAcc').value.trim(), referenceNumber: document.getElementById('pgManRefNum').value.trim(),
+            proofBase64: proof ? proof.base64 : null, proofMime: proof ? proof.mime : null, proofName: proof ? proof.name : null,
+            screenshotBase64: screenshot ? screenshot.base64 : null, screenshotMime: screenshot ? screenshot.mime : null, screenshotName: screenshot ? screenshot.name : null
+        };
+        google.script.run.withSuccessHandler(function(res) {
+            btn.innerHTML = orig; btn.disabled = false;
+            if (res && res.success) { showPremiumToast('Submitted', res.message, 'success'); pgRenderManualForm(); pgLoadKpiCards(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Submission failed.', 'error'); }
+        }).withFailureHandler(function() {
+            btn.innerHTML = orig; btn.disabled = false;
+            showPremiumToast('Error', 'Submission failed.', 'error');
+        }).submitBspSubmission(currentSessionToken, payload);
+    }).catch(function() {
+        btn.innerHTML = orig; btn.disabled = false;
+        showPremiumToast('Error', 'Could not read the attached file(s).', 'error');
+    });
+}
+
+// ---- Records tab ----
+function pgRenderRecordsTab() {
+    var body = document.getElementById('pgTabBody');
+    if (!body) return;
+    body.innerHTML =
+        '<div class="panel-card p-5">' +
+            '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
+                '<h3 class="text-sm font-black text-heading">Submission Records</h3>' +
+                '<div class="flex items-center gap-2"><select id="pgRecordsMode" onchange="pgLoadRecords()" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5"><option value="">All Modes</option><option value="automated">Automated (QR)</option><option value="manual">Manual Entry</option></select></div>' +
+            '</div>' +
+            '<div id="pgRecordsTable"><div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div></div>' +
+        '</div>' +
+        '<div id="pgQrReaderHidden" style="display:none"></div>';
+    pgLoadRecords();
+}
+
+function pgLoadRecords() {
+    var tableEl = document.getElementById('pgRecordsTable');
+    if (!tableEl) return;
+    var mode = document.getElementById('pgRecordsMode') ? document.getElementById('pgRecordsMode').value : '';
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        var rowsHtml = rows.length ? rows.map(function(r) {
+            var modeTag = r.mode === 'automated'
+                ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-indigo-tint text-indigo-400">QR</span>'
+                : '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-teal-500/10 text-teal-500">MANUAL</span>';
+            var detail = r.mode === 'automated' ? escapeHtmlClient(r.paymentVendor || '—') : (escapeHtmlClient(r.transactionType || '—') + (r.amount ? ' ₱' + r.amount : ''));
+            var links = '';
+            if (r.proofRef) links += '<a href="' + pgAttachmentUrl(r.id, 'proof') + '" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 mr-1.5" title="View proof"><i data-lucide="paperclip" class="h-3.5 w-3.5"></i></a>';
+            if (r.screenshotRef) links += '<a href="' + pgAttachmentUrl(r.id, 'screenshot') + '" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 mr-1.5" title="View screenshot"><i data-lucide="image" class="h-3.5 w-3.5"></i></a>';
+            if (r.qrImageRef) links += '<a href="' + pgAttachmentUrl(r.id, 'qrimage') + '" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300" title="View QR image"><i data-lucide="qr-code" class="h-3.5 w-3.5"></i></a>';
+            return '<tr class="border-b border-theme">' +
+                '<td class="py-2 px-3 text-xs text-subtle whitespace-nowrap">' + escapeHtmlClient((r.submittedAt || '').slice(0, 16)) + '</td>' +
+                '<td class="py-2 px-3">' + modeTag + '</td>' +
+                '<td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(r.fullName || r.username) + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body">' + escapeHtmlClient(r.brand || '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-subtle max-w-[200px] truncate">' + escapeHtmlClient(r.domainLink || '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body">' + detail + '</td>' +
+                '<td class="py-2 px-3 text-center">' + links + '</td>' +
+            '</tr>';
+        }).join('') : '<tr><td colspan="7" class="py-6 text-center text-xs text-subtle">No submissions in this range.</td></tr>';
+
+        tableEl.innerHTML = '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme">' +
+            '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Time</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Mode</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Investigator</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Brand</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Domain</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Detail</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Files</th>' +
+        '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).withFailureHandler(function() {
+        tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading records.</p>';
+    }).getBspSubmissions(currentSessionToken, pgStatsStart, pgStatsEnd, mode || null, 200);
+}
+
+function pgAttachmentUrl(id, field) {
+    return 'https://bbc-api-gateway.ea-nix.workers.dev/?action=downloadBspAttachment&id=' + id + '&field=' + field + '&token=' + encodeURIComponent(currentSessionToken);
 }
 
 function promptAddNewDpvTeam() {
