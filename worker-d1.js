@@ -1105,23 +1105,37 @@ const actions = {
     ).bind(...usernames).all();
     if (assignments.length === 0) return [];
     const { results: completions } = await db.prepare(
-      `SELECT id, assignment_id, attachment_filename, completed_at FROM kpi_checklist_completions WHERE task_date = ? AND username IN (${placeholders})`
+      `SELECT id, assignment_id, completed_at FROM kpi_checklist_completions WHERE task_date = ? AND username IN (${placeholders})`
     ).bind(date, ...usernames).all();
     const doneMap = {};
     completions.forEach(function (c) { doneMap[c.assignment_id] = c; });
+    const completionIds = completions.map(function (c) { return c.id; });
+    const photosByCompletion = {};
+    if (completionIds.length > 0) {
+      const photoPlaceholders = completionIds.map(() => "?").join(",");
+      const { results: photos } = await db.prepare(
+        `SELECT id, completion_id, attachment_filename FROM kpi_checklist_photos WHERE completion_id IN (${photoPlaceholders}) ORDER BY id ASC`
+      ).bind(...completionIds).all();
+      photos.forEach(function (p) {
+        (photosByCompletion[p.completion_id] = photosByCompletion[p.completion_id] || []).push({ id: p.id, filename: p.attachment_filename });
+      });
+    }
     return assignments.map(function (a) {
       const c = doneMap[a.id];
       return {
         id: a.id, username: a.username, fullName: a.fullName || a.username, team: a.team,
         category: a.category, label: a.label, subtype1: a.subtype1, subtype2: a.subtype2, refLink: a.ref_link,
-        done: !!c, completedAt: c ? c.completed_at : null, completionId: c ? c.id : null
+        done: !!c, completedAt: c ? c.completed_at : null, completionId: c ? c.id : null,
+        photos: c ? (photosByCompletion[c.id] || []) : []
       };
     });
   },
 
-  // Uploads the proof photo to R2 (reusing the leave-attachments bucket, under its own key prefix)
-  // and marks the item done for that day. An agent can only complete their own assignments; Super
-  // Admin can too (e.g. filing on someone's behalf), matching how fileKpiLeave/other actions work.
+  // Uploads a proof photo to R2 (reusing the leave-attachments bucket, under its own key prefix)
+  // and marks the item done for that day — an agent can attach multiple photos per brand per day by
+  // calling this repeatedly; each call just appends another row to kpi_checklist_photos under the
+  // same completion. An agent can only complete their own assignments; Super Admin can too (e.g.
+  // filing on someone's behalf), matching how fileKpiLeave/other actions work.
   async completeKpiChecklistItem(db, env, token, assignmentId, dateStr, attachmentBase64, attachmentFilename, attachmentType) {
     const session = await checkSession(db, token);
     const assignment = await db.prepare("SELECT id, username FROM kpi_checklist_assignments WHERE id = ?").bind(assignmentId).first();
@@ -1138,11 +1152,17 @@ const actions = {
     if (!env.LEAVE_ATTACHMENTS) return { success: false, message: "Attachment storage isn't configured on the Worker yet." };
     const key = "checklist/" + assignment.username + "/" + date + "/" + assignmentId + "_" + Date.now() + "_" + attachmentFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
     await env.LEAVE_ATTACHMENTS.put(key, bytes, { httpMetadata: { contentType: attachmentType || "image/png" } });
-    await db.prepare(
-      `INSERT INTO kpi_checklist_completions (assignment_id, username, task_date, attachment_key, attachment_filename) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(assignment_id, task_date) DO UPDATE SET attachment_key = excluded.attachment_key, attachment_filename = excluded.attachment_filename, completed_at = datetime('now')`
-    ).bind(assignmentId, assignment.username, date, key, attachmentFilename).run();
-    return { success: true, message: "Na-mark as done." };
+
+    let completion = await db.prepare("SELECT id FROM kpi_checklist_completions WHERE assignment_id = ? AND task_date = ?").bind(assignmentId, date).first();
+    let completionId;
+    if (completion) {
+      completionId = completion.id;
+    } else {
+      const res = await db.prepare("INSERT INTO kpi_checklist_completions (assignment_id, username, task_date) VALUES (?, ?, ?)").bind(assignmentId, assignment.username, date).run();
+      completionId = res.meta.last_row_id;
+    }
+    await db.prepare("INSERT INTO kpi_checklist_photos (completion_id, attachment_key, attachment_filename) VALUES (?, ?, ?)").bind(completionId, key, attachmentFilename).run();
+    return { success: true, message: "Photo added." };
   },
 
   // ---- Schedule history (per-cutoff/seasonal shift changes) + Attendance Detail view ----
@@ -1699,13 +1719,16 @@ export default {
           });
         }
 
-        // Same streaming pattern, for a checklist item's proof photo — the owning agent can view
-        // their own proof, not just Super Admin (unlike leave attachments, which are admin-only).
+        // Same streaming pattern, for one of a checklist item's proof photos — the owning agent can
+        // view their own proof, not just Super Admin (unlike leave attachments, which are admin-only).
+        // `id` here is a kpi_checklist_photos row id, not a completion id (an item can have several).
         if (action === "downloadKpiChecklistAttachment") {
           const token = url.searchParams.get("token");
           const id = url.searchParams.get("id");
           const session = await checkSession(env.DB, token);
-          const row = await env.DB.prepare("SELECT username, attachment_key, attachment_filename FROM kpi_checklist_completions WHERE id = ?").bind(id).first();
+          const row = await env.DB.prepare(
+            "SELECT p.attachment_key, p.attachment_filename, c.username FROM kpi_checklist_photos p JOIN kpi_checklist_completions c ON c.id = p.completion_id WHERE p.id = ?"
+          ).bind(id).first();
           if (!row || !row.attachment_key) return new Response("Not found", { status: 404 });
           if (session.role !== "Super Admin" && session.username !== row.username) return new Response("Forbidden", { status: 403 });
           const obj = await env.LEAVE_ATTACHMENTS.get(row.attachment_key);

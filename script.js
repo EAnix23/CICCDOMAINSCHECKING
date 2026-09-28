@@ -3494,9 +3494,16 @@ function kpiLoadChecklistPanel() {
                     var typeBadge = i.subtype1 ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-app text-subtle mr-1">' + escapeHtmlClient(i.subtype1) + '</span>' : '';
                     var platBadge = i.subtype2 ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-app text-subtle mr-1">' + escapeHtmlClient(i.subtype2) + '</span>' : '';
                     var linkBtn = i.refLink ? '<a href="' + escapeHtmlClient(i.refLink) + '" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 mr-2" title="Open Telegram group"><i data-lucide="external-link" class="h-3.5 w-3.5"></i></a>' : '';
-                    var actionHtml = i.done
-                        ? '<a href="' + kpiChecklistAttachmentUrl(i.completionId) + '" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500"><i data-lucide="check-circle-2" class="h-3.5 w-3.5"></i> Done</a>'
-                        : '<button onclick="kpiChecklistMarkDone(' + i.id + ')" class="px-2.5 py-1 bg-indigo-600 text-white rounded-md text-[10px] font-bold hover:bg-indigo-700 flex items-center gap-1"><i data-lucide="camera" class="h-3 w-3"></i> Mark Done</button>';
+                    var actionHtml;
+                    if (i.done) {
+                        var photoLinks = (i.photos || []).map(function(p, idx) {
+                            return '<a href="' + kpiChecklistAttachmentUrl(p.id) + '" target="_blank" rel="noopener" class="text-emerald-500 hover:text-emerald-400 underline" title="' + escapeHtmlClient(p.filename) + '">' + (idx + 1) + '</a>';
+                        }).join(' ');
+                        actionHtml = '<span class="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500"><i data-lucide="check-circle-2" class="h-3.5 w-3.5"></i> Done (' + photoLinks + ')</span>' +
+                            '<button onclick="kpiChecklistMarkDone(' + i.id + ')" class="ml-1.5 text-indigo-400 hover:text-indigo-300" title="Add another photo"><i data-lucide="plus-circle" class="h-3.5 w-3.5"></i></button>';
+                    } else {
+                        actionHtml = '<button onclick="kpiChecklistMarkDone(' + i.id + ')" class="px-2.5 py-1 bg-indigo-600 text-white rounded-md text-[10px] font-bold hover:bg-indigo-700 flex items-center gap-1"><i data-lucide="camera" class="h-3 w-3"></i> Mark Done</button>';
+                    }
                     return '<div class="flex items-center gap-1 py-2 px-1 border-b border-theme/60 last:border-0">' +
                         '<span class="text-xs font-bold text-body flex-1 truncate">' + escapeHtmlClient(i.label) + '</span>' +
                         typeBadge + platBadge + linkBtn +
