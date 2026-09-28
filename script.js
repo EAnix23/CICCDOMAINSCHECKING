@@ -1526,6 +1526,7 @@ function renderPaymentGatewayModule(container) {
                 '<div class="flex items-center gap-2 mb-5">' +
                     '<button onclick="pgSwitchTab(\'submit\')" id="pgTabSubmitBtn" class="px-4 py-2 rounded-lg text-sm font-bold"></button>' +
                     '<button onclick="pgSwitchTab(\'records\')" id="pgTabRecordsBtn" class="px-4 py-2 rounded-lg text-sm font-bold"></button>' +
+                    '<button onclick="pgSwitchTab(\'merchants\')" id="pgTabMerchantsBtn" class="px-4 py-2 rounded-lg text-sm font-bold"></button>' +
                 '</div>' +
                 '<div id="pgTabBody"></div>' +
             '</div>' +
@@ -1562,8 +1563,12 @@ function pgSwitchTab(tab) {
     document.getElementById('pgTabSubmitBtn').className = 'px-4 py-2 rounded-lg text-sm font-bold ' + (tab === 'submit' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body');
     document.getElementById('pgTabSubmitBtn').textContent = 'Submit';
     document.getElementById('pgTabRecordsBtn').className = 'px-4 py-2 rounded-lg text-sm font-bold ' + (tab === 'records' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body');
-    document.getElementById('pgTabRecordsBtn').textContent = 'Records';
-    if (tab === 'submit') pgRenderSubmitTab(); else pgRenderRecordsTab();
+    document.getElementById('pgTabRecordsBtn').textContent = 'Submission Records';
+    document.getElementById('pgTabMerchantsBtn').className = 'px-4 py-2 rounded-lg text-sm font-bold ' + (tab === 'merchants' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body');
+    document.getElementById('pgTabMerchantsBtn').textContent = 'Merchant Registry';
+    if (tab === 'submit') pgRenderSubmitTab();
+    else if (tab === 'merchants') pgRenderMerchantsTab();
+    else pgRenderRecordsTab();
 }
 
 // ---- Submit tab ----
@@ -1857,18 +1862,28 @@ function pgSubmitManual() {
 }
 
 // ---- Records tab ----
+var pgLastRecords = [];
+
 function pgRenderRecordsTab() {
     var body = document.getElementById('pgTabBody');
     if (!body) return;
+    var isSuperAdmin = currentUserRole === 'Super Admin';
     body.innerHTML =
         '<div class="panel-card p-5">' +
             '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
                 '<h3 class="text-sm font-black text-heading">Submission Records</h3>' +
-                '<div class="flex items-center gap-2"><select id="pgRecordsMode" onchange="pgLoadRecords()" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5"><option value="">All Modes</option><option value="automated">Automated (QR)</option><option value="manual">Manual Entry</option></select></div>' +
+                '<div class="flex items-center gap-2 flex-wrap">' +
+                    '<input type="text" id="pgRecordsSearch" placeholder="Search brand, domain, vendor, investigator..." class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 w-64" onkeydown="if(event.key===\'Enter\')pgLoadRecords()">' +
+                    '<select id="pgRecordsMode" onchange="pgLoadRecords()" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5"><option value="">All Modes</option><option value="automated">Automated (QR)</option><option value="manual">Manual Entry</option></select>' +
+                    '<button onclick="pgLoadRecords()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Search</button>' +
+                    '<button onclick="pgExportRecords()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app flex items-center gap-1"><i data-lucide="download" class="h-3.5 w-3.5"></i> Export</button>' +
+                    (isSuperAdmin ? '<button onclick="pgOpenImportModal()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app flex items-center gap-1"><i data-lucide="upload" class="h-3.5 w-3.5"></i> Import</button>' : '') +
+                '</div>' +
             '</div>' +
             '<div id="pgRecordsTable"><div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div></div>' +
         '</div>' +
         '<div id="pgQrReaderHidden" style="display:none"></div>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
     pgLoadRecords();
 }
 
@@ -1876,8 +1891,11 @@ function pgLoadRecords() {
     var tableEl = document.getElementById('pgRecordsTable');
     if (!tableEl) return;
     var mode = document.getElementById('pgRecordsMode') ? document.getElementById('pgRecordsMode').value : '';
+    var search = document.getElementById('pgRecordsSearch') ? document.getElementById('pgRecordsSearch').value.trim() : '';
+    tableEl.innerHTML = '<div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div>';
     google.script.run.withSuccessHandler(function(rows) {
         rows = rows || [];
+        pgLastRecords = rows;
         var rowsHtml = rows.length ? rows.map(function(r) {
             var modeTag = r.mode === 'automated'
                 ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-indigo-tint text-indigo-400">QR</span>'
@@ -1898,17 +1916,203 @@ function pgLoadRecords() {
             '</tr>';
         }).join('') : '<tr><td colspan="7" class="py-6 text-center text-xs text-subtle">No submissions in this range.</td></tr>';
 
-        tableEl.innerHTML = '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme">' +
+        tableEl.innerHTML = '<p class="text-[10px] text-subtle mb-2">' + rows.length + ' record(s)' + (rows.length >= 2000 ? ' (showing first 2000 — narrow your search)' : '') + '</p>' +
+            '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme">' +
             '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Time</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Mode</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Investigator</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Brand</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Domain</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Detail</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Files</th>' +
         '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
         if (typeof lucide !== 'undefined') lucide.createIcons();
     }).withFailureHandler(function() {
         tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading records.</p>';
-    }).getBspSubmissions(currentSessionToken, pgStatsStart, pgStatsEnd, mode || null, 200);
+    }).getBspSubmissions(currentSessionToken, pgStatsStart, pgStatsEnd, mode || null, 2000, search || null);
 }
 
 function pgAttachmentUrl(id, field) {
     return 'https://bbc-api-gateway.ea-nix.workers.dev/?action=downloadBspAttachment&id=' + id + '&field=' + field + '&token=' + encodeURIComponent(currentSessionToken);
+}
+
+function pgExportRecords() {
+    if (!pgLastRecords.length) { showPremiumToast('Empty', 'No records to export.', 'error'); return; }
+    var headers = ['Timestamp', 'Mode', 'Investigator', 'Brand', 'Domain', 'Payment Vendor', 'Transaction Type', 'Amount', 'Bank', 'Reference Number'];
+    var rows = pgLastRecords.map(function(r) {
+        return [r.submittedAt, r.mode, r.fullName || r.username, r.brand, r.domainLink, r.paymentVendor, r.transactionType, r.amount, r.bank, r.referenceNumber];
+    });
+    downloadCSV('bsp_submissions_' + pgStatsStart + '_to_' + pgStatsEnd, headers, rows);
+}
+
+// ---- Merchant Registry tab (payment_gateway_merchants) ----
+var pgLastMerchants = [];
+
+function pgRenderMerchantsTab() {
+    var body = document.getElementById('pgTabBody');
+    if (!body) return;
+    body.innerHTML =
+        '<div class="panel-card p-5">' +
+            '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
+                '<h3 class="text-sm font-black text-heading">Merchant / QR Registry</h3>' +
+                '<div class="flex items-center gap-2 flex-wrap">' +
+                    '<input type="text" id="pgMerchSearch" placeholder="Search merchant, provider, ID..." class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 w-64" onkeydown="if(event.key===\'Enter\')pgLoadMerchants()">' +
+                    '<button onclick="pgLoadMerchants()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Search</button>' +
+                    '<button onclick="pgExportMerchants()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app flex items-center gap-1"><i data-lucide="download" class="h-3.5 w-3.5"></i> Export</button>' +
+                '</div>' +
+            '</div>' +
+            '<div id="pgMerchTable"><div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div></div>' +
+        '</div>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    pgLoadMerchants();
+}
+
+function pgLoadMerchants() {
+    var tableEl = document.getElementById('pgMerchTable');
+    if (!tableEl) return;
+    var search = document.getElementById('pgMerchSearch') ? document.getElementById('pgMerchSearch').value.trim() : '';
+    tableEl.innerHTML = '<div class="flex justify-center py-8"><div class="spinner border-t-indigo-500"></div></div>';
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        pgLastMerchants = rows;
+        var rowsHtml = rows.length ? rows.map(function(r) {
+            return '<tr class="border-b border-theme">' +
+                '<td class="py-2 px-3 text-xs text-subtle whitespace-nowrap">' + escapeHtmlClient((r.submittedAt || '').slice(0, 16)) + '</td>' +
+                '<td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(r.fullName || r.username) + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body">' + escapeHtmlClient(r.name || '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-subtle">' + escapeHtmlClient(r.provider || '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-subtle">' + escapeHtmlClient(r.merchantId || '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-subtle">' + escapeHtmlClient(r.merchantCity || '—') + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body">' + (r.qrAmount ? escapeHtmlClient(r.qrAmount) : '—') + '</td>' +
+                '<td class="py-2 px-3 text-center"><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-amber-500/10 text-amber-500">' + escapeHtmlClient(r.status || 'Pending') + '</span></td>' +
+            '</tr>';
+        }).join('') : '<tr><td colspan="8" class="py-6 text-center text-xs text-subtle">No merchant records in this range.</td></tr>';
+
+        tableEl.innerHTML = '<p class="text-[10px] text-subtle mb-2">' + rows.length + ' record(s)' + (rows.length >= 5000 ? ' (showing first 5000 — narrow your search)' : '') + '</p>' +
+            '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme">' +
+            '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Time</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Investigator</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Name</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Provider</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Merchant ID</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">City</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Amount</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Status</th>' +
+        '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).withFailureHandler(function() {
+        tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading merchant records.</p>';
+    }).getPaymentGatewayMerchants(currentSessionToken, pgStatsStart, pgStatsEnd, search || null, 5000);
+}
+
+function pgExportMerchants() {
+    if (!pgLastMerchants.length) { showPremiumToast('Empty', 'No records to export.', 'error'); return; }
+    var headers = ['Timestamp', 'Investigator', 'Name', 'Provider', 'Merchant ID', 'Store ID', 'City', 'Amount', 'Currency', 'Status'];
+    var rows = pgLastMerchants.map(function(r) {
+        return [r.submittedAt, r.fullName || r.username, r.name, r.provider, r.merchantId, r.storeId, r.merchantCity, r.qrAmount, r.qrCurrency, r.status];
+    });
+    downloadCSV('gateway_merchants_' + pgStatsStart + '_to_' + pgStatsEnd, headers, rows);
+}
+
+// ---- Bulk CSV import (Super Admin) — attributed to one chosen investigator ----
+function pgParseCsvGeneric(text) {
+    var rows = [], row = [], cur = '', inQuotes = false;
+    for (var i = 0; i < text.length; i++) {
+        var c = text[i];
+        if (inQuotes) {
+            if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; }
+            else cur += c;
+        } else {
+            if (c === '"') inQuotes = true;
+            else if (c === ',') { row.push(cur); cur = ''; }
+            else if (c === '\n') { row.push(cur); cur = ''; rows.push(row); row = []; }
+            else if (c === '\r') { /* skip */ }
+            else cur += c;
+        }
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows;
+}
+
+var pgImportRows = [];
+
+function pgOpenImportModal() {
+    var modal = document.getElementById('pgImportModal');
+    if (modal) { modal.remove(); }
+    google.script.run.withSuccessHandler(function(agents) {
+        pgBuildImportModal(agents || []);
+    }).getAllAgents(currentSessionToken);
+}
+
+function pgBuildImportModal(agents) {
+    {
+        var agentOptions = agents.map(function(m) { return '<option value="' + escapeHtmlClient(m.username) + '">' + escapeHtmlClient(m.fullName) + '</option>'; }).join('');
+        var html = [
+            '<div id="pgImportModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-md flex flex-col">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="upload" class="h-5 w-5 text-indigo-500"></i> Import Submissions</h3>',
+            '      <button onclick="closeSmoothly(\'pgImportModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app">',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Attribute all rows to</label>',
+            '      <select id="pgImportAgent" class="w-full mb-4 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2">' + agentOptions + '</select>',
+            '      <p class="text-[10px] text-subtle mb-3">CSV columns (header names, any order): UPLOADER, BRAND, DOMAIN LINK, TRANSACTION TYPE, AMOUNT, BANK, BANK NAME, BANK ACCOUNT NUMBER, REFERENCE NUMBER, TIMESTAMP.</p>',
+            '      <input type="file" id="pgImportFile" accept=".csv" onchange="pgHandleImportFile(event)" class="w-full text-xs text-subtle mb-2">',
+            '      <div id="pgImportPreview" class="text-xs text-subtle mb-4"></div>',
+            '      <button id="btnPgImportRun" onclick="pgRunImport()" disabled class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-40" >Import Rows</button>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+    }
+    var modal = document.getElementById('pgImportModal');
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function pgHandleImportFile(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        var table = pgParseCsvGeneric(e.target.result);
+        if (table.length < 2) { pgImportRows = []; document.getElementById('pgImportPreview').innerHTML = '<span class="text-rose-500 font-bold">No data rows found.</span>'; document.getElementById('btnPgImportRun').disabled = true; return; }
+        var header = table[0].map(function(h) { return h.trim().toUpperCase(); });
+        function col(row, name) { var idx = header.indexOf(name); return idx === -1 ? '' : (row[idx] || '').trim(); }
+        var rows = [];
+        for (var i = 1; i < table.length; i++) {
+            if (table[i].length <= 1 && !table[i][0]) continue;
+            var r = table[i];
+            var brand = col(r, 'BRAND');
+            if (!brand) continue;
+            var ts = col(r, 'TIMESTAMP');
+            var isoTs = '';
+            if (ts) { var d = new Date(ts); if (!isNaN(d.getTime())) isoTs = d.toISOString().slice(0, 19).replace('T', ' '); }
+            rows.push({
+                mode: 'manual', brand: brand, domainLink: col(r, 'DOMAIN LINK') || col(r, 'DOMAIN'),
+                transactionType: col(r, 'TRANSACTION TYPE'), amount: col(r, 'AMOUNT'),
+                bank: col(r, 'BANK'), bankAccountName: col(r, 'BANK NAME'), bankAccountNumber: col(r, 'BANK ACCOUNT NUMBER'),
+                referenceNumber: col(r, 'REFERENCE NUMBER'), submittedAt: isoTs
+            });
+        }
+        pgImportRows = rows;
+        document.getElementById('pgImportPreview').innerHTML = rows.length
+            ? '<span class="text-emerald-500 font-bold">' + rows.length + ' valid row(s)</span> — ready to import.'
+            : '<span class="text-rose-500 font-bold">No valid rows found (Brand column required).</span>';
+        document.getElementById('btnPgImportRun').disabled = rows.length === 0;
+    };
+    reader.readAsText(file);
+}
+
+function pgRunImport() {
+    var agent = document.getElementById('pgImportAgent').value;
+    if (!agent || pgImportRows.length === 0) return;
+    var btn = document.getElementById('btnPgImportRun');
+    btn.disabled = true; btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white mx-auto"></div>';
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) {
+            showPremiumToast('Imported', res.message, 'success');
+            closeSmoothly('pgImportModal');
+            pgLoadKpiCards();
+            if (pgTab === 'records') pgLoadRecords();
+        } else {
+            showPremiumToast('Error', (res && res.message) || 'Import failed.', 'error');
+            btn.disabled = false; btn.textContent = 'Import Rows';
+        }
+    }).withFailureHandler(function() {
+        showPremiumToast('Error', 'Import failed.', 'error');
+        btn.disabled = false; btn.textContent = 'Import Rows';
+    }).importBspSubmissions(currentSessionToken, agent, pgImportRows);
 }
 
 function promptAddNewDpvTeam() {

@@ -1386,8 +1386,9 @@ const actions = {
   },
 
   // List view — Super Admin sees the whole team (or every team they manage); an agent sees only
-  // their own submissions. Newest first, capped so the modal/table stays fast to render.
-  async getBspSubmissions(db, token, startDate, endDate, mode, limit) {
+  // their own submissions. Newest first, capped so the modal/table stays fast to render. `search`
+  // does a simple LIKE match across brand/domain/vendor/investigator name.
+  async getBspSubmissions(db, token, startDate, endDate, mode, limit, search) {
     const session = await checkSession(db, token);
     let usernames;
     if (session.role === "Super Admin") {
@@ -1406,8 +1407,45 @@ const actions = {
     if (startDate) { sql += " AND b.submitted_at >= ?"; params.push(startDate + " 00:00:00"); }
     if (endDate) { sql += " AND b.submitted_at <= ?"; params.push(endDate + " 23:59:59"); }
     if (mode) { sql += " AND b.mode = ?"; params.push(mode); }
+    if (search) {
+      sql += " AND (b.brand LIKE ? OR b.domain_link LIKE ? OR b.payment_vendor LIKE ? OR u.full_name LIKE ? OR b.reference_number LIKE ?)";
+      const like = "%" + search + "%";
+      params.push(like, like, like, like, like);
+    }
     sql += " ORDER BY b.submitted_at DESC LIMIT ?";
-    params.push(Math.min(limit || 200, 500));
+    params.push(Math.min(limit || 200, 5000));
+    const { results } = await db.prepare(sql).bind(...params).all();
+    return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
+  },
+
+  // Payment Gateway merchant/QR registry (payment_gateway_merchants) — the other BSP-related data
+  // source, structurally different from bsp_submissions (a detected/registered merchant list with
+  // its own status, not individual investigator report events). Same access rule and search style.
+  async getPaymentGatewayMerchants(db, token, startDate, endDate, search, limit) {
+    const session = await checkSession(db, token);
+    let usernames;
+    if (session.role === "Super Admin") {
+      const { results } = await db.prepare("SELECT username FROM users WHERE team IN (SELECT DISTINCT team FROM users WHERE team != '')").all();
+      usernames = results.map(r => r.username);
+    } else {
+      usernames = [session.username];
+    }
+    if (usernames.length === 0) return [];
+    const placeholders = usernames.map(() => "?").join(",");
+    const params = [...usernames];
+    let sql = `SELECT m.id, m.username, u.full_name as fullName, m.team, m.submitted_at as submittedAt, m.name, m.provider,
+               m.merchant_id as merchantId, m.store_id as storeId, m.status, m.qr_extracted_merchant_name as merchantName,
+               m.qr_merchant_city as merchantCity, m.qr_amount as qrAmount, m.qr_currency as qrCurrency
+               FROM payment_gateway_merchants m LEFT JOIN users u ON u.username = m.username WHERE m.username IN (${placeholders})`;
+    if (startDate) { sql += " AND m.submitted_at >= ?"; params.push(startDate + " 00:00:00"); }
+    if (endDate) { sql += " AND m.submitted_at <= ?"; params.push(endDate + " 23:59:59"); }
+    if (search) {
+      sql += " AND (m.name LIKE ? OR m.provider LIKE ? OR m.merchant_id LIKE ? OR m.store_id LIKE ? OR u.full_name LIKE ?)";
+      const like = "%" + search + "%";
+      params.push(like, like, like, like, like);
+    }
+    sql += " ORDER BY m.submitted_at DESC LIMIT ?";
+    params.push(Math.min(limit || 200, 5000));
     const { results } = await db.prepare(sql).bind(...params).all();
     return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
   },
@@ -1459,6 +1497,50 @@ const actions = {
     const avgHandlingTimeSeconds = allGaps.length > 0 ? Math.round(allGaps.reduce((s, p) => s + p.avgHandlingTimeSeconds, 0) / allGaps.length) : 0;
 
     return { totalSubmissions: totalSubmissions, activeInvestigators: activeInvestigators, avgHandlingTimeSeconds: avgHandlingTimeSeconds, perInvestigator: perInvestigator };
+  },
+
+  // Lightweight full roster (username+name for everyone with a team) — used by pickers like the
+  // Payment Gateway import modal's "attribute to" dropdown, independent of any other tab's state.
+  async getAllAgents(db, token) {
+    await checkSession(db, token, true);
+    const { results } = await db.prepare("SELECT username, full_name as fullName, team FROM users WHERE team != '' ORDER BY team ASC, username ASC").all();
+    return results.map(function (r) { return { username: r.username, fullName: r.fullName || r.username, team: r.team }; });
+  },
+
+  // Bulk CSV import (Super Admin only) — attributes every row to one chosen investigator, matching
+  // the pattern already used for attendance imports. Mode defaults to 'manual' per row unless the
+  // row explicitly says 'automated'.
+  async importBspSubmissions(db, token, username, rows) {
+    await checkSession(db, token, true);
+    if (!username) return { success: false, message: "Pick an investigator to attribute these rows to." };
+    const userRow = await db.prepare("SELECT team FROM users WHERE username = ?").bind(username).first();
+    if (!userRow) return { success: false, message: "User not found." };
+    if (!Array.isArray(rows) || rows.length === 0) return { success: false, message: "The file is empty." };
+
+    let count = 0;
+    for (const r of rows) {
+      const mode = r.mode === "automated" ? "automated" : "manual";
+      const ts = /^\d{4}-\d{2}-\d{2}/.test(String(r.submittedAt || "")) ? r.submittedAt : null;
+      const tsSql = ts ? "?" : "datetime('now')";
+      const binds = [username, userRow.team || ""];
+      if (ts) binds.push(ts);
+      if (mode === "manual") {
+        const amountVal = r.amount !== undefined && r.amount !== null && r.amount !== "" ? parseFloat(r.amount) : null;
+        binds.push(r.brand || "", r.domainLink || "", r.transactionType || "", amountVal, r.bank || "", r.bankAccountName || "", r.bankAccountNumber || "", r.referenceNumber || "");
+        await db.prepare(
+          `INSERT INTO bsp_submissions (mode, username, team, submitted_at, brand, domain_link, transaction_type, amount, bank, bank_account_name, bank_account_number, reference_number, source)
+           VALUES ('manual', ?, ?, ${tsSql}, ?, ?, ?, ?, ?, ?, ?, ?, 'import')`
+        ).bind(...binds).run();
+      } else {
+        binds.push(r.brand || "", r.domainLink || "", r.paymentVendor || "");
+        await db.prepare(
+          `INSERT INTO bsp_submissions (mode, username, team, submitted_at, brand, domain_link, payment_vendor, source)
+           VALUES ('automated', ?, ?, ${tsSql}, ?, ?, ?, 'import')`
+        ).bind(...binds).run();
+      }
+      count++;
+    }
+    return { success: true, message: count + " record(s) imported." };
   }
 };
 
