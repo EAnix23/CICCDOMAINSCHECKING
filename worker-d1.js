@@ -902,14 +902,15 @@ const actions = {
     });
 
     // Self-service Day Off plots (kpi_dayoffs) overlay too, same as approved leaves — only fills a
-    // date that has no real punch/day_status/leave already on it.
+    // date that has no real punch/day_status/leave already on it. Shown as "RD" like an ordinary
+    // Rest Day, since both mean the same thing on the grid: not a working day.
     const { results: dayoffRows } = await db.prepare(
       `SELECT username, date FROM kpi_dayoffs WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ?`
     ).bind(...teamList, startDate, endDate).all();
     const byDayoff = {};
     dayoffRows.forEach(function (r) {
       if (!byDayoff[r.username]) byDayoff[r.username] = {};
-      byDayoff[r.username][r.date] = "DO";
+      byDayoff[r.username][r.date] = "RD";
     });
 
     const members = memberRows.map(function (u) {
