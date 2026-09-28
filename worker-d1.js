@@ -1165,6 +1165,46 @@ const actions = {
     return { success: true, message: "Photo added." };
   },
 
+  // ---- Checklist assignment management (Super Admin) — who is responsible for which brand/
+  // competitor/etc, under which category. Lets Super Admin add/edit/deactivate/delete without
+  // going through direct SQL every time a brand gets added or reassigned.
+  async getKpiChecklistAssignments(db, token, category) {
+    await checkSession(db, token, true);
+    const params = [];
+    let sql = `SELECT a.id, a.username, a.team, a.category, a.label, a.subtype1, a.subtype2, a.ref_link as refLink, a.active, u.full_name as fullName
+               FROM kpi_checklist_assignments a LEFT JOIN users u ON u.username = a.username`;
+    if (category) { sql += " WHERE a.category = ?"; params.push(category); }
+    sql += " ORDER BY a.username ASC, a.label ASC";
+    const { results } = await db.prepare(sql).bind(...params).all();
+    return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username, active: !!r.active }); });
+  },
+
+  async addKpiChecklistAssignment(db, token, username, category, label, subtype1, subtype2, refLink) {
+    await checkSession(db, token, true);
+    if (!username || !category || !String(label || "").trim()) return { success: false, message: "Username, category, and label are required." };
+    const userRow = await db.prepare("SELECT team FROM users WHERE username = ?").bind(username).first();
+    if (!userRow) return { success: false, message: "User not found." };
+    await db.prepare("INSERT INTO kpi_checklist_assignments (username, team, category, label, subtype1, subtype2, ref_link) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(username, userRow.team || "", category, String(label).trim(), (subtype1 || "").trim(), (subtype2 || "").trim(), (refLink || "").trim()).run();
+    return { success: true, message: "Assignment added." };
+  },
+
+  async updateKpiChecklistAssignment(db, token, id, username, label, subtype1, subtype2, refLink, active) {
+    await checkSession(db, token, true);
+    if (!id) return { success: false, message: "Missing id." };
+    const userRow = await db.prepare("SELECT team FROM users WHERE username = ?").bind(username).first();
+    if (!userRow) return { success: false, message: "User not found." };
+    await db.prepare("UPDATE kpi_checklist_assignments SET username=?, team=?, label=?, subtype1=?, subtype2=?, ref_link=?, active=? WHERE id=?")
+      .bind(username, userRow.team || "", String(label || "").trim(), (subtype1 || "").trim(), (subtype2 || "").trim(), (refLink || "").trim(), active ? 1 : 0, id).run();
+    return { success: true, message: "Assignment updated." };
+  },
+
+  async deleteKpiChecklistAssignment(db, token, id) {
+    await checkSession(db, token, true);
+    await db.prepare("DELETE FROM kpi_checklist_assignments WHERE id = ?").bind(id).run();
+    return { success: true };
+  },
+
   // ---- Schedule history (per-cutoff/seasonal shift changes) + Attendance Detail view ----
   // Super Admin logs a new scheduled Time In effective from a given date; the applicable schedule
   // for any date is the latest row with effective_from <= that date, so past cutoffs' Late

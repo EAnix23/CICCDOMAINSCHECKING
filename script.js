@@ -3446,7 +3446,7 @@ function renderKpiTodoTab() {
 
         content.innerHTML =
             '<div class="panel-card p-5 mb-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500"></i> Today\'s Auto-listed Uploads</h3><div class="space-y-2 max-h-[240px] overflow-y-auto custom-scrollbar">' + autoHtml + '</div></div>' +
-            '<div class="panel-card p-5 mb-5"><h3 class="text-sm font-black text-heading mb-1 flex items-center gap-2"><i data-lucide="camera" class="h-4 w-4 text-indigo-500"></i> Daily Brand Status</h3><p class="text-[10px] text-subtle mb-3">Send the status update on each assigned brand\'s Telegram group, then attach a screenshot here to mark it done for today.</p><div id="kpiChecklistBody"><div class="flex justify-center py-6"><div class="spinner border-t-indigo-500"></div></div></div></div>' +
+            '<div class="panel-card p-5 mb-5"><div class="flex items-center justify-between mb-1"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="camera" class="h-4 w-4 text-indigo-500"></i> Daily Brand Status</h3>' + (currentUserRole === 'Super Admin' ? '<button onclick="kpiOpenAssignmentManager()" class="px-2.5 py-1 bg-panel border border-theme rounded-lg text-[10px] font-bold text-body hover:bg-app flex items-center gap-1"><i data-lucide="settings" class="h-3.5 w-3.5"></i> Manage Assignments</button>' : '') + '</div><p class="text-[10px] text-subtle mb-3">Send the status update on each assigned brand\'s Telegram group, then attach a screenshot here to mark it done for today.</p><div id="kpiChecklistBody"><div class="flex justify-center py-6"><div class="spinner border-t-indigo-500"></div></div></div></div>' +
             '<div class="flex flex-col sm:flex-row gap-2 mb-4"><input type="text" id="kpiNewTaskInput" placeholder="Add a task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><select id="kpiNewTaskAssignee" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' + assigneeOptions + '</select><button onclick="kpiAddTask()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 flex items-center gap-1.5"><i data-lucide="plus" class="h-4 w-4"></i> Add</button></div>' +
             boardHtml;
         if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -3576,6 +3576,158 @@ function kpiChangeTaskStatus(id, status) {
 
 function kpiDeleteTask(id) {
     google.script.run.withSuccessHandler(function() { renderKpiTodoTab(); }).deleteKpiTask(currentSessionToken, id);
+}
+
+// ---- Daily Checklist assignment management (Super Admin) ----
+// Add/edit/deactivate/delete who is responsible for which brand/competitor, without needing direct
+// SQL. Shares the Agent list from kpiCurrentMembers (populated by renderKpiTodoTab, which for Super
+// Admin already includes every team's members, not just the current team).
+var kpiAssignEditingId = null;
+var kpiAssignCategory = 'brand_status';
+
+function kpiOpenAssignmentManager() {
+    var modal = document.getElementById('kpiAssignManageModal');
+    if (!modal) {
+        var agentOptions = (kpiCurrentMembers || []).map(function(m) { return '<option value="' + escapeHtmlClient(m.username) + '">' + escapeHtmlClient(m.fullName) + '</option>'; }).join('');
+        var html = [
+            '<div id="kpiAssignManageModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-4xl flex flex-col max-h-[90vh]">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app flex-shrink-0">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="settings" class="h-5 w-5 text-indigo-500"></i> Manage Checklist Assignments</h3>',
+            '      <button onclick="closeSmoothly(\'kpiAssignManageModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint transition-colors"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app overflow-y-auto custom-scrollbar">',
+            '      <div class="flex items-center gap-2 mb-4">',
+            '        <button onclick="kpiSwitchAssignCategory(\'brand_status\')" id="kpiAssignCatBrand" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white">Brand Status Update</button>',
+            '        <button onclick="kpiSwitchAssignCategory(\'competitor_promo\')" id="kpiAssignCatCompetitor" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-panel border border-theme text-body">Competitor Promotion Check</button>',
+            '      </div>',
+            '      <div id="kpiAssignFormCard" class="panel-card p-4 mb-4">',
+            '        <p id="kpiAssignFormTitle" class="text-xs font-black text-heading uppercase tracking-widest mb-3">Add Assignment</p>',
+            '        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">',
+            '          <select id="kpiAssignAgent" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2">' + agentOptions + '</select>',
+            '          <input type="text" id="kpiAssignLabel" placeholder="Brand / Competitor name..." class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2">',
+            '          <input type="text" id="kpiAssignSubtype1" placeholder="Type (e.g. CASH, CREDIT)..." class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2">',
+            '          <input type="text" id="kpiAssignSubtype2" placeholder="Platform (e.g. MPS, TCG)..." class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2">',
+            '          <input type="text" id="kpiAssignLink" placeholder="Telegram link (optional)..." class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 sm:col-span-2">',
+            '        </div>',
+            '        <div class="flex items-center gap-2 mt-3">',
+            '          <button onclick="kpiSaveAssignment()" id="kpiAssignSaveBtn" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">Add</button>',
+            '          <button onclick="kpiCancelAssignmentEdit()" id="kpiAssignCancelBtn" class="hidden px-4 py-2 bg-panel border border-theme rounded-lg text-sm font-bold text-body hover:bg-app">Cancel</button>',
+            '        </div>',
+            '      </div>',
+            '      <div id="kpiAssignListBody"><div class="flex justify-center py-6"><div class="spinner border-t-indigo-500"></div></div></div>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiAssignManageModal');
+    }
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    kpiLoadAssignmentList();
+}
+
+function kpiSwitchAssignCategory(cat) {
+    kpiAssignCategory = cat;
+    document.getElementById('kpiAssignCatBrand').className = 'px-3 py-1.5 rounded-lg text-xs font-bold ' + (cat === 'brand_status' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body');
+    document.getElementById('kpiAssignCatCompetitor').className = 'px-3 py-1.5 rounded-lg text-xs font-bold ' + (cat === 'competitor_promo' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body');
+    kpiCancelAssignmentEdit();
+    kpiLoadAssignmentList();
+}
+
+function kpiLoadAssignmentList() {
+    var el = document.getElementById('kpiAssignListBody');
+    if (!el) return;
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        var rowsHtml = rows.length ? rows.map(function(r) {
+            return '<tr class="border-b border-theme' + (r.active ? '' : ' opacity-40') + '">' +
+                '<td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap">' + escapeHtmlClient(r.fullName) + '</td>' +
+                '<td class="py-2 px-3 text-xs text-body">' + escapeHtmlClient(r.label) + '</td>' +
+                '<td class="py-2 px-3 text-[10px] text-subtle uppercase">' + escapeHtmlClient(r.subtype1) + '</td>' +
+                '<td class="py-2 px-3 text-[10px] text-subtle uppercase">' + escapeHtmlClient(r.subtype2) + '</td>' +
+                '<td class="py-2 px-3 text-center">' + (r.refLink ? '<a href="' + escapeHtmlClient(r.refLink) + '" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300"><i data-lucide="external-link" class="h-3.5 w-3.5 inline"></i></a>' : '—') + '</td>' +
+                '<td class="py-2 px-3 text-center">' +
+                    '<button onclick="kpiEditAssignment(' + r.id + ')" class="text-indigo-400 hover:text-indigo-300 mr-2" title="Edit"><i data-lucide="pencil" class="h-3.5 w-3.5"></i></button>' +
+                    '<button onclick="kpiToggleAssignmentActive(' + r.id + ', ' + !r.active + ')" class="text-amber-500 hover:text-amber-600 mr-2" title="' + (r.active ? 'Deactivate' : 'Reactivate') + '"><i data-lucide="' + (r.active ? 'eye-off' : 'eye') + '" class="h-3.5 w-3.5"></i></button>' +
+                    '<button onclick="kpiDeleteAssignmentRow(' + r.id + ')" class="text-rose-500 hover:text-rose-700" title="Delete"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>' +
+                '</td>' +
+            '</tr>';
+        }).join('') : '<tr><td colspan="6" class="py-6 text-center text-xs text-subtle">No assignments in this category yet.</td></tr>';
+
+        el.innerHTML = '<div class="overflow-x-auto custom-scrollbar"><table class="w-full text-left"><thead><tr class="border-b border-theme">' +
+            '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Agent</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Label</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Type</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase">Platform</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Link</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase text-center">Actions</th>' +
+        '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).withFailureHandler(function() {
+        el.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading assignments.</p>';
+    }).getKpiChecklistAssignments(currentSessionToken, kpiAssignCategory);
+}
+
+function kpiEditAssignment(id) {
+    google.script.run.withSuccessHandler(function(rows) {
+        var row = (rows || []).find(function(r) { return r.id === id; });
+        if (!row) return;
+        kpiAssignEditingId = id;
+        document.getElementById('kpiAssignFormTitle').textContent = 'Edit Assignment';
+        document.getElementById('kpiAssignAgent').value = row.username;
+        document.getElementById('kpiAssignLabel').value = row.label;
+        document.getElementById('kpiAssignSubtype1').value = row.subtype1;
+        document.getElementById('kpiAssignSubtype2').value = row.subtype2;
+        document.getElementById('kpiAssignLink').value = row.refLink;
+        document.getElementById('kpiAssignSaveBtn').textContent = 'Save Changes';
+        document.getElementById('kpiAssignCancelBtn').classList.remove('hidden');
+        document.getElementById('kpiAssignFormCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }).getKpiChecklistAssignments(currentSessionToken, kpiAssignCategory);
+}
+
+function kpiCancelAssignmentEdit() {
+    kpiAssignEditingId = null;
+    var labelEl = document.getElementById('kpiAssignLabel');
+    if (!labelEl) return;
+    document.getElementById('kpiAssignFormTitle').textContent = 'Add Assignment';
+    labelEl.value = '';
+    document.getElementById('kpiAssignSubtype1').value = '';
+    document.getElementById('kpiAssignSubtype2').value = '';
+    document.getElementById('kpiAssignLink').value = '';
+    document.getElementById('kpiAssignSaveBtn').textContent = 'Add';
+    document.getElementById('kpiAssignCancelBtn').classList.add('hidden');
+}
+
+function kpiSaveAssignment() {
+    var agent = document.getElementById('kpiAssignAgent').value;
+    var label = document.getElementById('kpiAssignLabel').value.trim();
+    var subtype1 = document.getElementById('kpiAssignSubtype1').value.trim();
+    var subtype2 = document.getElementById('kpiAssignSubtype2').value.trim();
+    var link = document.getElementById('kpiAssignLink').value.trim();
+    if (!agent || !label) { showPremiumToast('Missing', 'Pick an agent and enter a label.', 'error'); return; }
+
+    function onDone(res) {
+        if (res && res.success) { kpiCancelAssignmentEdit(); kpiLoadAssignmentList(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Could not save.', 'error'); }
+    }
+    if (kpiAssignEditingId) {
+        google.script.run.withSuccessHandler(onDone).updateKpiChecklistAssignment(currentSessionToken, kpiAssignEditingId, agent, label, subtype1, subtype2, link, true);
+    } else {
+        google.script.run.withSuccessHandler(onDone).addKpiChecklistAssignment(currentSessionToken, agent, kpiAssignCategory, label, subtype1, subtype2, link);
+    }
+}
+
+function kpiToggleAssignmentActive(id, newActive) {
+    google.script.run.withSuccessHandler(function(rows) {
+        var row = (rows || []).find(function(r) { return r.id === id; });
+        if (!row) return;
+        google.script.run.withSuccessHandler(function() { kpiLoadAssignmentList(); })
+            .updateKpiChecklistAssignment(currentSessionToken, id, row.username, row.label, row.subtype1, row.subtype2, row.refLink, newActive);
+    }).getKpiChecklistAssignments(currentSessionToken, kpiAssignCategory);
+}
+
+function kpiDeleteAssignmentRow(id) {
+    showPremiumConfirm('Delete Assignment', 'Remove this assignment? This does not delete any photos already submitted for it.', 'Yes, delete', function() {
+        google.script.run.withSuccessHandler(function() { kpiLoadAssignmentList(); }).deleteKpiChecklistAssignment(currentSessionToken, id);
+    });
 }
 
 // ---- Tab 2: Time In / Time Out ----
