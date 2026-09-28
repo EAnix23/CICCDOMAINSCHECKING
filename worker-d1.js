@@ -901,6 +901,17 @@ const actions = {
       });
     });
 
+    // Self-service Day Off plots (kpi_dayoffs) overlay too, same as approved leaves — only fills a
+    // date that has no real punch/day_status/leave already on it.
+    const { results: dayoffRows } = await db.prepare(
+      `SELECT username, date FROM kpi_dayoffs WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ?`
+    ).bind(...teamList, startDate, endDate).all();
+    const byDayoff = {};
+    dayoffRows.forEach(function (r) {
+      if (!byDayoff[r.username]) byDayoff[r.username] = {};
+      byDayoff[r.username][r.date] = "DO";
+    });
+
     const members = memberRows.map(function (u) {
       const days = {};
       let totalDays = 0, totalHours = 0;
@@ -908,7 +919,7 @@ const actions = {
         const h = (byUser[u.username] || {})[d];
         if (typeof h === "number" && h) { days[d] = h; totalDays++; totalHours += h; }
         else if (h) { days[d] = h; } // RD / A — a status label, not worked hours
-        else { days[d] = (byLeave[u.username] || {})[d] || null; }
+        else { days[d] = (byLeave[u.username] || {})[d] || (byDayoff[u.username] || {})[d] || null; }
       });
       return { username: u.username, team: u.team || "", fullName: u.fullName || "", hridNumber: u.hridNumber || "", position: u.position || "", subDepartment: u.subDepartment || "", restDay: u.restDay || "", days: days, totalDays: totalDays, totalHours: Math.round(totalHours * 10) / 10 };
     });

@@ -4118,12 +4118,12 @@ function kpiRefreshAttendanceSummary() {
         var bodyRows = members.map(function(m) {
             var cells = dateList.map(function(d) {
                 var h = m.days[d];
-                var isRD = h === 'RD', isAbsent = h === 'A';
-                var isLeave = typeof h === 'string' && !isRD && !isAbsent;
+                var isRD = h === 'RD', isAbsent = h === 'A', isDayOff = h === 'DO';
+                var isLeave = typeof h === 'string' && !isRD && !isAbsent && !isDayOff;
                 var clickAttr = canEdit ? ' onclick="openKpiAttEditModal(\'' + m.username.replace(/'/g, "\\'") + '\', \'' + d + '\', \'' + escapeHtmlClient(m.fullName || m.username).replace(/'/g, "\\'") + '\')"' : '';
                 var cellText = (h === null || h === undefined) ? '—' : h;
-                var cellCls = isLeave ? 'text-amber-600 font-black' : (isRD ? 'text-subtle font-bold' : (isAbsent ? 'text-rose-600 font-black' : (h ? 'text-body font-bold' : 'text-subtle')));
-                var cellTitle = isLeave ? 'On approved leave (' + h + ')' : (isRD ? 'Rest Day' : (isAbsent ? 'Absent' : (canEdit ? 'Click to edit' : '')));
+                var cellCls = isLeave ? 'text-amber-600 font-black' : (isRD ? 'text-subtle font-bold' : (isAbsent ? 'text-rose-600 font-black' : (isDayOff ? 'text-indigo-500 font-black' : (h ? 'text-body font-bold' : 'text-subtle'))));
+                var cellTitle = isLeave ? 'On approved leave (' + h + ')' : (isRD ? 'Rest Day' : (isAbsent ? 'Absent' : (isDayOff ? 'Day Off (self-plotted)' : (canEdit ? 'Click to edit' : ''))));
                 return '<td class="py-2 px-2 text-xs text-center ' + cellCls + (canEdit ? ' cursor-pointer hover:bg-indigo-tint hover:text-indigo-600 transition-colors' : '') + '"' + clickAttr + ' title="' + cellTitle + '">' + cellText + '</td>';
             }).join('');
             return '<tr class="border-b border-theme"><td class="py-2 px-3 text-xs font-bold text-body whitespace-nowrap cursor-pointer hover:text-indigo-500 hover:underline" onclick="openKpiAttendanceDetailModal(\'' + m.username.replace(/'/g, "\\'") + '\')" title="View Time In/Out detail">' + escapeHtmlClient(m.fullName || m.username) + '</td>' +
@@ -4139,7 +4139,7 @@ function kpiRefreshAttendanceSummary() {
             dateHeaders +
             '<th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Days</th><th class="py-2 px-3 text-[10px] font-extrabold text-subtle uppercase whitespace-nowrap">Hours</th>' +
             '</tr></thead><tbody>' + bodyRows + '</tbody></table></div>' +
-            '<p class="text-[10px] text-subtle mt-3">Each cell = hours logged (Time In to Time Out, minus Break), the leave type (e.g. VL, SL) on an approved leave day, <span class="text-subtle font-bold">RD</span> = Rest Day, or <span class="text-rose-600 font-bold">A</span> = Absent.' + (canEdit ? ' Click a cell to edit.' : '') + ' "—" = no data for that day.</p>';
+            '<p class="text-[10px] text-subtle mt-3">Each cell = hours logged (Time In to Time Out, minus Break), the leave type (e.g. VL, SL) on an approved leave day, <span class="text-subtle font-bold">RD</span> = Rest Day, <span class="text-indigo-500 font-bold">DO</span> = self-plotted Day Off, or <span class="text-rose-600 font-bold">A</span> = Absent.' + (canEdit ? ' Click a cell to edit.' : '') + ' "—" = no data for that day.</p>';
     }).withFailureHandler(function() {
         tableEl.innerHTML = '<p class="text-xs text-rose-500 p-3">Error loading attendance summary.</p>';
     }).exportDtrData(currentSessionToken, kpiCurrentTeam, kpiAttendanceSummaryStart, kpiAttendanceSummaryEnd, selectedTeams.length > 1 ? selectedTeams : null);
