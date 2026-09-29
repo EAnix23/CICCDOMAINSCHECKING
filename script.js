@@ -2804,44 +2804,54 @@ function processDpvUpload() {
         return;
     }
 
-    var existingMap = {};
-    postVerifData.forEach(function(d) {
-        var dom = (d.domain || '').toLowerCase();
-        if(!existingMap[dom]) existingMap[dom] = d;
-    });
+    // De-dupe the pasted list itself first
+    var seenInPaste = {}, uniqueDomains = [];
+    domains.forEach(function(d) { if (!seenInPaste[d]) { seenInPaste[d] = true; uniqueDomains.push(d); } });
 
-    var clean = [], dupes = [];
-    domains.forEach(function(dom) {
-        if(existingMap[dom]) { dupes.push({ domain: dom, origBatch: existingMap[dom].batchId, origTeam: existingMap[dom].team }); }
-        else if (!clean.includes(dom)) { clean.push(dom); existingMap[dom] = { batchId: batchId, team: team }; }
-    });
+    // Checked against the FULL system (every team), not just whatever this tab has loaded locally —
+    // a domain already saved under a different team is still a duplicate the server will reject.
+    showPremiumToast("Checking", "Checking " + uniqueDomains.length + " domain(s) against the full system...", "info");
+    google.script.run.withSuccessHandler(function(existingRows) {
+        var existingMap = {};
+        (existingRows || []).forEach(function(r) { existingMap[(r.domain || '').toLowerCase()] = r; });
 
-    if (dupes.length > 0) {
-        dpvPendingCleanDomains = clean; dpvPendingBatch = batchId; dpvPendingTeam = team; dpvPendingAgent = agent;
-        window.dpvPendingCicc = cicc;
+        var clean = [], dupes = [];
+        uniqueDomains.forEach(function(dom) {
+            if (existingMap[dom]) dupes.push({ domain: dom, origBatch: existingMap[dom].batchId, origTeam: existingMap[dom].team });
+            else clean.push(dom);
+        });
 
-        document.getElementById('dpvFormSection').classList.add('hidden');
-        document.getElementById('dpvReviewSection').classList.remove('hidden');
-        document.getElementById('dpvReviewSection').classList.add('flex');
-        document.getElementById('dpvFormFooter').classList.add('hidden');
-        document.getElementById('dpvFormFooter').classList.remove('flex');
-        document.getElementById('dpvReviewFooter').classList.remove('hidden');
-        document.getElementById('dpvReviewFooter').classList.add('flex');
+        if (dupes.length > 0) {
+            dpvPendingCleanDomains = clean; dpvPendingBatch = batchId; dpvPendingTeam = team; dpvPendingAgent = agent;
+            window.dpvPendingCicc = cicc;
 
-        document.getElementById('dpvDupeCount').innerText = dupes.length;
-        document.getElementById('dpvCleanCount').innerText = clean.length;
+            document.getElementById('dpvFormSection').classList.add('hidden');
+            document.getElementById('dpvReviewSection').classList.remove('hidden');
+            document.getElementById('dpvReviewSection').classList.add('flex');
+            document.getElementById('dpvFormFooter').classList.add('hidden');
+            document.getElementById('dpvFormFooter').classList.remove('flex');
+            document.getElementById('dpvReviewFooter').classList.remove('hidden');
+            document.getElementById('dpvReviewFooter').classList.add('flex');
 
-        var dupeHtml = dupes.map(function(d) { return '<div class="text-[11px] p-2 bg-panel border border-rose-100 dark:border-rose-900 rounded-lg text-rose-500 flex justify-between items-center shadow-sm"><b>'+d.domain+'</b> <span class="text-[9px] font-medium text-rose-400 bg-rose-tint px-2 py-0.5 rounded">Exists in: '+d.origBatch+' ('+d.origTeam+')</span></div>'; }).join('');
-        document.getElementById('dpvDupeList').innerHTML = dupeHtml;
+            document.getElementById('dpvDupeCount').innerText = dupes.length;
+            document.getElementById('dpvCleanCount').innerText = clean.length;
 
-        var btnProceed = document.getElementById('btnProceedUpload');
-        if(clean.length === 0) {
-            btnProceed.disabled = true; btnProceed.className = "px-6 py-2 text-[13px] font-bold text-slate-400 bg-slate-200 rounded-xl transition-all cursor-not-allowed"; btnProceed.innerText = "No Clean Data to Upload";
+            var dupeHtml = dupes.map(function(d) { return '<div class="text-[11px] p-2 bg-panel border border-rose-100 dark:border-rose-900 rounded-lg text-rose-500 flex justify-between items-center shadow-sm"><b>'+d.domain+'</b> <span class="text-[9px] font-medium text-rose-400 bg-rose-tint px-2 py-0.5 rounded">Exists in: '+d.origBatch+' ('+d.origTeam+')</span></div>'; }).join('');
+            document.getElementById('dpvDupeList').innerHTML = dupeHtml;
+
+            var btnProceed = document.getElementById('btnProceedUpload');
+            if(clean.length === 0) {
+                btnProceed.disabled = true; btnProceed.className = "px-6 py-2 text-[13px] font-bold text-slate-400 bg-slate-200 rounded-xl transition-all cursor-not-allowed"; btnProceed.innerText = "No Clean Data to Upload";
+            } else {
+                btnProceed.disabled = false; btnProceed.className = "px-6 py-2 text-[13px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-[0_4px_12px_rgba(5,150,105,0.3)] transition-all flex items-center gap-2"; btnProceed.innerHTML = '<i data-lucide="upload-cloud" class="h-4 w-4"></i> Upload ' + clean.length + ' Unique Domains';
+            }
+            if (typeof lucide !== 'undefined') lucide.createIcons();
         } else {
-            btnProceed.disabled = false; btnProceed.className = "px-6 py-2 text-[13px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-[0_4px_12px_rgba(5,150,105,0.3)] transition-all flex items-center gap-2"; btnProceed.innerHTML = '<i data-lucide="upload-cloud" class="h-4 w-4"></i> Upload ' + clean.length + ' Unique Domains';
+            proceedToSaveDpvBulk(clean, batchId, team, agent, -1, cicc);
         }
-        if (typeof lucide !== 'undefined') lucide.createIcons();
-    } else { proceedToSaveDpvBulk(clean, batchId, team, agent, -1, cicc); }
+    }).withFailureHandler(function() {
+        showPremiumToast("Error", "Could not check for duplicates against the system. Please try again.", "error");
+    }).checkDpvDomainsExist(currentSessionToken, uniqueDomains);
 }
 
 function proceedDpvUploadFromReview() {
@@ -2861,6 +2871,12 @@ function proceedToSaveDpvBulk(domainsArray, batchId, team, agent, editIdx, cicc)
     if (typeof google !== 'undefined' && google.script && google.script.run) {
         google.script.run.withSuccessHandler(function(response) {
             showPremiumToast("Success", response.message, "success");
+            // Rare race: another upload landed the same domain between our pre-check and this save.
+            // The server now reports exactly which ones it rejected instead of dropping them silently.
+            if (response.failedDomains && response.failedDomains.length > 0) {
+                var preview = response.failedDomains.slice(0, 5).join(', ') + (response.failedDomains.length > 5 ? ', ...' : '');
+                showPremiumToast("Skipped", response.failedDomains.length + " domain(s) already existed and were not saved: " + preview, "error");
+            }
             refreshDpvTeamsThenOpen(safePayload.team);
         }).saveDpvRecordBackend(currentSessionToken, safePayload);
     } else {

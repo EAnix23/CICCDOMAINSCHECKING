@@ -276,14 +276,35 @@ const actions = {
       return { success: true, message: "Record successfully updated!" };
     }
     let count = 0;
+    const failedDomains = [];
     for (const dom of (data.domains || [])) {
       try {
         await db.prepare(`INSERT INTO dpv_records (batch_id, domain, team, pldt, globe, converge, dito, cicc, agent) VALUES (?, ?, ?, '-', '-', '-', '-', ?, ?)`)
           .bind(data.batchId, dom, data.team, data.cicc || "", data.agent || "").run();
         count++;
-      } catch (e) { /* duplicate domain (unique index) — skip */ }
+      } catch (e) { failedDomains.push(dom); } // duplicate domain (unique index) — reported, not silently dropped
     }
-    return { success: true, message: count + " new record(s) successfully saved!" };
+    let message = count + " new record(s) successfully saved!";
+    if (failedDomains.length > 0) message += " " + failedDomains.length + " domain(s) were skipped because they already exist elsewhere in the system.";
+    return { success: true, message: message, failedDomains: failedDomains };
+  },
+
+  // Global duplicate check across every team's dpv_records — used by the upload review step so the
+  // "Clean Unique Domains to Upload" preview matches what the server will actually accept. Chunked
+  // to stay well under D1's bound-parameter limit on a large pasted list.
+  async checkDpvDomainsExist(db, token, domains) {
+    await checkSession(db, token);
+    if (!Array.isArray(domains) || domains.length === 0) return [];
+    const unique = Array.from(new Set(domains.map(d => String(d).toLowerCase().trim()).filter(Boolean)));
+    const results = [];
+    const chunkSize = 90;
+    for (let i = 0; i < unique.length; i += chunkSize) {
+      const chunk = unique.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => "?").join(",");
+      const { results: rows } = await db.prepare(`SELECT domain, batch_id as batchId, team FROM dpv_records WHERE domain IN (${placeholders})`).bind(...chunk).all();
+      results.push(...rows);
+    }
+    return results;
   },
 
   async deleteDpvRecordBackend(db, token, domainName) {
