@@ -4120,7 +4120,7 @@ function renderKpiTodoBoard(content, data, checklistItems) {
 
         var checklistCardsHtml = colChecklist.map(function(t) {
             var thumbs = t.photos.map(function(p) {
-                return '<a href="' + kpiChecklistAttachmentUrl(p.id) + '" target="_blank" rel="noopener"><img src="' + kpiChecklistAttachmentUrl(p.id) + '" class="h-6 w-6 object-cover rounded border border-theme" loading="lazy"></a>';
+                return '<img src="' + kpiChecklistAttachmentUrl(p.id) + '" onclick="kpiOpenPhotoModal(\'' + kpiChecklistAttachmentUrl(p.id) + '\', \'' + escapeHtmlClient(t.title).replace(/'/g, "\\'") + '\')" class="h-6 w-6 object-cover rounded border border-theme cursor-pointer hover:border-indigo-500 transition-colors" loading="lazy">';
             }).join('');
             return '<div class="p-3 bg-panel border border-theme border-dashed rounded-lg shadow-sm">' +
                 '<p class="text-sm font-bold text-body mb-2 flex items-center gap-1.5"><i data-lucide="camera" class="h-3.5 w-3.5 text-indigo-400 flex-shrink-0"></i>' + escapeHtmlClient(t.title) + '</p>' +
@@ -4155,6 +4155,30 @@ var KPI_CHECKLIST_CATEGORY_LABELS = { brand_status: 'Brand Status Update', compe
 
 function kpiChecklistAttachmentUrl(completionId) {
     return 'https://bbc-api-gateway.ea-nix.workers.dev/?action=downloadKpiChecklistAttachment&id=' + completionId + '&token=' + encodeURIComponent(currentSessionToken);
+}
+
+// In-page lightbox for a checklist proof photo — used instead of opening a new tab, so checking a
+// batch of them stays quick (click, look, close, click the next one).
+function kpiOpenPhotoModal(url, label) {
+    var modal = document.getElementById('kpiPhotoModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiPhotoModal" class="hidden fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0" onclick="if(event.target===this)closeSmoothly(\'kpiPhotoModal\')">',
+            '  <div class="relative max-w-3xl max-h-[90vh] flex flex-col items-center">',
+            '    <button onclick="closeSmoothly(\'kpiPhotoModal\')" class="absolute -top-10 right-0 text-white/80 hover:text-white p-1.5"><i data-lucide="x" class="h-6 w-6"></i></button>',
+            '    <img id="kpiPhotoModalImg" src="" class="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain bg-black/20">',
+            '    <p id="kpiPhotoModalLabel" class="text-white/80 text-xs font-bold mt-3"></p>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiPhotoModal');
+    }
+    document.getElementById('kpiPhotoModalImg').src = url;
+    document.getElementById('kpiPhotoModalLabel').textContent = label || '';
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 // Fetches fresh and re-renders — used after a standalone action (e.g. adding a photo) where the
@@ -4202,9 +4226,7 @@ function kpiRenderChecklistPanel(items) {
                     var actionHtml;
                     if (i.done) {
                         var photoThumbs = (i.photos || []).map(function(p) {
-                            return '<a href="' + kpiChecklistAttachmentUrl(p.id) + '" target="_blank" rel="noopener" title="' + escapeHtmlClient(p.filename) + ' — click to view full size">' +
-                                '<img src="' + kpiChecklistAttachmentUrl(p.id) + '" class="h-8 w-8 object-cover rounded-md border border-theme hover:border-indigo-500 transition-colors" loading="lazy">' +
-                            '</a>';
+                            return '<img src="' + kpiChecklistAttachmentUrl(p.id) + '" onclick="kpiOpenPhotoModal(\'' + kpiChecklistAttachmentUrl(p.id) + '\', \'' + escapeHtmlClient(i.label).replace(/'/g, "\\'") + '\')" title="' + escapeHtmlClient(p.filename) + '" class="h-8 w-8 object-cover rounded-md border border-theme cursor-pointer hover:border-indigo-500 transition-colors" loading="lazy">';
                         }).join('');
                         actionHtml = '<span class="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500 mr-1"><i data-lucide="check-circle-2" class="h-3.5 w-3.5"></i> Done</span>' +
                             '<span class="inline-flex items-center gap-1">' + photoThumbs + '</span>' +
