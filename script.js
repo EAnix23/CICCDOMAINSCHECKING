@@ -2373,14 +2373,22 @@ function renderDpvTeamContent(tabName) {
     setTimeout(function() {
             dpvBatchList = [];
             var baseData = postVerifData; // already team-scoped by the server
-            baseData.forEach(function(d) { if(d.batchId && d.batchId !== '-' && !dpvBatchList.includes(d.batchId)) dpvBatchList.push(d.batchId); });
+            var batchFirstUpload = {}; // batchId -> earliest createdAt seen among its rows
+            baseData.forEach(function(d) {
+                if(d.batchId && d.batchId !== '-') {
+                    if (!dpvBatchList.includes(d.batchId)) dpvBatchList.push(d.batchId);
+                    if (d.createdAt && (!batchFirstUpload[d.batchId] || d.createdAt < batchFirstUpload[d.batchId])) {
+                        batchFirstUpload[d.batchId] = d.createdAt;
+                    }
+                }
+            });
 
             dpvBatchList.sort(function(a, b) {
                 return b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' });
             });
 
             var batchOptionsHtml = dpvBatchList.map(function(b) {
-                return '<label class="flex items-center gap-2 p-2 hover:bg-app cursor-pointer rounded"><input type="checkbox" value="'+b+'" class="dpv-batch-chk rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" onchange="updateDpvFilters()"> <span class="text-xs text-body font-bold">'+b+'</span></label>';
+                return '<label class="flex items-center gap-2 p-2 hover:bg-app cursor-pointer rounded"><input type="checkbox" value="'+b+'" class="dpv-batch-chk rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" onchange="updateDpvFilters()"> <span class="text-xs text-body font-bold flex-1">'+b+'</span><span class="text-[9px] text-subtle">'+dpvFormatTimestamp(batchFirstUpload[b])+'</span></label>';
             }).join('');
 
             var teamDomains = baseData.filter(function(d) { return d.domain && !d.domain.includes('init-'); });
@@ -2628,7 +2636,7 @@ function renderDpvOverviewFromStats(stats) {
     var agents = stats.agents || [];
 
     if (agents.length === 0) {
-        kpiRowsHtml = '<tr><td colspan="6" class="px-4 py-8 text-center text-subtle font-medium">No agent records found.</td></tr>';
+        kpiRowsHtml = '<tr><td colspan="7" class="px-4 py-8 text-center text-subtle font-medium">No agent records found.</td></tr>';
     } else {
         agents.forEach(function(a) {
             var ag = a.agent;
@@ -2648,6 +2656,7 @@ function renderDpvOverviewFromStats(stats) {
             kpiRowsHtml += '<tr class="border-b border-theme hover:bg-app transition-colors">' +
                 '<td class="px-5 py-3 font-bold text-body flex items-center gap-3"><div class="h-7 w-7 rounded-full bg-indigo-tint border border-indigo-100 dark:border-indigo-900 flex items-center justify-center text-indigo-500"><i data-lucide="user" class="h-3.5 w-3.5"></i></div>' + ag + '</td>' +
                 '<td class="px-5 py-3 text-indigo-500 font-black">' + st.uploads + '</td>' +
+                '<td class="px-5 py-3 text-subtle text-xs font-medium">' + dpvFormatTimestamp(a.lastUpload) + '</td>' +
                 '<td class="px-5 py-3">' + targetInput + '</td>' +
                 '<td class="px-5 py-3">' + hitRateBar + '</td>' +
                 '<td class="px-5 py-3 text-rose-500 font-bold">' + st.duplicates + '</td>' +
@@ -2666,7 +2675,7 @@ function renderDpvOverviewFromStats(stats) {
 
             teamRowsHtml += '<tr class="hover:bg-indigo-tint/50 border-b border-theme last:border-0 transition-colors">' +
                             '<td class="px-5 py-4 font-bold text-body">' + team + '</td>' +
-                            '<td class="px-5 py-4 text-subtle font-medium text-xs">' + t.count + ' monitored domain(s)</td>' +
+                            '<td class="px-5 py-4 text-subtle font-medium text-xs">' + t.count + ' monitored domain(s)<br><span class="text-[10px]">Last upload: ' + dpvFormatTimestamp(t.lastUpload) + '</span></td>' +
                             '<td class="px-5 py-4 w-1/3">' + healthBar(tAvg).replace('max-w-[90px] mx-auto', 'max-w-none') + '</td>' +
                             '<td class="px-5 py-4 text-right"><button onclick="switchPostVerifTab(\''+team.replace(/'/g, "\\'")+'\')" class="px-3 py-1.5 text-xs font-bold text-indigo-500 bg-indigo-tint hover:bg-indigo-100 rounded-lg transition-colors">View Team &rarr;</button></td>' +
                             '</tr>';
@@ -2698,7 +2707,7 @@ function renderDpvOverviewFromStats(stats) {
         '        <table class="w-full text-sm text-left">',
         '            <thead class="bg-panel border-b border-theme">',
         '                <tr class="text-[10px] uppercase font-bold text-subtle tracking-widest">',
-        '                    <th class="px-5 py-4">Agent Name</th><th class="px-5 py-4">Total Uploads</th><th class="px-5 py-4">Target Limit</th><th class="px-5 py-4">Quota Hit Rate</th><th class="px-5 py-4">Errors / Dupes</th><th class="px-5 py-4">Status</th>',
+        '                    <th class="px-5 py-4">Agent Name</th><th class="px-5 py-4">Total Uploads</th><th class="px-5 py-4">Last Upload</th><th class="px-5 py-4">Target Limit</th><th class="px-5 py-4">Quota Hit Rate</th><th class="px-5 py-4">Errors / Dupes</th><th class="px-5 py-4">Status</th>',
         '                </tr>',
         '            </thead>',
         '            <tbody class="divide-y divide-theme">' + kpiRowsHtml + '</tbody>',
@@ -2716,6 +2725,15 @@ function renderDpvOverviewFromStats(stats) {
 
     contentArea.innerHTML = html;
     if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+// D1 stores timestamps as 'YYYY-MM-DD HH:MM:SS' UTC (no offset) — appending 'Z' so the browser
+// parses it as UTC and converts to the viewer's local time, rather than misreading it as local.
+function dpvFormatTimestamp(raw) {
+    if (!raw) return '—';
+    var d = new Date(raw.replace(' ', 'T') + 'Z');
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 function updateDpvAgentTarget(agentName, newTarget) {
@@ -4104,8 +4122,12 @@ function renderKpiTodoBoard(content, data, checklistItems) {
         var colTasks = colManual.length + colChecklist.length;
 
         var manualCardsHtml = colManual.map(function(t) {
+            var safeTitle = escapeHtmlClient(t.title).replace(/'/g, "\\'");
+            var safeDesc = escapeHtmlClient(t.description || '').replace(/'/g, "\\'");
+            var detailsBtn = '<button onclick="kpiOpenTaskDetailModal(' + t.id + ', \'' + safeTitle + '\', \'' + safeDesc + '\')" class="text-subtle hover:text-indigo-500 flex-shrink-0" title="' + (t.description ? 'View/edit details' : 'Add details') + '"><i data-lucide="' + (t.description ? 'file-text' : 'file-plus') + '" class="h-3.5 w-3.5"></i></button>';
             return '<div class="p-3 bg-panel border border-theme rounded-lg shadow-sm group">' +
-                '<p class="text-sm font-bold text-body mb-2">' + escapeHtmlClient(t.title) + '</p>' +
+                '<div class="flex items-start justify-between gap-2 mb-2"><p class="text-sm font-bold text-body flex-1">' + escapeHtmlClient(t.title) + '</p>' + detailsBtn + '</div>' +
+                (t.description ? '<p class="text-[11px] text-subtle mb-2 line-clamp-2">' + escapeHtmlClient(t.description) + '</p>' : '') +
                 '<div class="flex items-center justify-between gap-2">' +
                     '<span class="text-[10px] font-bold text-indigo-400 uppercase truncate">' + escapeHtmlClient(t.assignedToName || 'Team') + '</span>' +
                     '<div class="flex items-center gap-1 flex-shrink-0">' +
@@ -4142,7 +4164,10 @@ function renderKpiTodoBoard(content, data, checklistItems) {
     content.innerHTML =
         '<div class="panel-card p-5 mb-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500"></i> Today\'s Auto-listed Uploads</h3><div class="space-y-2 max-h-[240px] overflow-y-auto custom-scrollbar">' + autoHtml + '</div></div>' +
         '<div class="panel-card p-5 mb-5"><div class="flex items-center justify-between mb-1"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="camera" class="h-4 w-4 text-indigo-500"></i> Daily Brand Status</h3>' + (currentUserRole === 'Super Admin' ? '<button onclick="kpiOpenAssignmentManager()" class="px-2.5 py-1 bg-panel border border-theme rounded-lg text-[10px] font-bold text-body hover:bg-app flex items-center gap-1"><i data-lucide="settings" class="h-3.5 w-3.5"></i> Manage Assignments</button>' : '') + '</div><p class="text-[10px] text-subtle mb-3">Send the status update on each assigned brand\'s Telegram group, then attach a screenshot here to mark it done for today.</p><div id="kpiChecklistBody"><div class="flex justify-center py-6"><div class="spinner border-t-indigo-500"></div></div></div></div>' +
-        '<div class="flex flex-col sm:flex-row gap-2 mb-4"><input type="text" id="kpiNewTaskInput" placeholder="Add a task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><select id="kpiNewTaskAssignee" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' + assigneeOptions + '</select><button onclick="kpiAddTask()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 flex items-center gap-1.5"><i data-lucide="plus" class="h-4 w-4"></i> Add</button></div>' +
+        '<div class="panel-card p-4 mb-4">' +
+            '<div class="flex flex-col sm:flex-row gap-2 mb-2"><input type="text" id="kpiNewTaskInput" placeholder="Add a task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><select id="kpiNewTaskAssignee" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' + assigneeOptions + '</select><button onclick="kpiAddTask()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 flex items-center gap-1.5 flex-shrink-0"><i data-lucide="plus" class="h-4 w-4"></i> Add</button></div>' +
+            '<textarea id="kpiNewTaskDetails" placeholder="Details (optional) — what exactly is needed for this task?" rows="2" class="w-full border border-theme bg-panel rounded-lg text-xs text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500 resize-none"></textarea>' +
+        '</div>' +
         boardHtml;
     if (typeof lucide !== 'undefined') lucide.createIcons();
     kpiRenderChecklistPanel(checklistItems);
@@ -4289,13 +4314,63 @@ function kpiChecklistMarkDone(assignmentId) {
 function kpiAddTask() {
     var input = document.getElementById('kpiNewTaskInput');
     var assigneeSelect = document.getElementById('kpiNewTaskAssignee');
+    var detailsEl = document.getElementById('kpiNewTaskDetails');
     if (!input || !input.value.trim()) return;
     var title = input.value.trim();
     var assignedTo = assigneeSelect ? assigneeSelect.value : '';
+    var details = detailsEl ? detailsEl.value.trim() : '';
     input.value = '';
+    if (detailsEl) detailsEl.value = '';
     google.script.run.withSuccessHandler(function(res) {
         if (res && res.success) { renderKpiTodoTab(); } else { showPremiumToast('Error', (res && res.message) || 'Task could not be added.', 'error'); }
-    }).addKpiManualTask(currentSessionToken, kpiCurrentTeam, title, assignedTo);
+    }).addKpiManualTask(currentSessionToken, kpiCurrentTeam, title, assignedTo, details);
+}
+
+// Details modal for a task card — shows what's actually needed (not just the short title) and
+// lets anyone on the team fill it in or edit it after the fact.
+function kpiOpenTaskDetailModal(taskId, title, description) {
+    var modal = document.getElementById('kpiTaskDetailModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiTaskDetailModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-md flex flex-col">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app">',
+            '      <h3 id="kpiTaskDetailTitle" class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="file-text" class="h-5 w-5 text-indigo-500"></i></h3>',
+            '      <button onclick="closeSmoothly(\'kpiTaskDetailModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app">',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Details — what\'s needed for this task</label>',
+            '      <textarea id="kpiTaskDetailText" rows="6" placeholder="e.g. specific steps, links, requirements..." class="w-full border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500 resize-none"></textarea>',
+            '      <button id="kpiTaskDetailSaveBtn" onclick="kpiSaveTaskDetail()" class="w-full mt-3 px-4 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">Save</button>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiTaskDetailModal');
+    }
+    window.kpiTaskDetailId = taskId;
+    document.getElementById('kpiTaskDetailTitle').innerHTML = '<i data-lucide="file-text" class="h-5 w-5 text-indigo-500"></i> ' + escapeHtmlClient(title);
+    document.getElementById('kpiTaskDetailText').value = description || '';
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function kpiSaveTaskDetail() {
+    var btn = document.getElementById('kpiTaskDetailSaveBtn');
+    var text = document.getElementById('kpiTaskDetailText').value;
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white mx-auto"></div>';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+        btn.innerHTML = orig; btn.disabled = false;
+        if (res && res.success) { showPremiumToast('Saved', res.message, 'success'); closeSmoothly('kpiTaskDetailModal'); renderKpiTodoTab(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Could not save.', 'error'); }
+    }).withFailureHandler(function() {
+        btn.innerHTML = orig; btn.disabled = false;
+        showPremiumToast('Error', 'Could not save.', 'error');
+    }).updateKpiTaskDescription(currentSessionToken, window.kpiTaskDetailId, text);
 }
 
 function kpiChangeTaskStatus(id, status) {

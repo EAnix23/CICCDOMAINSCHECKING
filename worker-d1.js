@@ -206,7 +206,7 @@ const actions = {
       await checkSession(db, token);
       const base = `SELECT batch_id as batchId, domain, team, pldt, pldt_remarks as pldtRemarks,
         globe, globe_remarks as globeRemarks, converge, converge_remarks as convergeRemarks,
-        dito, dito_remarks as ditoRemarks, cicc, agent FROM dpv_records`;
+        dito, dito_remarks as ditoRemarks, cicc, agent, created_at as createdAt FROM dpv_records`;
       let sql = team ? base + ` WHERE team = ? ORDER BY id DESC` : base + ` ORDER BY id DESC`;
       const binds = team ? [team] : [];
       if (limit) { sql += ` LIMIT ? OFFSET ?`; binds.push(limit, offset || 0); }
@@ -252,16 +252,21 @@ const actions = {
         FROM scored GROUP BY team ORDER BY team ASC`).all();
 
       const { results: byAgent } = await db.prepare(
-        `SELECT COALESCE(NULLIF(TRIM(agent), ''), 'UNKNOWN AGENT') as agent, COUNT(*) as uploads
+        `SELECT COALESCE(NULLIF(TRIM(agent), ''), 'UNKNOWN AGENT') as agent, COUNT(*) as uploads, MAX(created_at) as lastUpload
          FROM dpv_records WHERE domain NOT LIKE 'init-%' GROUP BY agent ORDER BY agent ASC`).all();
+
+      const { results: teamLastUpload } = await db.prepare(
+        `SELECT team, MAX(created_at) as lastUpload FROM dpv_records WHERE domain NOT LIKE 'init-%' GROUP BY team`).all();
+      const teamLastUploadMap = {};
+      teamLastUpload.forEach(r => { teamLastUploadMap[r.team] = r.lastUpload; });
 
       return {
         totalDomains: totals.total || 0,
         accessibleCount: totals.accessible || 0,
         blockedCount: totals.fullyBlocked || 0,
         avgHealth: Math.round(totals.avgHealth || 0),
-        teams: byTeam.map(t => ({ team: t.team, count: t.count, avgHealth: Math.round(t.avgHealth || 0) })),
-        agents: byAgent.map(a => ({ agent: a.agent.toUpperCase(), uploads: a.uploads }))
+        teams: byTeam.map(t => ({ team: t.team, count: t.count, avgHealth: Math.round(t.avgHealth || 0), lastUpload: teamLastUploadMap[t.team] || null })),
+        agents: byAgent.map(a => ({ agent: a.agent.toUpperCase(), uploads: a.uploads, lastUpload: a.lastUpload || null }))
       };
     } catch (e) {
       return { totalDomains: 0, accessibleCount: 0, blockedCount: 0, avgHealth: 0, teams: [], agents: [] };
@@ -568,7 +573,7 @@ const actions = {
     // Manual tasks are a persistent Kanban board, not scoped to today — a card created yesterday
     // and still "In Progress" needs to keep showing up, not vanish once the date rolls over.
     const { results: manualTasksRaw } = await db.prepare(
-      "SELECT id, title, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? ORDER BY id DESC"
+      "SELECT id, title, description, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? ORDER BY id DESC"
     ).bind(targetTeam).all();
     const manualTasks = manualTasksRaw.map(function (t) {
       return Object.assign({}, t, { assignedToName: t.assignedTo ? (nameMap[t.assignedTo] || t.assignedTo) : "", createdByName: nameMap[t.created_by] || t.created_by });
@@ -577,14 +582,23 @@ const actions = {
     return { autoTasks, manualTasks, members: memberRows.map(r => ({ username: r.username, fullName: r.fullName || r.username })), team: targetTeam };
   },
 
-  async addKpiManualTask(db, token, team, title, assignedTo) {
+  async addKpiManualTask(db, token, team, title, assignedTo, description) {
     const session = await checkSession(db, token);
     const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
     if (!targetTeam) return { success: false, message: "No team assigned to your account." };
     if (!title || !title.trim()) return { success: false, message: "Task title is required." };
-    await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, status, created_by, task_date, assigned_to) VALUES (?, 'manual', ?, 'todo', ?, ?, ?)")
-      .bind(targetTeam, title.trim(), session.username, getPHDateStr(), assignedTo || "").run();
+    await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, description, status, created_by, task_date, assigned_to) VALUES (?, 'manual', ?, ?, 'todo', ?, ?, ?)")
+      .bind(targetTeam, title.trim(), (description || "").trim(), session.username, getPHDateStr(), assignedTo || "").run();
     return { success: true, message: "Task added." };
+  },
+
+  // Lets anyone on the team add/edit what's actually needed to complete a task, after the fact —
+  // the initial Add Task row only asks for a short title.
+  async updateKpiTaskDescription(db, token, taskId, description) {
+    await checkSession(db, token);
+    const res = await db.prepare("UPDATE kpi_tasks SET description=?, updated_at=datetime('now') WHERE id=?").bind((description || "").trim(), taskId).run();
+    if (res.meta.changes === 0) return { success: false, message: "Task not found." };
+    return { success: true, message: "Details saved." };
   },
 
   // Kanban-style status move (To Do / In Progress / Done) — replaces the old pending/done toggle.
