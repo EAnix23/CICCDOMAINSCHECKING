@@ -4048,56 +4048,104 @@ function renderKpiTodoTab() {
     if (!content) return;
     if (!kpiCurrentTeam) { content.innerHTML = '<p class="text-sm text-subtle">No team assigned.</p>'; return; }
 
+    var pendingTasksData = null, pendingChecklistItems = null;
+    function tryRender() {
+        if (pendingTasksData === null || pendingChecklistItems === null) return;
+        renderKpiTodoBoard(content, pendingTasksData, pendingChecklistItems);
+    }
+
     google.script.run.withSuccessHandler(function(data) {
-        var autoTasks = (data && data.autoTasks) || [];
-        var manualTasks = (data && data.manualTasks) || [];
-        var members = (data && data.members) || [];
-        kpiCurrentMembers = members;
-
-        var autoHtml = autoTasks.length ? autoTasks.map(function(t) {
-            return '<div class="flex items-center gap-3 p-3 bg-app rounded-lg"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500 flex-shrink-0"></i><span class="text-sm text-body flex-1">' + escapeHtmlClient(t.label) + '</span><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(t.agentName || t.agent) + '</span></div>';
-        }).join('') : '<p class="text-xs text-subtle p-3">No uploads yet today.</p>';
-
-        var assigneeOptions = '<option value="">Whole Team</option>' + members.map(function(m) { return '<option value="' + escapeHtmlClient(m.username) + '">' + escapeHtmlClient(m.fullName) + '</option>'; }).join('');
-
-        var columns = [
-            { key: 'todo', label: 'To Do', color: 'text-slate-500' },
-            { key: 'in_progress', label: 'In Progress', color: 'text-blue-500' },
-            { key: 'done', label: 'Done', color: 'text-emerald-500' }
-        ];
-        var boardHtml = '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">' + columns.map(function(col) {
-            var colTasks = manualTasks.filter(function(t) { return (col.key === 'todo') ? (t.status !== 'in_progress' && t.status !== 'done') : t.status === col.key; });
-            var cardsHtml = colTasks.length ? colTasks.map(function(t) {
-                return '<div class="p-3 bg-panel border border-theme rounded-lg shadow-sm group">' +
-                    '<p class="text-sm font-bold text-body mb-2">' + escapeHtmlClient(t.title) + '</p>' +
-                    '<div class="flex items-center justify-between gap-2">' +
-                        '<span class="text-[10px] font-bold text-indigo-400 uppercase truncate">' + escapeHtmlClient(t.assignedToName || 'Team') + '</span>' +
-                        '<div class="flex items-center gap-1 flex-shrink-0">' +
-                            '<select onchange="kpiChangeTaskStatus(' + t.id + ', this.value)" class="text-[10px] border border-theme rounded px-1 py-1 bg-app text-body">' +
-                                columns.map(function(c) { return '<option value="' + c.key + '"' + (c.key === col.key ? ' selected' : '') + '>' + c.label + '</option>'; }).join('') +
-                            '</select>' +
-                            '<button onclick="kpiDeleteTask(' + t.id + ')" class="opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-700 transition-opacity"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>' +
-                        '</div>' +
-                    '</div>' +
-                '</div>';
-            }).join('') : '<p class="text-xs text-subtle p-3 text-center">None.</p>';
-
-            return '<div class="panel-card p-3">' +
-                '<h4 class="text-xs font-extrabold uppercase tracking-widest mb-3 px-1 ' + col.color + '">' + col.label + ' (' + colTasks.length + ')</h4>' +
-                '<div class="space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">' + cardsHtml + '</div>' +
-            '</div>';
-        }).join('') + '</div>';
-
-        content.innerHTML =
-            '<div class="panel-card p-5 mb-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500"></i> Today\'s Auto-listed Uploads</h3><div class="space-y-2 max-h-[240px] overflow-y-auto custom-scrollbar">' + autoHtml + '</div></div>' +
-            '<div class="panel-card p-5 mb-5"><div class="flex items-center justify-between mb-1"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="camera" class="h-4 w-4 text-indigo-500"></i> Daily Brand Status</h3>' + (currentUserRole === 'Super Admin' ? '<button onclick="kpiOpenAssignmentManager()" class="px-2.5 py-1 bg-panel border border-theme rounded-lg text-[10px] font-bold text-body hover:bg-app flex items-center gap-1"><i data-lucide="settings" class="h-3.5 w-3.5"></i> Manage Assignments</button>' : '') + '</div><p class="text-[10px] text-subtle mb-3">Send the status update on each assigned brand\'s Telegram group, then attach a screenshot here to mark it done for today.</p><div id="kpiChecklistBody"><div class="flex justify-center py-6"><div class="spinner border-t-indigo-500"></div></div></div></div>' +
-            '<div class="flex flex-col sm:flex-row gap-2 mb-4"><input type="text" id="kpiNewTaskInput" placeholder="Add a task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><select id="kpiNewTaskAssignee" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' + assigneeOptions + '</select><button onclick="kpiAddTask()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 flex items-center gap-1.5"><i data-lucide="plus" class="h-4 w-4"></i> Add</button></div>' +
-            boardHtml;
-        if (typeof lucide !== 'undefined') lucide.createIcons();
-        kpiLoadChecklistPanel();
+        pendingTasksData = data || {};
+        tryRender();
     }).withFailureHandler(function() {
         content.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading tasks.</p>';
     }).getKpiTodayTasks(currentSessionToken, kpiCurrentTeam);
+
+    google.script.run.withSuccessHandler(function(items) {
+        pendingChecklistItems = items || [];
+        tryRender();
+    }).withFailureHandler(function() {
+        pendingChecklistItems = [];
+        tryRender();
+    }).getKpiChecklistToday(currentSessionToken, '');
+}
+
+function renderKpiTodoBoard(content, data, checklistItems) {
+    var autoTasks = (data && data.autoTasks) || [];
+    var manualTasks = (data && data.manualTasks) || [];
+    var members = (data && data.members) || [];
+    kpiCurrentMembers = members;
+
+    var autoHtml = autoTasks.length ? autoTasks.map(function(t) {
+        return '<div class="flex items-center gap-3 p-3 bg-app rounded-lg"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500 flex-shrink-0"></i><span class="text-sm text-body flex-1">' + escapeHtmlClient(t.label) + '</span><span class="text-[10px] font-bold text-subtle uppercase">' + escapeHtmlClient(t.agentName || t.agent) + '</span></div>';
+    }).join('') : '<p class="text-xs text-subtle p-3">No uploads yet today.</p>';
+
+    var assigneeOptions = '<option value="">Whole Team</option>' + members.map(function(m) { return '<option value="' + escapeHtmlClient(m.username) + '">' + escapeHtmlClient(m.fullName) + '</option>'; }).join('');
+
+    // Daily Brand Status items ride along in the Kanban board too — as read-only cards (their status
+    // comes from the checklist's own Mark Done action, not from this board's dropdown), so Super
+    // Admin sees everything needing attention today in one place.
+    var checklistCards = checklistItems.map(function(i) {
+        return {
+            virtual: true, id: i.id, done: i.done,
+            title: (KPI_CHECKLIST_CATEGORY_LABELS[i.category] || i.category) + ': ' + i.label,
+            assignedToName: i.fullName, photos: i.photos || []
+        };
+    });
+
+    var columns = [
+        { key: 'todo', label: 'To Do', color: 'text-slate-500' },
+        { key: 'in_progress', label: 'In Progress', color: 'text-blue-500' },
+        { key: 'done', label: 'Done', color: 'text-emerald-500' }
+    ];
+    var boardHtml = '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">' + columns.map(function(col) {
+        var colManual = manualTasks.filter(function(t) { return (col.key === 'todo') ? (t.status !== 'in_progress' && t.status !== 'done') : t.status === col.key; });
+        var colChecklist = col.key === 'in_progress' ? [] : checklistCards.filter(function(t) { return col.key === 'done' ? t.done : !t.done; });
+        var colTasks = colManual.length + colChecklist.length;
+
+        var manualCardsHtml = colManual.map(function(t) {
+            return '<div class="p-3 bg-panel border border-theme rounded-lg shadow-sm group">' +
+                '<p class="text-sm font-bold text-body mb-2">' + escapeHtmlClient(t.title) + '</p>' +
+                '<div class="flex items-center justify-between gap-2">' +
+                    '<span class="text-[10px] font-bold text-indigo-400 uppercase truncate">' + escapeHtmlClient(t.assignedToName || 'Team') + '</span>' +
+                    '<div class="flex items-center gap-1 flex-shrink-0">' +
+                        '<select onchange="kpiChangeTaskStatus(' + t.id + ', this.value)" class="text-[10px] border border-theme rounded px-1 py-1 bg-app text-body">' +
+                            columns.map(function(c) { return '<option value="' + c.key + '"' + (c.key === col.key ? ' selected' : '') + '>' + c.label + '</option>'; }).join('') +
+                        '</select>' +
+                        '<button onclick="kpiDeleteTask(' + t.id + ')" class="opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-700 transition-opacity"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+
+        var checklistCardsHtml = colChecklist.map(function(t) {
+            var thumbs = t.photos.map(function(p) {
+                return '<a href="' + kpiChecklistAttachmentUrl(p.id) + '" target="_blank" rel="noopener"><img src="' + kpiChecklistAttachmentUrl(p.id) + '" class="h-6 w-6 object-cover rounded border border-theme" loading="lazy"></a>';
+            }).join('');
+            return '<div class="p-3 bg-panel border border-theme border-dashed rounded-lg shadow-sm">' +
+                '<p class="text-sm font-bold text-body mb-2 flex items-center gap-1.5"><i data-lucide="camera" class="h-3.5 w-3.5 text-indigo-400 flex-shrink-0"></i>' + escapeHtmlClient(t.title) + '</p>' +
+                '<div class="flex items-center justify-between gap-2">' +
+                    '<span class="text-[10px] font-bold text-indigo-400 uppercase truncate">' + escapeHtmlClient(t.assignedToName) + '</span>' +
+                    (thumbs ? '<div class="flex items-center gap-1 flex-shrink-0">' + thumbs + '</div>' : '') +
+                '</div>' +
+            '</div>';
+        }).join('');
+
+        var cardsHtml = (manualCardsHtml + checklistCardsHtml) || '<p class="text-xs text-subtle p-3 text-center">None.</p>';
+
+        return '<div class="panel-card p-3">' +
+            '<h4 class="text-xs font-extrabold uppercase tracking-widest mb-3 px-1 ' + col.color + '">' + col.label + ' (' + colTasks + ')</h4>' +
+            '<div class="space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">' + cardsHtml + '</div>' +
+        '</div>';
+    }).join('') + '</div>';
+
+    content.innerHTML =
+        '<div class="panel-card p-5 mb-5"><h3 class="text-sm font-black text-heading mb-3 flex items-center gap-2"><i data-lucide="upload-cloud" class="h-4 w-4 text-indigo-500"></i> Today\'s Auto-listed Uploads</h3><div class="space-y-2 max-h-[240px] overflow-y-auto custom-scrollbar">' + autoHtml + '</div></div>' +
+        '<div class="panel-card p-5 mb-5"><div class="flex items-center justify-between mb-1"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="camera" class="h-4 w-4 text-indigo-500"></i> Daily Brand Status</h3>' + (currentUserRole === 'Super Admin' ? '<button onclick="kpiOpenAssignmentManager()" class="px-2.5 py-1 bg-panel border border-theme rounded-lg text-[10px] font-bold text-body hover:bg-app flex items-center gap-1"><i data-lucide="settings" class="h-3.5 w-3.5"></i> Manage Assignments</button>' : '') + '</div><p class="text-[10px] text-subtle mb-3">Send the status update on each assigned brand\'s Telegram group, then attach a screenshot here to mark it done for today.</p><div id="kpiChecklistBody"><div class="flex justify-center py-6"><div class="spinner border-t-indigo-500"></div></div></div></div>' +
+        '<div class="flex flex-col sm:flex-row gap-2 mb-4"><input type="text" id="kpiNewTaskInput" placeholder="Add a task..." class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500" onkeydown="if(event.key===\'Enter\')kpiAddTask()"><select id="kpiNewTaskAssignee" class="border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' + assigneeOptions + '</select><button onclick="kpiAddTask()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 flex items-center gap-1.5"><i data-lucide="plus" class="h-4 w-4"></i> Add</button></div>' +
+        boardHtml;
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    kpiRenderChecklistPanel(checklistItems);
 }
 
 // ---- Daily Checklist (Brand Status Update, Competitor Promotion Check, ...) ----
@@ -4109,15 +4157,28 @@ function kpiChecklistAttachmentUrl(completionId) {
     return 'https://bbc-api-gateway.ea-nix.workers.dev/?action=downloadKpiChecklistAttachment&id=' + completionId + '&token=' + encodeURIComponent(currentSessionToken);
 }
 
+// Fetches fresh and re-renders — used after a standalone action (e.g. adding a photo) where the
+// Kanban board isn't being redrawn too. renderKpiTodoBoard() calls kpiRenderChecklistPanel()
+// directly with data it already has, so a full board refresh doesn't fetch this twice.
 function kpiLoadChecklistPanel() {
     var el = document.getElementById('kpiChecklistBody');
     if (!el) return;
     google.script.run.withSuccessHandler(function(items) {
-        items = items || [];
-        if (items.length === 0) {
-            el.innerHTML = '<p class="text-xs text-subtle p-3 text-center">No daily checklist assigned yet.</p>';
-            return;
-        }
+        kpiRenderChecklistPanel(items || []);
+    }).withFailureHandler(function() {
+        el.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading checklist.</p>';
+    }).getKpiChecklistToday(currentSessionToken, '');
+}
+
+function kpiRenderChecklistPanel(items) {
+    var el = document.getElementById('kpiChecklistBody');
+    if (!el) return;
+    items = items || [];
+    if (items.length === 0) {
+        el.innerHTML = '<p class="text-xs text-subtle p-3 text-center">No daily checklist assigned yet.</p>';
+        return;
+    }
+    (function() {
         var byUser = {};
         items.forEach(function(i) {
             if (!byUser[i.username]) byUser[i.username] = { fullName: i.fullName || i.username, team: i.team, items: [] };
@@ -4140,10 +4201,13 @@ function kpiLoadChecklistPanel() {
                     var linkBtn = i.refLink ? '<a href="' + escapeHtmlClient(i.refLink) + '" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 mr-2" title="Open Telegram group"><i data-lucide="external-link" class="h-3.5 w-3.5"></i></a>' : '';
                     var actionHtml;
                     if (i.done) {
-                        var photoLinks = (i.photos || []).map(function(p, idx) {
-                            return '<a href="' + kpiChecklistAttachmentUrl(p.id) + '" target="_blank" rel="noopener" class="text-emerald-500 hover:text-emerald-400 underline" title="' + escapeHtmlClient(p.filename) + '">' + (idx + 1) + '</a>';
-                        }).join(' ');
-                        actionHtml = '<span class="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500"><i data-lucide="check-circle-2" class="h-3.5 w-3.5"></i> Done (' + photoLinks + ')</span>' +
+                        var photoThumbs = (i.photos || []).map(function(p) {
+                            return '<a href="' + kpiChecklistAttachmentUrl(p.id) + '" target="_blank" rel="noopener" title="' + escapeHtmlClient(p.filename) + ' — click to view full size">' +
+                                '<img src="' + kpiChecklistAttachmentUrl(p.id) + '" class="h-8 w-8 object-cover rounded-md border border-theme hover:border-indigo-500 transition-colors" loading="lazy">' +
+                            '</a>';
+                        }).join('');
+                        actionHtml = '<span class="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500 mr-1"><i data-lucide="check-circle-2" class="h-3.5 w-3.5"></i> Done</span>' +
+                            '<span class="inline-flex items-center gap-1">' + photoThumbs + '</span>' +
                             '<button onclick="kpiChecklistMarkDone(' + i.id + ')" class="ml-1.5 text-indigo-400 hover:text-indigo-300" title="Add another photo"><i data-lucide="plus-circle" class="h-3.5 w-3.5"></i></button>';
                     } else {
                         actionHtml = '<button onclick="kpiChecklistMarkDone(' + i.id + ')" class="px-2.5 py-1 bg-indigo-600 text-white rounded-md text-[10px] font-bold hover:bg-indigo-700 flex items-center gap-1"><i data-lucide="camera" class="h-3 w-3"></i> Mark Done</button>';
@@ -4171,9 +4235,7 @@ function kpiLoadChecklistPanel() {
 
         el.innerHTML = usersHtml;
         if (typeof lucide !== 'undefined') lucide.createIcons();
-    }).withFailureHandler(function() {
-        el.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading checklist.</p>';
-    }).getKpiChecklistToday(currentSessionToken, '');
+    })();
 }
 
 function kpiChecklistMarkDone(assignmentId) {
@@ -4189,7 +4251,7 @@ function kpiChecklistMarkDone(assignmentId) {
             google.script.run.withSuccessHandler(function(res) {
                 if (res && res.success) {
                     showPremiumToast('Done', res.message, 'success');
-                    kpiLoadChecklistPanel();
+                    renderKpiTodoTab(); // refreshes both the checklist panel and its Kanban cards
                 } else {
                     showPremiumToast('Error', (res && res.message) || 'Could not mark as done.', 'error');
                 }
