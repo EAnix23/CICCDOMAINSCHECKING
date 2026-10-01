@@ -5953,7 +5953,7 @@ function renderKpiExecVersusBar() {
         var checked = kpiExecVersusAgents.indexOf(a.username) !== -1;
         return '<label class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold cursor-pointer ' + (checked ? 'bg-indigo-tint border-indigo-400 text-indigo-600' : 'bg-panel border-theme text-body') + '">' +
             '<input type="checkbox" class="hidden" onchange="kpiExecToggleVersusAgent(\'' + escapeHtmlClient(a.username) + '\')" ' + (checked ? 'checked' : '') + '>' +
-            escapeHtmlClient(a.fullName) + '</label>';
+            escapeHtmlClient(a.fullName) + (a.team ? ' <span class="text-[9px] text-subtle font-normal">(' + escapeHtmlClient(a.team) + ')</span>' : '') + '</label>';
     }).join('');
     var metricSelect = kpiExecVersusAgents.length >= 2 ?
         '<select onchange="kpiExecSetVersusMetric(this.value)" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 ml-2">' +
@@ -5961,7 +5961,7 @@ function renderKpiExecVersusBar() {
             '<option value="dailyCombinedScore"' + (kpiExecVersusMetric === 'dailyCombinedScore' ? ' selected' : '') + '>Combined KPI Score</option>' +
             '<option value="dailyAttendancePct"' + (kpiExecVersusMetric === 'dailyAttendancePct' ? ' selected' : '') + '>Attendance %</option>' +
         '</select>' : '';
-    bar.innerHTML = '<p class="text-[10px] font-bold text-subtle uppercase mb-2">Versus — pick 2+ agents to compare (otherwise shows team average)</p>' +
+    bar.innerHTML = '<p class="text-[10px] font-bold text-subtle uppercase mb-2">All teams combined — pick 2+ agents to compare Versus (otherwise shows combined average)</p>' +
         '<div class="flex flex-wrap gap-2 items-center">' + chips + metricSelect + '</div>';
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
@@ -6060,7 +6060,7 @@ function kpiExecRenderRanking() {
     function avg(arr) { return arr.length ? Math.round(arr.reduce(function(s, v) { return s + v; }, 0) / arr.length) : 0; }
     var agents = (kpiExecData.agents || []).map(function(a) {
         return {
-            username: a.username, fullName: a.fullName,
+            username: a.username, fullName: a.fullName, team: a.team || '',
             avgCompletion: avg(a.dailyCompletionPct || []), avgScore: avg(a.dailyCombinedScore || []), avgAttendance: avg(a.dailyAttendancePct || []),
             totalChecks: a.totalChecksInRange
         };
@@ -6069,7 +6069,7 @@ function kpiExecRenderRanking() {
     el.innerHTML = agents.length ? agents.map(function(a, i) {
         return '<div class="flex items-center gap-2 py-2 border-b border-theme last:border-0">' +
             '<span class="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ' + (i === 0 ? 'bg-amber-100 text-amber-600' : 'bg-panel text-subtle') + '">' + (i + 1) + '</span>' +
-            '<div class="flex-1 min-w-0"><div class="text-xs font-bold text-body truncate">' + escapeHtmlClient(a.fullName) + '</div><div class="text-[9px] text-subtle">' + a.totalChecks + ' checks · ' + a.avgCompletion + '% completion · ' + a.avgAttendance + '% attendance</div></div>' +
+            '<div class="flex-1 min-w-0"><div class="text-xs font-bold text-body truncate">' + escapeHtmlClient(a.fullName) + (a.team ? ' <span class="text-[9px] text-subtle font-normal">(' + escapeHtmlClient(a.team) + ')</span>' : '') + '</div><div class="text-[9px] text-subtle">' + a.totalChecks + ' checks · ' + a.avgCompletion + '% completion · ' + a.avgAttendance + '% attendance</div></div>' +
             '<span class="text-sm font-black text-indigo-600">' + a.avgScore + '</span>' +
         '</div>';
     }).join('') : '<p class="text-xs text-subtle p-3 text-center">No data for this range.</p>';

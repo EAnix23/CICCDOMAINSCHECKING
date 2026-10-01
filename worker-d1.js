@@ -912,8 +912,8 @@ const actions = {
     const { results: memberRows } = await db.prepare(`SELECT username, team, full_name as fullName FROM users WHERE team IN (${placeholders}) ORDER BY team ASC, username ASC`).bind(...teamList).all();
     const members = memberRows.map(r => r.username);
     if (members.length === 0) return { dateList: [], agents: [], teamTotals: {}, pie: [] };
-    const nameMap = {};
-    memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; });
+    const nameMap = {}, teamOfMap = {};
+    memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; teamOfMap[r.username] = r.team || ""; });
 
     const dateList = [];
     let cursor = new Date(startDate + "T00:00:00Z");
@@ -927,7 +927,7 @@ const actions = {
     attRows.forEach(function (r) { (attendedSet[r.username] = attendedSet[r.username] || {})[r.date] = true; });
 
     const { results: checkCountRows } = await db.prepare(
-      `SELECT username, date(created_at) as d, COUNT(*) as cnt FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(created_at) >= ? AND date(created_at) <= ? GROUP BY username, d`
+      `SELECT username, date(checked_at) as d, COUNT(*) as cnt FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(checked_at) >= ? AND date(checked_at) <= ? GROUP BY username, d`
     ).bind(...teamList, startDate, endDate).all();
     const checksByAgentDate = {};
     checkCountRows.forEach(function (r) { (checksByAgentDate[r.username] = checksByAgentDate[r.username] || {})[r.d] = r.cnt; });
@@ -944,13 +944,13 @@ const actions = {
     // the right place even when the range begins mid-way through someone's work), then each day
     // in range adds whatever distinct domains were first checked that day.
     const { results: checkedBeforeRows } = await db.prepare(
-      `SELECT username, domain FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(created_at) < ?`
+      `SELECT username, domain FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(checked_at) < ?`
     ).bind(...teamList, startDate).all();
     const cumulativeBefore = {}; members.forEach(function (m) { cumulativeBefore[m] = {}; });
     checkedBeforeRows.forEach(function (r) { if (cumulativeBefore[r.username]) cumulativeBefore[r.username][r.domain] = true; });
 
     const { results: checkedInRangeRows } = await db.prepare(
-      `SELECT username, date(created_at) as d, domain FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(created_at) >= ? AND date(created_at) <= ?`
+      `SELECT username, date(checked_at) as d, domain FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(checked_at) >= ? AND date(checked_at) <= ?`
     ).bind(...teamList, startDate, endDate).all();
     const inRangeByAgentDate = {};
     checkedInRangeRows.forEach(function (r) {
@@ -994,7 +994,7 @@ const actions = {
       const totalChecksInRange = dateList.reduce(function (s, d) { return s + ((checksByAgentDate[m] || {})[d] || 0); }, 0);
 
       return {
-        username: m, fullName: nameMap[m] || m,
+        username: m, fullName: nameMap[m] || m, team: teamOfMap[m] || "",
         dailyCompletionPct: dailyCompletionPct, dailyAttendancePct: dailyAttendancePct, dailyCombinedScore: dailyCombinedScore,
         totalChecksInRange: totalChecksInRange
       };
