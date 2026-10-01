@@ -1576,6 +1576,78 @@ const actions = {
       count++;
     }
     return { success: true, message: count + " record(s) imported." };
+  },
+
+  // ---- Overtime Request (files with a reason, punches real OT Time In/Out to auto-compute hours,
+  // Super Admin approves as the Department Head signer, then exports for HR) ----
+
+  async fileKpiOvertime(db, token, date, reason) {
+    const session = await checkSession(db, token);
+    if (!session.team) return { success: false, message: "No team assigned to your account." };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "A valid date is required." };
+    if (!reason || !reason.trim()) return { success: false, message: "Task Description / Justification is required." };
+    const existing = await db.prepare("SELECT id FROM kpi_overtime WHERE username = ? AND date = ?").bind(session.username, date).first();
+    if (existing) return { success: false, message: "You already filed an OT request for that date." };
+    await db.prepare("INSERT INTO kpi_overtime (username, team, date, reason, status) VALUES (?, ?, ?, ?, 'pending')")
+      .bind(session.username, session.team, date, reason.trim()).run();
+    return { success: true, message: "OT request filed." };
+  },
+
+  async getKpiOvertimeToday(db, token) {
+    const session = await checkSession(db, token);
+    const today = getPHDateStr();
+    const row = await db.prepare("SELECT * FROM kpi_overtime WHERE username = ? AND date = ?").bind(session.username, today).first();
+    return row || null;
+  },
+
+  async kpiOtTimeIn(db, token, lat, lng) {
+    const session = await checkSession(db, token);
+    const today = getPHDateStr();
+    const row = await db.prepare("SELECT id, ot_time_in FROM kpi_overtime WHERE username = ? AND date = ?").bind(session.username, today).first();
+    if (!row) return { success: false, message: "File for OT first." };
+    if (row.ot_time_in) return { success: false, message: "You already have an OT Time In logged today." };
+    const nowTime = getPHTimeStr();
+    const latVal = (typeof lat === "number") ? lat : null, lngVal = (typeof lng === "number") ? lng : null;
+    await db.prepare("UPDATE kpi_overtime SET ot_time_in=?, ot_time_in_lat=?, ot_time_in_lng=? WHERE id=?").bind(nowTime, latVal, lngVal, row.id).run();
+    return { success: true, ot_time_in: nowTime };
+  },
+
+  async kpiOtTimeOut(db, token, lat, lng) {
+    const session = await checkSession(db, token);
+    const today = getPHDateStr();
+    const row = await db.prepare("SELECT id, ot_time_in, ot_time_out FROM kpi_overtime WHERE username = ? AND date = ?").bind(session.username, today).first();
+    if (!row || !row.ot_time_in) return { success: false, message: "You haven't logged an OT Time In today." };
+    if (row.ot_time_out) return { success: false, message: "You already have an OT Time Out logged today." };
+    const nowTime = getPHTimeStr();
+    const totalHours = Math.round(((timeStrToMinutes(nowTime) - timeStrToMinutes(row.ot_time_in)) / 60) * 100) / 100;
+    const latVal = (typeof lat === "number") ? lat : null, lngVal = (typeof lng === "number") ? lng : null;
+    await db.prepare("UPDATE kpi_overtime SET ot_time_out=?, ot_time_out_lat=?, ot_time_out_lng=?, total_ot_hours=? WHERE id=?")
+      .bind(nowTime, latVal, lngVal, totalHours, row.id).run();
+    return { success: true, ot_time_out: nowTime, total_ot_hours: totalHours };
+  },
+
+  // Self-view and Super-Admin-review share this one action, like getKpiLeaves.
+  async getKpiOvertimeRequests(db, token, team) {
+    const session = await checkSession(db, token);
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    if (!targetTeam) return [];
+    const { results } = await db.prepare(
+      `SELECT o.id, o.username, u.full_name as fullName, u.position, o.team, o.date, o.reason,
+       o.ot_time_in as otTimeIn, o.ot_time_out as otTimeOut, o.total_ot_hours as totalOtHours,
+       o.status, o.reviewed_by as reviewedBy, o.reviewed_at as reviewedAt
+       FROM kpi_overtime o LEFT JOIN users u ON u.username = o.username WHERE o.team = ? ORDER BY o.date DESC`
+    ).bind(targetTeam).all();
+    return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
+  },
+
+  // Super Admin stands in for the Department Head signature — approving here records who/when,
+  // which the export then presents as the form's "Date of approval".
+  async updateKpiOvertimeStatus(db, token, id, status) {
+    const session = await checkSession(db, token, true);
+    if (["approved", "rejected", "pending"].indexOf(status) === -1) return { success: false, message: "Invalid status." };
+    const res = await db.prepare("UPDATE kpi_overtime SET status=?, reviewed_by=?, reviewed_at=datetime('now') WHERE id=?").bind(status, session.username, id).run();
+    if (res.meta.changes === 0) return { success: false, message: "OT request not found." };
+    return { success: true, message: "OT request " + status + "." };
   }
 };
 

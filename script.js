@@ -4568,12 +4568,13 @@ function renderKpiAttendanceTab() {
         content.innerHTML = '<div class="panel-card p-6 flex flex-col items-center text-center mb-5">' +
             '<p class="text-xs text-subtle mb-4">' + new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
             buttonHtml + statusHtml +
-        '</div><div id="kpiAttendanceLog" class="mb-5"></div><div id="kpiDayoffsPanel" class="mb-5"></div><div id="kpiLeavesPanel"></div>';
+        '</div><div id="kpiAttendanceLog" class="mb-5"></div><div id="kpiDayoffsPanel" class="mb-5"></div><div id="kpiLeavesPanel" class="mb-5"></div><div id="kpiOvertimePanel"></div>';
 
         if (typeof lucide !== 'undefined') lucide.createIcons();
         renderKpiAttendanceLog();
         renderKpiDayoffsPanel();
         renderKpiLeavesPanel();
+        renderKpiOvertimePanel();
     }).getKpiAttendanceToday(currentSessionToken);
 }
 
@@ -4810,6 +4811,227 @@ function kpiReviewLeave(id, status) {
             else { showPremiumToast('Error', (res && res.message) || 'Could not update.', 'error'); }
         }).updateKpiLeaveStatus(currentSessionToken, id, status);
     });
+}
+
+// ---- Overtime Request — file with a reason, punch real OT Time In/Out to auto-compute hours,
+// Super Admin approves (stands in for the Department Head signature), then export for HR. ----
+var KPI_OT_DEPT_HEAD = 'Lionel Sabaulan';
+
+function renderKpiOvertimePanel() {
+    var panelEl = document.getElementById('kpiOvertimePanel');
+    if (!panelEl || !kpiCurrentTeam) return;
+    var isSuperAdmin = currentUserRole === 'Super Admin';
+
+    function statusBadge(s) {
+        var cls = s === 'approved' ? 'bg-emerald-50 text-emerald-600' : (s === 'rejected' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600');
+        return '<span class="text-[10px] font-black uppercase px-2 py-0.5 rounded-md ' + cls + '">' + s + '</span>';
+    }
+
+    google.script.run.withSuccessHandler(function(today) {
+        var otButtonHtml;
+        if (!today) {
+            otButtonHtml = '<button onclick="openKpiOvertimeModal()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-black hover:bg-indigo-700 flex items-center gap-2"><i data-lucide="file-plus" class="h-4 w-4"></i> File for OT</button>';
+        } else if (!today.ot_time_in) {
+            otButtonHtml = '<button onclick="kpiDoOtTimeIn()" class="px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 flex items-center gap-2"><i data-lucide="log-in" class="h-4 w-4"></i> OT Time In</button>';
+        } else if (!today.ot_time_out) {
+            otButtonHtml = '<button onclick="kpiDoOtTimeOut()" class="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-sm font-black hover:bg-rose-700 flex items-center gap-2"><i data-lucide="log-out" class="h-4 w-4"></i> OT Time Out</button>';
+        } else {
+            otButtonHtml = '<span class="px-5 py-2.5 bg-app text-subtle rounded-xl text-sm font-black flex items-center gap-2"><i data-lucide="check" class="h-4 w-4"></i> ' + today.total_ot_hours + ' OT hour(s) logged today</span>';
+        }
+        var todayBlockHtml = '<div class="panel-card p-5 mb-4 flex flex-col items-center text-center">' +
+            '<h3 class="text-sm font-black text-heading mb-1">Overtime</h3>' +
+            (today ? '<p class="text-xs text-subtle mb-3 max-w-md">' + escapeHtmlClient(today.reason) + '</p>' : '<p class="text-xs text-subtle mb-3">No OT filed for today.</p>') +
+            otButtonHtml +
+        '</div>';
+
+        google.script.run.withSuccessHandler(function(rows) {
+            rows = rows || [];
+            var mine = rows.filter(function(r) { return r.username === currentSessionUsername; });
+
+            var mineHtml = mine.length ? mine.map(function(r) {
+                return '<div class="flex items-center justify-between py-2 border-b border-theme last:border-0 flex-wrap gap-1">' +
+                    '<div><span class="text-xs font-bold text-body">' + escapeHtmlClient(r.date) + '</span> <span class="text-xs text-subtle">' + (r.otTimeIn ? (escapeHtmlClient(r.otTimeIn) + '–' + escapeHtmlClient(r.otTimeOut || '…')) : 'not punched yet') + (r.totalOtHours ? ' (' + r.totalOtHours + 'h)' : '') + '</span></div>' +
+                    statusBadge(r.status) +
+                '</div>';
+            }).join('') : '<p class="text-xs text-subtle">No OT requests filed yet.</p>';
+
+            var adminHtml = '';
+            if (isSuperAdmin) {
+                var pendingCount = rows.filter(function(r) { return r.status === 'pending'; }).length;
+                var allRowsHtml = rows.length ? rows.map(function(r) {
+                    var actionsHtml = r.status === 'pending'
+                        ? '<button onclick="kpiReviewOvertime(' + r.id + ', \'approved\')" class="text-emerald-500 hover:text-emerald-700 text-xs font-bold mr-2">Approve</button><button onclick="kpiReviewOvertime(' + r.id + ', \'rejected\')" class="text-rose-500 hover:text-rose-700 text-xs font-bold">Reject</button>'
+                        : '';
+                    return '<div class="flex items-center justify-between py-2 border-b border-theme last:border-0 flex-wrap gap-1">' +
+                        '<div><span class="text-xs font-bold text-body">' + escapeHtmlClient(r.fullName) + '</span> — <span class="text-xs text-body">' + escapeHtmlClient(r.date) + '</span> <span class="text-xs text-subtle">' + (r.otTimeIn ? (escapeHtmlClient(r.otTimeIn) + '–' + escapeHtmlClient(r.otTimeOut || '…')) : 'not punched yet') + (r.totalOtHours ? ' (' + r.totalOtHours + 'h)' : '') + '</span><p class="text-[10px] text-subtle mt-0.5">' + escapeHtmlClient(r.reason) + '</p></div>' +
+                        '<div class="flex items-center gap-2">' + statusBadge(r.status) + actionsHtml + '</div>' +
+                    '</div>';
+                }).join('') : '<p class="text-xs text-subtle">No OT requests for this team yet.</p>';
+                adminHtml = '<div class="mt-4 pt-4 border-t border-theme">' +
+                    '<div class="flex items-center justify-between mb-2"><p class="text-[10px] font-bold text-subtle uppercase">All Team OT Requests' + (pendingCount ? ' (' + pendingCount + ' pending)' : '') + '</p>' +
+                    '<button onclick="openKpiOvertimeExportModal()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[10px] font-bold text-body hover:bg-app flex items-center gap-1"><i data-lucide="download" class="h-3.5 w-3.5"></i> Export OT Form</button></div>' +
+                    allRowsHtml +
+                '</div>';
+            }
+
+            panelEl.innerHTML = todayBlockHtml + '<div class="panel-card p-5">' +
+                '<h3 class="text-sm font-black text-heading mb-3">My Overtime Requests</h3>' +
+                mineHtml + adminHtml +
+            '</div>';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }).getKpiOvertimeRequests(currentSessionToken, kpiCurrentTeam);
+    }).getKpiOvertimeToday(currentSessionToken);
+}
+
+function openKpiOvertimeModal() {
+    var modal = document.getElementById('kpiOvertimeModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiOvertimeModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-md flex flex-col">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="file-plus" class="h-5 w-5 text-indigo-500"></i> File for OT</h3>',
+            '      <button onclick="closeSmoothly(\'kpiOvertimeModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app">',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Date</label>',
+            '      <input type="date" id="kpiOtDate" class="w-full mb-3 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-1.5">Task Description / Justification</label>',
+            '      <textarea id="kpiOtReason" rows="3" placeholder="Reason for overtime..." class="w-full mb-4 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500"></textarea>',
+            '      <button id="btnKpiOtSubmit" onclick="kpiSubmitOvertime()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="send" class="h-4 w-4"></i> Submit</button>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiOvertimeModal');
+    }
+    document.getElementById('kpiOtDate').value = getPHTodayDateStr();
+    document.getElementById('kpiOtReason').value = '';
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+// This dashboard runs on the viewer's own clock/timezone, but PH-anchored actions (the server's
+// getPHDateStr) expect a PH-local date — a straight new Date().toISOString() would drift a day off
+// for anyone not in +08:00. Close enough for a date default; the server is authoritative either way.
+function getPHTodayDateStr() {
+    var now = new Date();
+    var phMs = now.getTime() + (now.getTimezoneOffset() * 60000) + (8 * 3600000);
+    return new Date(phMs).toISOString().slice(0, 10);
+}
+
+function kpiSubmitOvertime() {
+    var date = document.getElementById('kpiOtDate').value;
+    var reason = document.getElementById('kpiOtReason').value.trim();
+    if (!date) { showPremiumToast('Missing', 'Pick a date.', 'error'); return; }
+    if (!reason) { showPremiumToast('Missing', 'Task Description / Justification is required.', 'error'); return; }
+    var btn = document.getElementById('btnKpiOtSubmit');
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<div class="spinner h-4 w-4 border-2 border-white/20 border-t-white"></div>';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+        btn.innerHTML = orig; btn.disabled = false;
+        if (res && res.success) { showPremiumToast('Filed', res.message, 'success'); closeSmoothly('kpiOvertimeModal'); renderKpiOvertimePanel(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Could not file.', 'error'); }
+    }).withFailureHandler(function() {
+        btn.innerHTML = orig; btn.disabled = false;
+        showPremiumToast('Error', 'Could not file.', 'error');
+    }).fileKpiOvertime(currentSessionToken, date, reason);
+}
+
+function kpiDoOtTimeIn() {
+    kpiGetLocation().then(function(loc) {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { showPremiumToast('OT Time In', 'Your OT Time In was logged (' + res.ot_time_in + ').', 'success'); renderKpiOvertimePanel(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Could not log.', 'error'); }
+        }).kpiOtTimeIn(currentSessionToken, loc.lat, loc.lng);
+    });
+}
+
+function kpiDoOtTimeOut() {
+    kpiGetLocation().then(function(loc) {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { showPremiumToast('OT Time Out', 'Your OT Time Out was logged (' + res.ot_time_out + ', ' + res.total_ot_hours + ' hour(s)).', 'success'); renderKpiOvertimePanel(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Could not log.', 'error'); }
+        }).kpiOtTimeOut(currentSessionToken, loc.lat, loc.lng);
+    });
+}
+
+function kpiReviewOvertime(id, status) {
+    var label = status === 'approved' ? 'approve' : 'reject';
+    showPremiumConfirm('Confirm', 'Are you sure you want to ' + label + ' this OT request?', 'Yes, ' + label, function() {
+        google.script.run.withSuccessHandler(function(res) {
+            if (res && res.success) { showPremiumToast('Updated', res.message, 'success'); renderKpiOvertimePanel(); }
+            else { showPremiumToast('Error', (res && res.message) || 'Could not update.', 'error'); }
+        }).updateKpiOvertimeStatus(currentSessionToken, id, status);
+    });
+}
+
+// Export mirrors the real "Overtime Request Form" HR template: Department/Date Filed header, the
+// No./Employee Name/Position/Date/OT Schedule/Total OT Hours/Task Description table, then an
+// Approved-by signature block. Only approved requests go in, since that's what gets submitted.
+function openKpiOvertimeExportModal() {
+    var modal = document.getElementById('kpiOtExportModal');
+    if (!modal) {
+        var def = kpiDefaultCutoff();
+        var html = [
+            '<div id="kpiOtExportModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-md flex flex-col">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="download" class="h-5 w-5 text-indigo-500"></i> Export OT Form</h3>',
+            '      <button onclick="closeSmoothly(\'kpiOtExportModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <div class="p-6 bg-app">',
+            '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Date Range</label>',
+            '      <div class="flex items-center gap-2 mb-4"><input type="date" id="kpiOtExportStart" value="' + def.start + '" class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"><span class="text-xs text-subtle">to</span><input type="date" id="kpiOtExportEnd" value="' + def.end + '" class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>',
+            '      <p class="text-[10px] text-subtle mb-4">Only approved OT requests in this range are included. Approved by: ' + escapeHtmlClient(KPI_OT_DEPT_HEAD) + '.</p>',
+            '      <button onclick="kpiRunOvertimeExport()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="download" class="h-4 w-4"></i> Download CSV</button>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiOtExportModal');
+    }
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function kpiRunOvertimeExport() {
+    var startDate = document.getElementById('kpiOtExportStart').value;
+    var endDate = document.getElementById('kpiOtExportEnd').value;
+    if (!startDate || !endDate) { showPremiumToast('Missing', 'Pick a start and end date.', 'error'); return; }
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = (rows || []).filter(function(r) { return r.status === 'approved' && r.date >= startDate && r.date <= endDate; });
+        if (rows.length === 0) { showPremiumToast('Empty', 'No approved OT requests in this range.', 'error'); return; }
+
+        function esc(v) { v = (v === undefined || v === null) ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+        var lines = [];
+        lines.push(esc('OVERTIME REQUEST FORM'));
+        lines.push('');
+        lines.push(esc('Department:') + ',' + esc(kpiCurrentTeam) + ',,' + esc('Date Filed:') + ',' + esc(startDate + ' to ' + endDate));
+        lines.push('');
+        lines.push(['No.', 'Employee Name', 'Position', 'Date', 'OT Schedule (From-To)', 'Total OT Hours', 'Task Description / Justification'].map(esc).join(','));
+        rows.forEach(function(r, idx) {
+            var schedule = r.otTimeIn ? (r.otTimeIn + '-' + (r.otTimeOut || '')) : '';
+            lines.push([idx + 1, r.fullName, r.position || '', r.date, schedule, r.totalOtHours || '', r.reason].map(esc).join(','));
+        });
+        lines.push('');
+        lines.push(esc('Approved by:') + ',,,' + esc('Date of approval:') + ',');
+        lines.push(esc('Name & Signature of Department Head: ' + KPI_OT_DEPT_HEAD));
+
+        var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = 'OT_Form_' + kpiCurrentTeam.replace(/[^a-z0-9\-_ ]/gi, '') + '_' + startDate + '_to_' + endDate + '.csv';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        closeSmoothly('kpiOtExportModal');
+        showPremiumToast('Exported', rows.length + ' OT record(s) exported.', 'success');
+    }).getKpiOvertimeRequests(currentSessionToken, kpiCurrentTeam);
 }
 
 // Summary grid — one row per member, one column per date, showing hours worked that day (blank
