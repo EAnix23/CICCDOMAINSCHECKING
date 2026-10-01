@@ -5840,6 +5840,7 @@ function kpiRemoveIspAssign(id) {
 // re-slices data already in hand (see getKpiExecutiveDashboard).
 var kpiExecData = null;
 var kpiExecRange = { start: null, end: null };
+var kpiExecActivePreset = '7d';
 var kpiExecGranularity = 'daily';
 var kpiExecVersusAgents = [];
 var kpiExecVersusMetric = 'dailyCompletionPct';
@@ -5865,7 +5866,6 @@ function renderKpiExecutiveTab() {
         kpiExecRange.start = r.start; kpiExecRange.end = r.end;
     }
 
-    var presetBtnClass = 'px-3.5 py-1.5 rounded-lg text-xs font-bold text-subtle hover:text-body hover:bg-app transition-colors';
     content.innerHTML =
         '<div id="kpiExecStatsRow" class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5"></div>' +
         '<div class="panel-card p-5 mb-5">' +
@@ -5873,9 +5873,9 @@ function renderKpiExecutiveTab() {
                 '<div><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="trending-up" class="h-4 w-4 text-indigo-500"></i> Performance Trend</h3><p class="text-[10px] text-subtle mt-0.5">Completion, Combined Score, and Attendance over time</p></div>' +
                 '<div class="flex items-center gap-2 flex-wrap">' +
                     '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm">' +
-                        '<button onclick="kpiExecSetPreset(\'7d\')" class="' + presetBtnClass + '">Last 7 Days</button>' +
-                        '<button onclick="kpiExecSetPreset(\'1m\')" class="' + presetBtnClass + '">Last Month</button>' +
-                        '<button onclick="kpiExecSetPreset(\'1y\')" class="' + presetBtnClass + '">Last Year</button>' +
+                        '<button onclick="kpiExecSetPreset(\'7d\')" id="kpiExecPreset7d" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all">Last 7 Days</button>' +
+                        '<button onclick="kpiExecSetPreset(\'1m\')" id="kpiExecPreset1m" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all">Last Month</button>' +
+                        '<button onclick="kpiExecSetPreset(\'1y\')" id="kpiExecPreset1y" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all">Last Year</button>' +
                     '</div>' +
                     '<div class="flex items-center gap-1.5 bg-app border border-theme rounded-xl px-2.5 py-1.5 shadow-sm">' +
                         '<i data-lucide="calendar" class="h-3.5 w-3.5 text-subtle"></i>' +
@@ -5910,7 +5910,18 @@ function renderKpiExecutiveTab() {
         '</div>';
 
     kpiExecRefreshGranButtons();
+    kpiExecRefreshPresetButtons();
     kpiExecLoadData();
+}
+
+function kpiExecRefreshPresetButtons() {
+    var ids = { '7d': 'kpiExecPreset7d', '1m': 'kpiExecPreset1m', '1y': 'kpiExecPreset1y' };
+    Object.keys(ids).forEach(function(key) {
+        var btn = document.getElementById(ids[key]);
+        if (!btn) return;
+        var active = kpiExecActivePreset === key;
+        btn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ' + (active ? 'bg-indigo-600 text-white shadow-sm' : 'text-subtle hover:text-body hover:bg-panel');
+    });
 }
 
 function kpiExecRefreshGranButtons() {
@@ -5932,6 +5943,8 @@ function kpiExecSetGranularity(g) {
 function kpiExecSetPreset(preset) {
     var r = kpiExecDateRangeFor(preset);
     kpiExecRange.start = r.start; kpiExecRange.end = r.end;
+    kpiExecActivePreset = preset;
+    kpiExecRefreshPresetButtons();
     var si = document.getElementById('kpiExecStartInput'), ei = document.getElementById('kpiExecEndInput');
     if (si) si.value = r.start;
     if (ei) ei.value = r.end;
@@ -5944,6 +5957,8 @@ function kpiExecApplyCustomRange() {
     if (!s || !e) { showPremiumToast('Missing', 'Pick both dates.', 'error'); return; }
     if (s > e) { showPremiumToast('Invalid', 'Start date must be before end date.', 'error'); return; }
     kpiExecRange.start = s; kpiExecRange.end = e;
+    kpiExecActivePreset = null;
+    kpiExecRefreshPresetButtons();
     kpiExecLoadData();
 }
 
