@@ -991,10 +991,16 @@ const actions = {
   },
 
   // Feeds the edit modal with whatever's already on file for that day (or blanks, if none yet).
+  // A date can show "RD" on the grid purely from a self-plotted Day Off (kpi_dayoffs) with no
+  // kpi_attendance row at all — surface that here too, so the modal doesn't show blank fields for
+  // a day the grid clearly marks as RD.
   async getKpiAttendanceRecord(db, token, username, date) {
     await checkSession(db, token, true);
     const row = await db.prepare("SELECT time_in, time_out, break_start, break_end, day_status FROM kpi_attendance WHERE username = ? AND date = ?").bind(username, date).first();
-    return row || { time_in: "", time_out: "", break_start: "", break_end: "", day_status: "" };
+    if (row) return row;
+    const dayoff = await db.prepare("SELECT id FROM kpi_dayoffs WHERE username = ? AND date = ?").bind(username, date).first();
+    if (dayoff) return { time_in: "", time_out: "", break_start: "", break_end: "", day_status: "RD" };
+    return { time_in: "", time_out: "", break_start: "", break_end: "", day_status: "" };
   },
 
   // Manual correction of one person's one-day record — Super Admin only. Upserts on
@@ -1014,10 +1020,14 @@ const actions = {
     return { success: true, message: "Attendance record updated." };
   },
 
-  // Single-record delete — Super Admin only, used by the "Delete" button in the edit modal.
+  // Single-record delete — Super Admin only, used by the "Delete" button in the edit modal. Also
+  // clears any self-plotted Day Off for that same date — otherwise a date whose "RD" came purely
+  // from kpi_dayoffs (no kpi_attendance row to delete) would still show "RD" afterward, since the
+  // grid overlay falls back to kpi_dayoffs whenever kpi_attendance has nothing for that day.
   async deleteKpiAttendanceRecord(db, token, username, date) {
     await checkSession(db, token, true);
     await db.prepare("DELETE FROM kpi_attendance WHERE username = ? AND date = ?").bind(username, date).run();
+    await db.prepare("DELETE FROM kpi_dayoffs WHERE username = ? AND date = ?").bind(username, date).run();
     return { success: true, message: "Record deleted." };
   },
 
