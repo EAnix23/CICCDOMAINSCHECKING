@@ -1073,6 +1073,19 @@ const actions = {
     return { success: true };
   },
 
+  // Super Admin only — moves an existing plotted Day Off to a different date (e.g. an agent asks
+  // to change their day off). Reuses the same table; just updates the date in place.
+  async updateKpiDayoff(db, token, id, date) {
+    await checkSession(db, token, true);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return { success: false, message: "A valid date is required." };
+    const row = await db.prepare("SELECT username FROM kpi_dayoffs WHERE id = ?").bind(id).first();
+    if (!row) return { success: false, message: "Day Off record not found." };
+    const dup = await db.prepare("SELECT id FROM kpi_dayoffs WHERE username = ? AND date = ? AND id != ?").bind(row.username, date, id).first();
+    if (dup) return { success: false, message: "This agent already has a Day Off plotted on that date." };
+    await db.prepare("UPDATE kpi_dayoffs SET date = ? WHERE id = ?").bind(date, id).run();
+    return { success: true, message: "Day Off date updated." };
+  },
+
   // Self-service leave filing, with an optional image/PDF attachment stored in R2. Starts as
   // "pending" — nothing shows up on the Attendance Summary until Super Admin approves it
   // (exportDtrData overlays approved leaves onto the date grid at read time).

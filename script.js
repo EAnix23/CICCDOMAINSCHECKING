@@ -4640,11 +4640,14 @@ function renderKpiDayoffsPanel() {
 
         var adminListHtml = '';
         if (isSuperAdmin) {
-            var allRowsHtml = rows.length ? rows.map(function(r) {
+            var allRowsHtml = rows.slice(0, 5).map(function(r) {
                 return '<div class="flex items-center justify-between py-1.5 border-b border-theme last:border-0"><span class="text-xs text-body">' + escapeHtmlClient(r.fullName) + ' — <span class="font-bold">' + escapeHtmlClient(r.date) + '</span></span>' +
                     '<button onclick="kpiDeleteDayoffAdmin(' + r.id + ')" class="text-rose-500 hover:text-rose-700"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button></div>';
-            }).join('') : '<p class="text-xs text-subtle">No Day Offs plotted for this team yet.</p>';
-            adminListHtml = '<div class="mt-4 pt-4 border-t border-theme"><p class="text-[10px] font-bold text-subtle uppercase mb-2">All Team Day Offs (Super Admin only can delete)</p>' + allRowsHtml + '</div>';
+            }).join('') || '<p class="text-xs text-subtle">No Day Offs plotted for this team yet.</p>';
+            adminListHtml = '<div class="mt-4 pt-4 border-t border-theme">' +
+                '<div class="flex items-center justify-between mb-2"><p class="text-[10px] font-bold text-subtle uppercase">All Team Day Offs' + (rows.length > 5 ? ' (showing 5 of ' + rows.length + ')' : '') + '</p>' +
+                '<button onclick="kpiOpenDayoffManageModal()" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"><i data-lucide="maximize-2" class="h-3 w-3"></i> View all / Edit</button></div>' +
+                allRowsHtml + '</div>';
         }
 
         panelEl.innerHTML = '<div class="panel-card p-5">' +
@@ -4672,8 +4675,69 @@ function kpiPlotDayoff() {
 
 function kpiDeleteDayoffAdmin(id) {
     showPremiumConfirm('Remove', 'Remove this plotted Day Off?', 'Yes, remove', function() {
-        google.script.run.withSuccessHandler(function() { renderKpiDayoffsPanel(); }).deleteKpiDayoff(currentSessionToken, id);
+        google.script.run.withSuccessHandler(function() {
+            renderKpiDayoffsPanel();
+            var manageModal = document.getElementById('kpiDayoffManageModal');
+            if (manageModal && !manageModal.classList.contains('hidden')) renderKpiDayoffManageList();
+        }).deleteKpiDayoff(currentSessionToken, id);
     });
+}
+
+// ---- Full Day Off list in a modal (Super Admin) — edit the date in place (for "change off"
+// requests) or delete, without the "showing 5 of N" cap in the main panel ----
+function kpiOpenDayoffManageModal() {
+    var modal = document.getElementById('kpiDayoffManageModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiDayoffManageModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-2xl flex flex-col max-h-[85vh]">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app flex-shrink-0">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="calendar-x" class="h-5 w-5 text-indigo-500"></i> Manage Team Day Offs</h3>',
+            '      <button onclick="closeSmoothly(\'kpiDayoffManageModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <p class="px-6 pt-4 text-[10px] text-subtle">Pick a new date and tap the check icon to move an agent\'s Day Off (e.g. when they ask for a change).</p>',
+            '    <div id="kpiDayoffManageList" class="p-6 overflow-y-auto flex-1 bg-app"></div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiDayoffManageModal');
+    }
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+    renderKpiDayoffManageList();
+}
+
+function renderKpiDayoffManageList() {
+    var listEl = document.getElementById('kpiDayoffManageList');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="flex justify-center py-6"><div class="spinner h-6 w-6 border-2 border-indigo-200 border-t-indigo-600"></div></div>';
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = rows || [];
+        listEl.innerHTML = rows.length ? rows.map(function(r) {
+            return '<div class="flex items-center justify-between gap-2 py-2 border-b border-theme last:border-0">' +
+                '<span class="text-xs text-body flex-1 truncate">' + escapeHtmlClient(r.fullName) + '</span>' +
+                '<input type="date" id="kpiDayoffEditDate_' + r.id + '" value="' + escapeHtmlClient(r.date) + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 shadow-sm focus:outline-none focus:border-indigo-500">' +
+                '<button onclick="kpiSaveDayoffEdit(' + r.id + ')" class="text-emerald-500 hover:text-emerald-700 p-1" title="Save new date"><i data-lucide="check" class="h-3.5 w-3.5"></i></button>' +
+                '<button onclick="kpiDeleteDayoffAdmin(' + r.id + ')" class="text-rose-500 hover:text-rose-700 p-1" title="Delete"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>' +
+                '</div>';
+        }).join('') : '<p class="text-xs text-subtle">No Day Offs plotted for this team yet.</p>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).getKpiDayoffs(currentSessionToken, kpiCurrentTeam);
+}
+
+function kpiSaveDayoffEdit(id) {
+    var input = document.getElementById('kpiDayoffEditDate_' + id);
+    if (!input || !input.value) { showPremiumToast('Missing', 'Pick a date.', 'error'); return; }
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) {
+            showPremiumToast('Updated', res.message, 'success');
+            renderKpiDayoffManageList();
+            renderKpiDayoffsPanel();
+        } else {
+            showPremiumToast('Error', (res && res.message) || 'Could not update.', 'error');
+        }
+    }).updateKpiDayoff(currentSessionToken, id, input.value);
 }
 
 // ---- Leave Requests — self-file with optional attachment; Super Admin approves/rejects, and an
