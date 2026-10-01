@@ -993,7 +993,7 @@ const actions = {
 
     const agents = members.map(function (m) {
       const cumulativeSeen = Object.assign({}, cumulativeBefore[m]);
-      const dailyCompletionPct = [], dailyAttendancePct = [], dailyCombinedScore = [];
+      const dailyCompletionPct = [], dailyAttendancePct = [], dailyCombinedScore = [], dailyTasksPct = [], dailyCheckScore = [];
       const totalAssigned = assignedTotal[m] || 0;
 
       dateList.forEach(function (d) {
@@ -1011,6 +1011,8 @@ const actions = {
         // Daily proxy score (no team-average normalization at single-day granularity): any check
         // activity earns a base 60, scaling up with volume, blended with attendance + tasks.
         const checkScore = checksToday > 0 ? Math.min(100, 60 + Math.min(40, checksToday * 4)) : 0;
+        dailyTasksPct.push(tasksPct);
+        dailyCheckScore.push(checkScore);
         dailyCombinedScore.push(Math.round(checkScore * 0.5 + (present ? 100 : 0) * 0.3 + tasksPct * 0.2));
       });
 
@@ -1019,6 +1021,7 @@ const actions = {
       return {
         username: m, fullName: nameMap[m] || m, team: teamOfMap[m] || "",
         dailyCompletionPct: dailyCompletionPct, dailyAttendancePct: dailyAttendancePct, dailyCombinedScore: dailyCombinedScore,
+        dailyTasksPct: dailyTasksPct, dailyCheckScore: dailyCheckScore,
         totalChecksInRange: totalChecksInRange
       };
     });

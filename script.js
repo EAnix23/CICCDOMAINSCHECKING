@@ -5904,7 +5904,13 @@ function renderKpiExecutiveTab() {
                 '<div style="height:280px"><canvas id="kpiExecPieChart"></canvas></div>' +
             '</div>' +
             '<div class="panel-card p-5">' +
-                '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="trophy" class="h-4 w-4 text-amber-500"></i> Agent Ranking</h3><p class="text-[9px] text-subtle">Avg Combined Score, highest first</p></div>' +
+                '<div class="flex items-center justify-between mb-1"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="trophy" class="h-4 w-4 text-amber-500"></i> Agent Ranking</h3><p class="text-[9px] text-subtle">Highest Combined Score first</p></div>' +
+                '<p class="text-[9px] text-subtle mb-3 flex items-center gap-2 flex-wrap">' +
+                    '<span class="font-bold text-heading">Combined Score =</span>' +
+                    '<span class="inline-flex items-center gap-1"><span class="h-1.5 w-1.5 rounded-full bg-indigo-500"></span>50% Check Activity</span> +' +
+                    '<span class="inline-flex items-center gap-1"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>30% Attendance</span> +' +
+                    '<span class="inline-flex items-center gap-1"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>20% Tasks Done</span>' +
+                '</p>' +
                 '<div id="kpiExecRankingTable" class="overflow-y-auto" style="max-height:280px"></div>' +
             '</div>' +
         '</div>';
@@ -6204,15 +6210,30 @@ function kpiExecRenderRanking() {
         return {
             username: a.username, fullName: a.fullName, team: a.team || '',
             avgCompletion: avg(a.dailyCompletionPct || []), avgScore: avg(a.dailyCombinedScore || []), avgAttendance: avg(a.dailyAttendancePct || []),
+            avgCheckScore: avg(a.dailyCheckScore || []), avgTasksPct: avg(a.dailyTasksPct || []),
             totalChecks: a.totalChecksInRange
         };
     }).sort(function(x, y) { return y.avgScore - x.avgScore; });
 
     el.innerHTML = agents.length ? agents.map(function(a, i) {
-        return '<div class="flex items-center gap-2 py-2 border-b border-theme last:border-0">' +
-            '<span class="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ' + (i === 0 ? 'bg-amber-100 text-amber-600' : 'bg-panel text-subtle') + '">' + (i + 1) + '</span>' +
-            '<div class="flex-1 min-w-0"><div class="text-xs font-bold text-body truncate">' + escapeHtmlClient(a.fullName) + (a.team ? ' <span class="text-[9px] text-subtle font-normal">(' + escapeHtmlClient(a.team) + ')</span>' : '') + '</div><div class="text-[9px] text-subtle">' + a.totalChecks + ' checks · ' + a.avgCompletion + '% completion · ' + a.avgAttendance + '% attendance</div></div>' +
-            '<span class="text-sm font-black text-indigo-600">' + a.avgScore + '</span>' +
+        // Weighted contribution of each component toward the final 0-100 score (matches the backend
+        // formula: checkScore*0.5 + attendance*0.3 + tasksPct*0.2) — shown as a tiny stacked bar.
+        var checkW = Math.round(a.avgCheckScore * 0.5), attW = Math.round(a.avgAttendance * 0.3), taskW = Math.round(a.avgTasksPct * 0.2);
+        return '<div class="py-2.5 border-b border-theme last:border-0">' +
+            '<div class="flex items-center gap-2">' +
+                '<span class="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ' + (i === 0 ? 'bg-amber-100 text-amber-600' : 'bg-panel text-subtle') + '">' + (i + 1) + '</span>' +
+                '<div class="flex-1 min-w-0">' +
+                    '<div class="text-xs font-bold text-body truncate">' + escapeHtmlClient(a.fullName) + (a.team ? ' <span class="text-[9px] text-subtle font-normal">(' + escapeHtmlClient(a.team) + ')</span>' : '') + '</div>' +
+                    '<div class="text-[9px] text-subtle">' + a.totalChecks + ' checks · ' + a.avgCompletion + '% completion</div>' +
+                '</div>' +
+                '<span class="text-sm font-black text-indigo-600" title="Check ' + checkW + ' + Attendance ' + attW + ' + Tasks ' + taskW + ' = ' + a.avgScore + '">' + a.avgScore + '</span>' +
+            '</div>' +
+            '<div class="flex h-1.5 rounded-full overflow-hidden bg-panel mt-2 ml-8" title="Check Activity ' + a.avgCheckScore + '% (contributes ' + checkW + ' pts) · Attendance ' + a.avgAttendance + '% (contributes ' + attW + ' pts) · Tasks ' + a.avgTasksPct + '% (contributes ' + taskW + ' pts)">' +
+                '<div class="bg-indigo-500" style="width:' + checkW + '%"></div>' +
+                '<div class="bg-emerald-500" style="width:' + attW + '%"></div>' +
+                '<div class="bg-amber-500" style="width:' + taskW + '%"></div>' +
+            '</div>' +
+            '<div class="text-[9px] text-subtle ml-8 mt-1">Checks ' + a.avgCheckScore + '% · Attendance ' + a.avgAttendance + '% · Tasks ' + a.avgTasksPct + '%</div>' +
         '</div>';
     }).join('') : '<p class="text-xs text-subtle p-3 text-center">No data for this range.</p>';
 }
