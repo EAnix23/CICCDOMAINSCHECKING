@@ -1049,7 +1049,10 @@ const actions = {
       teamTotals.dailyCombinedScore.push(Math.round(agents.reduce(function (s, a) { return s + a.dailyCombinedScore[i]; }, 0) / n));
     });
 
-    const avgUploadsPerDay = dateList.length > 0 ? Math.round((totalUploadsInRange / dateList.length) * 10) / 10 : 0;
+    // Per agent, per day — whole number (divides total uploads across both the date range and the
+    // headcount, so it reads as "how many domains does one agent upload on an average day").
+    const uploadDivisor = dateList.length * (members.length || 1);
+    const avgUploadsPerDay = uploadDivisor > 0 ? Math.round(totalUploadsInRange / uploadDivisor) : 0;
 
     return { dateList: dateList, agents: agents, teamTotals: teamTotals, pie: pie, totalUploadsInRange: totalUploadsInRange, avgUploadsPerDay: avgUploadsPerDay };
   },

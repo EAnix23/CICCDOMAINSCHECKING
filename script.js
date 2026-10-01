@@ -5997,7 +5997,7 @@ function kpiExecRenderStatCards() {
     var totalUploads = kpiExecData.totalUploadsInRange || 0;
     var cards = [
         { label: 'Total Checks', value: totalChecks.toLocaleString(), icon: 'shield-check', accent: 'indigo' },
-        { label: 'Avg Uploads / Day', value: avgUploads.toLocaleString(), sub: totalUploads.toLocaleString() + ' total', icon: 'upload-cloud', accent: 'cyan' },
+        { label: 'Avg Uploads / Agent / Day', value: avgUploads.toLocaleString(), sub: totalUploads.toLocaleString() + ' total', icon: 'upload-cloud', accent: 'cyan' },
         { label: 'Avg Completion', value: avgCompletion + '%', icon: 'target', accent: 'emerald' },
         { label: 'Avg Attendance', value: avgAttendance + '%', icon: 'calendar-check', accent: 'amber' },
         { label: 'Top Performer', value: top ? top.fullName : '—', sub: top ? ('Score ' + top.score) : '', icon: 'crown', accent: 'rose' }
