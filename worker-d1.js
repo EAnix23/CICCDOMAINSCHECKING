@@ -488,6 +488,23 @@ const actions = {
       await db.prepare("INSERT INTO kpi_domain_checks (username, team, target, batch, domain, isp, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(params.operatorUsername, params.operatorTeam || '', target, params.batch || '', params.domain, isp, status).run();
     }
+
+    // Auto-complete the ISP accountability checklist (category 'isp_check', label = isp name) for
+    // whoever Super Admin has assigned to that ISP today — same completions table the Daily
+    // Checklist system already reads, so "who's really reporting per day" shows up there too,
+    // driven automatically by the bot's own check result instead of a manual tick.
+    var ispAssignees = await db.prepare(
+      "SELECT id, username FROM kpi_checklist_assignments WHERE category = 'isp_check' AND label = ? AND active = 1"
+    ).bind(isp).all();
+    var ispToday = getPHDateStr();
+    for (var i = 0; i < ispAssignees.results.length; i++) {
+      var a = ispAssignees.results[i];
+      await db.prepare(
+        `INSERT INTO kpi_checklist_completions (assignment_id, username, task_date) VALUES (?, ?, ?)
+         ON CONFLICT(assignment_id, task_date) DO UPDATE SET completed_at = datetime('now')`
+      ).bind(a.id, a.username, ispToday).run();
+    }
+
     return { success: true, message: "Updated " + isp.toUpperCase() + " for " + params.domain };
   },
 
@@ -868,6 +885,135 @@ const actions = {
 
       return { username: m, fullName: nameMap[m] || m, team: teamMap[m] || "", assigned: totalAssigned, checked: totalChecked, pct: pct, breakdown: breakdown };
     }).sort(function (a, b) { return b.pct - a.pct; });
+  },
+
+  // ---- Executive Dashboard — daily trend lines (Domain Check Completion %, Combined Score,
+  // Attendance %) per agent over a date range, plus a per-agent pie breakdown of check volume.
+  // Used for the Line/Pie charts and the agent-vs-agent "Versus" comparison on the frontend — one
+  // call returns everything needed for the whole date range, so switching Last 7 Days/Month/Year
+  // or picking agents to compare is just re-slicing data already in hand, not a new request.
+  async getKpiExecutiveDashboard(db, token, team, startDate, endDate) {
+    const session = await checkSession(db, token);
+    let teamList;
+    if (session.role === "Super Admin") {
+      const { results: teamRows } = await db.prepare("SELECT DISTINCT team FROM users WHERE team != '' ORDER BY team ASC").all();
+      teamList = teamRows.map(r => r.team);
+      if (team && teamList.indexOf(team) === -1) teamList.push(team);
+    } else {
+      if (!session.team) return { dateList: [], agents: [], teamTotals: {}, pie: [] };
+      teamList = [session.team];
+    }
+    if (teamList.length === 0) return { dateList: [], agents: [], teamTotals: {}, pie: [] };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate || ""))) {
+      return { dateList: [], agents: [], teamTotals: {}, pie: [], error: "A valid start and end date are required." };
+    }
+    const placeholders = teamList.map(() => "?").join(",");
+
+    const { results: memberRows } = await db.prepare(`SELECT username, team, full_name as fullName FROM users WHERE team IN (${placeholders}) ORDER BY team ASC, username ASC`).bind(...teamList).all();
+    const members = memberRows.map(r => r.username);
+    if (members.length === 0) return { dateList: [], agents: [], teamTotals: {}, pie: [] };
+    const nameMap = {};
+    memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; });
+
+    const dateList = [];
+    let cursor = new Date(startDate + "T00:00:00Z");
+    const last = new Date(endDate + "T00:00:00Z");
+    while (cursor <= last && dateList.length < 400) { dateList.push(cursor.toISOString().slice(0, 10)); cursor = new Date(cursor.getTime() + 86400000); }
+
+    const { results: attRows } = await db.prepare(
+      `SELECT username, date FROM kpi_attendance WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date >= ? AND date <= ? AND time_in != '' AND time_out != ''`
+    ).bind(...teamList, startDate, endDate).all();
+    const attendedSet = {};
+    attRows.forEach(function (r) { (attendedSet[r.username] = attendedSet[r.username] || {})[r.date] = true; });
+
+    const { results: checkCountRows } = await db.prepare(
+      `SELECT username, date(created_at) as d, COUNT(*) as cnt FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(created_at) >= ? AND date(created_at) <= ? GROUP BY username, d`
+    ).bind(...teamList, startDate, endDate).all();
+    const checksByAgentDate = {};
+    checkCountRows.forEach(function (r) { (checksByAgentDate[r.username] = checksByAgentDate[r.username] || {})[r.d] = r.cnt; });
+
+    // Total assigned per agent (all-time), same definition as getKpiDomainCheckStats — the
+    // denominator for the cumulative completion % line.
+    const { results: bbcRows } = await db.prepare(`SELECT agent, COUNT(*) as cnt FROM domains WHERE agent IN (SELECT username FROM users WHERE team IN (${placeholders})) GROUP BY agent`).bind(...teamList).all();
+    const { results: dpvRows } = await db.prepare(`SELECT agent, COUNT(*) as cnt FROM dpv_records WHERE team IN (${placeholders}) AND domain NOT LIKE 'init-%' GROUP BY agent`).bind(...teamList).all();
+    const assignedTotal = {}; members.forEach(function (m) { assignedTotal[m] = 0; });
+    bbcRows.forEach(function (r) { if (assignedTotal[r.agent] !== undefined) assignedTotal[r.agent] += r.cnt; });
+    dpvRows.forEach(function (r) { if (assignedTotal[r.agent] !== undefined) assignedTotal[r.agent] += r.cnt; });
+
+    // Cumulative distinct domains checked as of the start of the range (so the % line starts at
+    // the right place even when the range begins mid-way through someone's work), then each day
+    // in range adds whatever distinct domains were first checked that day.
+    const { results: checkedBeforeRows } = await db.prepare(
+      `SELECT username, domain FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(created_at) < ?`
+    ).bind(...teamList, startDate).all();
+    const cumulativeBefore = {}; members.forEach(function (m) { cumulativeBefore[m] = {}; });
+    checkedBeforeRows.forEach(function (r) { if (cumulativeBefore[r.username]) cumulativeBefore[r.username][r.domain] = true; });
+
+    const { results: checkedInRangeRows } = await db.prepare(
+      `SELECT username, date(created_at) as d, domain FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(created_at) >= ? AND date(created_at) <= ?`
+    ).bind(...teamList, startDate, endDate).all();
+    const inRangeByAgentDate = {};
+    checkedInRangeRows.forEach(function (r) {
+      const byDate = (inRangeByAgentDate[r.username] = inRangeByAgentDate[r.username] || {});
+      (byDate[r.d] = byDate[r.d] || {})[r.domain] = true;
+    });
+
+    const { results: taskRows } = await db.prepare(
+      `SELECT assigned_to, task_date, status, COUNT(*) as cnt FROM kpi_tasks WHERE assigned_to IN (SELECT username FROM users WHERE team IN (${placeholders})) AND task_date >= ? AND task_date <= ? GROUP BY assigned_to, task_date, status`
+    ).bind(...teamList, startDate, endDate).all();
+    const taskByAgentDate = {};
+    taskRows.forEach(function (r) {
+      const bucket = (taskByAgentDate[r.assigned_to] = taskByAgentDate[r.assigned_to] || {});
+      const d = (bucket[r.task_date] = bucket[r.task_date] || { total: 0, done: 0 });
+      d.total += r.cnt; if (r.status === "done") d.done += r.cnt;
+    });
+
+    const agents = members.map(function (m) {
+      const cumulativeSeen = Object.assign({}, cumulativeBefore[m]);
+      const dailyCompletionPct = [], dailyAttendancePct = [], dailyCombinedScore = [];
+      const totalAssigned = assignedTotal[m] || 0;
+
+      dateList.forEach(function (d) {
+        const todaysDomains = (inRangeByAgentDate[m] || {})[d];
+        if (todaysDomains) Object.keys(todaysDomains).forEach(function (dom) { cumulativeSeen[dom] = true; });
+        const seenCount = Object.keys(cumulativeSeen).length;
+        dailyCompletionPct.push(totalAssigned > 0 ? Math.min(100, Math.round((seenCount / totalAssigned) * 100)) : (seenCount > 0 ? 100 : 0));
+
+        const present = !!(attendedSet[m] && attendedSet[m][d]);
+        dailyAttendancePct.push(present ? 100 : 0);
+
+        const taskInfo = (taskByAgentDate[m] || {})[d];
+        const tasksPct = taskInfo && taskInfo.total > 0 ? Math.round((taskInfo.done / taskInfo.total) * 100) : 100;
+        const checksToday = (checksByAgentDate[m] || {})[d] || 0;
+        // Daily proxy score (no team-average normalization at single-day granularity): any check
+        // activity earns a base 60, scaling up with volume, blended with attendance + tasks.
+        const checkScore = checksToday > 0 ? Math.min(100, 60 + Math.min(40, checksToday * 4)) : 0;
+        dailyCombinedScore.push(Math.round(checkScore * 0.5 + (present ? 100 : 0) * 0.3 + tasksPct * 0.2));
+      });
+
+      const totalChecksInRange = dateList.reduce(function (s, d) { return s + ((checksByAgentDate[m] || {})[d] || 0); }, 0);
+
+      return {
+        username: m, fullName: nameMap[m] || m,
+        dailyCompletionPct: dailyCompletionPct, dailyAttendancePct: dailyAttendancePct, dailyCombinedScore: dailyCombinedScore,
+        totalChecksInRange: totalChecksInRange
+      };
+    });
+
+    const grandTotalChecks = agents.reduce(function (s, a) { return s + a.totalChecksInRange; }, 0);
+    const pie = agents.filter(function (a) { return a.totalChecksInRange > 0; }).map(function (a) {
+      return { username: a.username, fullName: a.fullName, value: a.totalChecksInRange, pct: grandTotalChecks > 0 ? Math.round((a.totalChecksInRange / grandTotalChecks) * 100) : 0 };
+    }).sort(function (x, y) { return y.value - x.value; });
+
+    const n = agents.length || 1;
+    const teamTotals = { dailyCompletionPct: [], dailyAttendancePct: [], dailyCombinedScore: [] };
+    dateList.forEach(function (d, i) {
+      teamTotals.dailyCompletionPct.push(Math.round(agents.reduce(function (s, a) { return s + a.dailyCompletionPct[i]; }, 0) / n));
+      teamTotals.dailyAttendancePct.push(Math.round(agents.reduce(function (s, a) { return s + a.dailyAttendancePct[i]; }, 0) / n));
+      teamTotals.dailyCombinedScore.push(Math.round(agents.reduce(function (s, a) { return s + a.dailyCombinedScore[i]; }, 0) / n));
+    });
+
+    return { dateList: dateList, agents: agents, teamTotals: teamTotals, pie: pie };
   },
 
   // Raw material for the bi-monthly DTR spreadsheet HR asks for — per-member daily hours computed

@@ -4029,6 +4029,7 @@ function renderKpiShell(teams) {
             '<button onclick="kpiSwitchTab(\'attendance\')" id="kpiTabBtnAttendance" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Time In / Time Out</button>' +
             '<button onclick="kpiSwitchTab(\'scoreboard\')" id="kpiTabBtnScoreboard" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Scoreboard</button>' +
             '<button onclick="kpiSwitchTab(\'achievements\')" id="kpiTabBtnAchievements" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Accomplishments</button>' +
+            '<button onclick="kpiSwitchTab(\'executive\')" id="kpiTabBtnExecutive" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Executive Dashboard</button>' +
         '</div>' +
         '<div id="kpiTabContent"></div>';
 
@@ -4043,7 +4044,7 @@ function kpiSwitchTeam(team) {
 
 function kpiSwitchTab(tabName) {
     kpiCurrentTab = tabName;
-    ['Todo', 'Attendance', 'Scoreboard', 'Achievements'].forEach(function(t) {
+    ['Todo', 'Attendance', 'Scoreboard', 'Achievements', 'Executive'].forEach(function(t) {
         var btn = document.getElementById('kpiTabBtn' + t);
         if (!btn) return;
         var isActive = t.toLowerCase() === tabName;
@@ -4058,6 +4059,7 @@ function kpiSwitchTab(tabName) {
     else if (tabName === 'attendance') renderKpiAttendanceTab();
     else if (tabName === 'scoreboard') renderKpiScoreboardTab();
     else if (tabName === 'achievements') renderKpiAchievementsTab();
+    else if (tabName === 'executive') renderKpiExecutiveTab();
 }
 
 // ---- Tab 1: To-Do List (auto-listed uploads + manual tasks) ----
@@ -5745,6 +5747,7 @@ function kpiLoadDomainCheckStats() {
                         '<span class="text-[9px] text-subtle">Brand</span>' +
                         '<span class="inline-flex items-center px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase tracking-wide bg-teal-500/10 text-teal-500 ml-2">DPV</span>' +
                         '<span class="text-[9px] text-subtle">Batch</span>' +
+                        (currentUserRole === 'Super Admin' ? '<button onclick="kpiOpenIspAssignManager()" class="ml-2 px-2.5 py-1 bg-panel border border-theme rounded-lg text-[9px] font-extrabold text-body hover:bg-app shadow-sm flex items-center gap-1"><i data-lucide="user-cog" class="h-3 w-3"></i> Assign ISPs</button>' : '') +
                     '</div>' +
                 '</div>' +
                 '<p class="text-[10px] text-subtle mb-4">All-time, per Brand (BBC DOMAIN) and Batch (DATASHEET/DPV): domains uploaded (Assigned) vs. run through checker.js at least once (Checked). Click a member to expand. Not period-scoped.</p>' +
@@ -5754,6 +5757,322 @@ function kpiLoadDomainCheckStats() {
     }).withFailureHandler(function() {
         el.innerHTML = '<p class="text-sm text-rose-500 p-3">Error loading domain check stats.</p>';
     }).getKpiDomainCheckStats(currentSessionToken);
+}
+
+// ---- ISP Assignment Manager (Super Admin) — who's accountable for verifying which ISP each day.
+// Purely a tracking/accountability layer: checker.js still checks all 4 ISPs on its own either way;
+// this just says who gets credit (via the Daily Checklist's category='isp_check' completions,
+// auto-marked by submitDomainCheckResult whenever that ISP gets a result that day) for "did their
+// ISP get covered today," so Super Admin can see who's really reporting per day. ----
+var KPI_ISP_LIST = ['pldt', 'globe', 'converge', 'dito'];
+var kpiIspAssignAgents = [];
+
+function kpiOpenIspAssignManager() {
+    var modal = document.getElementById('kpiIspAssignModal');
+    if (!modal) {
+        var html = [
+            '<div id="kpiIspAssignModal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity duration-200 opacity-0">',
+            '  <div class="modal-shell w-full max-w-2xl flex flex-col max-h-[85vh]">',
+            '    <div class="px-6 py-4 border-b border-theme flex items-center justify-between bg-app flex-shrink-0">',
+            '      <h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="user-cog" class="h-5 w-5 text-indigo-500"></i> Assign ISP Accountability</h3>',
+            '      <button onclick="closeSmoothly(\'kpiIspAssignModal\')" class="text-subtle hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-tint"><i data-lucide="x" class="h-5 w-5"></i></button>',
+            '    </div>',
+            '    <p class="px-6 pt-4 text-[10px] text-subtle">Who\'s accountable for making sure each ISP gets checked every day. The bot still checks all 4 either way — this just tracks who gets credit.</p>',
+            '    <div id="kpiIspAssignList" class="p-6 overflow-y-auto flex-1 bg-app"></div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+        document.body.insertAdjacentHTML('beforeend', html);
+        modal = document.getElementById('kpiIspAssignModal');
+    }
+    modal.classList.remove('hidden');
+    setTimeout(function() { modal.style.opacity = '1'; }, 10);
+
+    google.script.run.withSuccessHandler(function(agents) {
+        kpiIspAssignAgents = agents || [];
+        renderKpiIspAssignList();
+    }).getAllAgents(currentSessionToken);
+}
+
+function renderKpiIspAssignList() {
+    var listEl = document.getElementById('kpiIspAssignList');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="flex justify-center py-6"><div class="spinner h-6 w-6 border-2 border-indigo-200 border-t-indigo-600"></div></div>';
+
+    google.script.run.withSuccessHandler(function(rows) {
+        rows = (rows || []).filter(function(r) { return r.active; });
+        var agentOptions = kpiIspAssignAgents.map(function(a) { return '<option value="' + escapeHtmlClient(a.username) + '">' + escapeHtmlClient(a.fullName || a.username) + '</option>'; }).join('');
+
+        listEl.innerHTML = KPI_ISP_LIST.map(function(isp) {
+            var ispRows = rows.filter(function(r) { return r.label === isp; });
+            var chips = ispRows.length ? ispRows.map(function(r) {
+                return '<span class="px-3 py-1.5 bg-indigo-tint text-indigo-600 rounded-lg text-xs font-bold flex items-center gap-1.5">' + escapeHtmlClient(r.fullName) +
+                    '<button onclick="kpiRemoveIspAssign(' + r.id + ')" class="hover:text-rose-600"><i data-lucide="x" class="h-3 w-3"></i></button></span>';
+            }).join('') : '<span class="text-xs text-subtle">No one assigned yet.</span>';
+
+            return '<div class="mb-5 pb-5 border-b border-theme last:border-0 last:mb-0 last:pb-0">' +
+                '<p class="text-xs font-black text-heading uppercase tracking-widest mb-2">' + isp.toUpperCase() + '</p>' +
+                '<div class="flex flex-wrap gap-2 mb-3">' + chips + '</div>' +
+                '<div class="flex gap-2"><select id="kpiIspAssignAgent_' + isp + '" class="flex-1 border border-theme bg-panel rounded-lg text-xs text-body px-2 py-2 shadow-sm focus:outline-none focus:border-indigo-500"><option value="">Select agent...</option>' + agentOptions + '</select>' +
+                '<button onclick="kpiAddIspAssign(\'' + isp + '\')" class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Add</button></div>' +
+            '</div>';
+        }).join('');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }).getKpiChecklistAssignments(currentSessionToken, 'isp_check');
+}
+
+function kpiAddIspAssign(isp) {
+    var sel = document.getElementById('kpiIspAssignAgent_' + isp);
+    if (!sel || !sel.value) { showPremiumToast('Missing', 'Pick an agent.', 'error'); return; }
+    google.script.run.withSuccessHandler(function(res) {
+        if (res && res.success) { renderKpiIspAssignList(); }
+        else { showPremiumToast('Error', (res && res.message) || 'Could not assign.', 'error'); }
+    }).addKpiChecklistAssignment(currentSessionToken, sel.value, 'isp_check', isp, '', '', '');
+}
+
+function kpiRemoveIspAssign(id) {
+    google.script.run.withSuccessHandler(function() { renderKpiIspAssignList(); }).deleteKpiChecklistAssignment(currentSessionToken, id);
+}
+
+// ---- Tab: Executive Dashboard — line/pie trend charts + agent-vs-agent comparison, over a ----
+// Last 7 Days / Last Month / Last Year (or custom) date range, with a Daily/Monthly granularity
+// toggle. One data fetch per range; switching granularity or picking agents to compare just
+// re-slices data already in hand (see getKpiExecutiveDashboard).
+var kpiExecData = null;
+var kpiExecRange = { start: null, end: null };
+var kpiExecGranularity = 'daily';
+var kpiExecVersusAgents = [];
+var kpiExecVersusMetric = 'dailyCompletionPct';
+var kpiExecLineChartInstance = null;
+var kpiExecPieChartInstance = null;
+var KPI_EXEC_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16'];
+
+function kpiExecDateRangeFor(preset) {
+    var endStr = getPHTodayDateStr();
+    var startDate = new Date(endStr + 'T00:00:00Z');
+    if (preset === '7d') startDate.setUTCDate(startDate.getUTCDate() - 6);
+    else if (preset === '1m') startDate.setUTCMonth(startDate.getUTCMonth() - 1);
+    else if (preset === '1y') startDate.setUTCFullYear(startDate.getUTCFullYear() - 1);
+    return { start: startDate.toISOString().slice(0, 10), end: endStr };
+}
+
+function renderKpiExecutiveTab() {
+    var content = document.getElementById('kpiTabContent');
+    if (!content) return;
+    if (!kpiCurrentTeam && currentUserRole !== 'Super Admin') { content.innerHTML = '<p class="text-sm text-subtle">No team assigned.</p>'; return; }
+    if (!kpiExecRange.start) {
+        var r = kpiExecDateRangeFor('7d');
+        kpiExecRange.start = r.start; kpiExecRange.end = r.end;
+    }
+
+    content.innerHTML =
+        '<div class="panel-card p-5 mb-5">' +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-4">' +
+                '<h3 class="text-sm font-black text-heading">Performance Trend</h3>' +
+                '<div class="flex items-center gap-2 flex-wrap">' +
+                    '<button onclick="kpiExecSetPreset(\'7d\')" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Last 7 Days</button>' +
+                    '<button onclick="kpiExecSetPreset(\'1m\')" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Last Month</button>' +
+                    '<button onclick="kpiExecSetPreset(\'1y\')" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Last Year</button>' +
+                    '<input type="date" id="kpiExecStartInput" value="' + kpiExecRange.start + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5">' +
+                    '<span class="text-xs text-subtle">to</span>' +
+                    '<input type="date" id="kpiExecEndInput" value="' + kpiExecRange.end + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5">' +
+                    '<button onclick="kpiExecApplyCustomRange()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Apply</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="flex items-center gap-2 mb-4">' +
+                '<span class="text-[10px] font-bold text-subtle uppercase mr-1">Granularity:</span>' +
+                '<button onclick="kpiExecSetGranularity(\'daily\')" id="kpiExecGranDaily" class="px-3 py-1 rounded-lg text-xs font-bold">Daily Trend</button>' +
+                '<button onclick="kpiExecSetGranularity(\'monthly\')" id="kpiExecGranMonthly" class="px-3 py-1 rounded-lg text-xs font-bold">Monthly Trend</button>' +
+            '</div>' +
+            '<div id="kpiExecVersusBar" class="mb-4"></div>' +
+            '<div style="height:320px"><canvas id="kpiExecLineChart"></canvas></div>' +
+        '</div>' +
+        '<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">' +
+            '<div class="panel-card p-5">' +
+                '<h3 class="text-sm font-black text-heading mb-4">Checks by Agent</h3>' +
+                '<div style="height:280px"><canvas id="kpiExecPieChart"></canvas></div>' +
+            '</div>' +
+            '<div class="panel-card p-5">' +
+                '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-black text-heading">Agent Ranking</h3><p class="text-[9px] text-subtle">Avg Combined Score, highest first</p></div>' +
+                '<div id="kpiExecRankingTable" class="overflow-y-auto" style="max-height:280px"></div>' +
+            '</div>' +
+        '</div>';
+
+    kpiExecRefreshGranButtons();
+    kpiExecLoadData();
+}
+
+function kpiExecRefreshGranButtons() {
+    var daily = document.getElementById('kpiExecGranDaily');
+    var monthly = document.getElementById('kpiExecGranMonthly');
+    if (!daily || !monthly) return;
+    daily.className = 'px-3 py-1 rounded-lg text-xs font-bold ' + (kpiExecGranularity === 'daily' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body hover:bg-app');
+    monthly.className = 'px-3 py-1 rounded-lg text-xs font-bold ' + (kpiExecGranularity === 'monthly' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body hover:bg-app');
+}
+
+function kpiExecSetGranularity(g) {
+    kpiExecGranularity = g;
+    kpiExecRefreshGranButtons();
+    kpiExecRenderCharts();
+}
+
+function kpiExecSetPreset(preset) {
+    var r = kpiExecDateRangeFor(preset);
+    kpiExecRange.start = r.start; kpiExecRange.end = r.end;
+    var si = document.getElementById('kpiExecStartInput'), ei = document.getElementById('kpiExecEndInput');
+    if (si) si.value = r.start;
+    if (ei) ei.value = r.end;
+    kpiExecLoadData();
+}
+
+function kpiExecApplyCustomRange() {
+    var s = document.getElementById('kpiExecStartInput').value;
+    var e = document.getElementById('kpiExecEndInput').value;
+    if (!s || !e) { showPremiumToast('Missing', 'Pick both dates.', 'error'); return; }
+    if (s > e) { showPremiumToast('Invalid', 'Start date must be before end date.', 'error'); return; }
+    kpiExecRange.start = s; kpiExecRange.end = e;
+    kpiExecLoadData();
+}
+
+function kpiExecLoadData() {
+    google.script.run.withSuccessHandler(function(data) {
+        kpiExecData = data || { dateList: [], agents: [], teamTotals: {}, pie: [] };
+        renderKpiExecVersusBar();
+        kpiExecRenderCharts();
+        kpiExecRenderRanking();
+    }).withFailureHandler(function() {
+        showPremiumToast('Error', 'Could not load Executive Dashboard data.', 'error');
+    }).getKpiExecutiveDashboard(currentSessionToken, kpiCurrentTeam, kpiExecRange.start, kpiExecRange.end);
+}
+
+function renderKpiExecVersusBar() {
+    var bar = document.getElementById('kpiExecVersusBar');
+    if (!bar || !kpiExecData) return;
+    var agents = kpiExecData.agents || [];
+    var chips = agents.map(function(a) {
+        var checked = kpiExecVersusAgents.indexOf(a.username) !== -1;
+        return '<label class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold cursor-pointer ' + (checked ? 'bg-indigo-tint border-indigo-400 text-indigo-600' : 'bg-panel border-theme text-body') + '">' +
+            '<input type="checkbox" class="hidden" onchange="kpiExecToggleVersusAgent(\'' + escapeHtmlClient(a.username) + '\')" ' + (checked ? 'checked' : '') + '>' +
+            escapeHtmlClient(a.fullName) + '</label>';
+    }).join('');
+    var metricSelect = kpiExecVersusAgents.length >= 2 ?
+        '<select onchange="kpiExecSetVersusMetric(this.value)" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5 ml-2">' +
+            '<option value="dailyCompletionPct"' + (kpiExecVersusMetric === 'dailyCompletionPct' ? ' selected' : '') + '>Domain Check Completion %</option>' +
+            '<option value="dailyCombinedScore"' + (kpiExecVersusMetric === 'dailyCombinedScore' ? ' selected' : '') + '>Combined KPI Score</option>' +
+            '<option value="dailyAttendancePct"' + (kpiExecVersusMetric === 'dailyAttendancePct' ? ' selected' : '') + '>Attendance %</option>' +
+        '</select>' : '';
+    bar.innerHTML = '<p class="text-[10px] font-bold text-subtle uppercase mb-2">Versus — pick 2+ agents to compare (otherwise shows team average)</p>' +
+        '<div class="flex flex-wrap gap-2 items-center">' + chips + metricSelect + '</div>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function kpiExecToggleVersusAgent(username) {
+    var idx = kpiExecVersusAgents.indexOf(username);
+    if (idx === -1) kpiExecVersusAgents.push(username); else kpiExecVersusAgents.splice(idx, 1);
+    renderKpiExecVersusBar();
+    kpiExecRenderCharts();
+}
+
+function kpiExecSetVersusMetric(metric) {
+    kpiExecVersusMetric = metric;
+    kpiExecRenderCharts();
+}
+
+function kpiExecAggregateByGranularity(dateList, values) {
+    if (kpiExecGranularity === 'daily') return { labels: dateList, values: values };
+    var buckets = {}, order = [];
+    dateList.forEach(function(d, i) {
+        var key = d.slice(0, 7);
+        if (!buckets[key]) { buckets[key] = []; order.push(key); }
+        buckets[key].push(values[i]);
+    });
+    var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var labels = order.map(function(k) {
+        var parts = k.split('-');
+        return monthNames[parseInt(parts[1], 10) - 1] + ' ' + parts[0];
+    });
+    var vals = order.map(function(k) {
+        var arr = buckets[k];
+        return Math.round(arr.reduce(function(s, v) { return s + v; }, 0) / arr.length);
+    });
+    return { labels: labels, values: vals };
+}
+
+function kpiExecRenderCharts() {
+    if (!kpiExecData || typeof Chart === 'undefined') return;
+    var dateList = kpiExecData.dateList || [];
+    var canvas = document.getElementById('kpiExecLineChart');
+    if (canvas) {
+        if (kpiExecLineChartInstance) { kpiExecLineChartInstance.destroy(); kpiExecLineChartInstance = null; }
+        var datasets = [], labels = [];
+
+        if (kpiExecVersusAgents.length >= 2) {
+            kpiExecVersusAgents.forEach(function(username, idx) {
+                var agent = (kpiExecData.agents || []).filter(function(a) { return a.username === username; })[0];
+                if (!agent) return;
+                var agg = kpiExecAggregateByGranularity(dateList, agent[kpiExecVersusMetric] || []);
+                labels = agg.labels;
+                var c = KPI_EXEC_COLORS[idx % KPI_EXEC_COLORS.length];
+                datasets.push({ label: agent.fullName, data: agg.values, borderColor: c, backgroundColor: c + '22', tension: 0.3, fill: false });
+            });
+        } else {
+            var tt = kpiExecData.teamTotals || {};
+            [
+                { key: 'dailyCompletionPct', label: 'Completion %', color: KPI_EXEC_COLORS[0] },
+                { key: 'dailyCombinedScore', label: 'Combined Score', color: KPI_EXEC_COLORS[1] },
+                { key: 'dailyAttendancePct', label: 'Attendance %', color: KPI_EXEC_COLORS[2] }
+            ].forEach(function(m) {
+                var agg = kpiExecAggregateByGranularity(dateList, tt[m.key] || []);
+                labels = agg.labels;
+                datasets.push({ label: m.label, data: agg.values, borderColor: m.color, backgroundColor: m.color + '22', tension: 0.3, fill: false });
+            });
+        }
+
+        kpiExecLineChartInstance = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true, max: 100 } },
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }
+            }
+        });
+    }
+
+    var pieCanvas = document.getElementById('kpiExecPieChart');
+    if (pieCanvas) {
+        if (kpiExecPieChartInstance) { kpiExecPieChartInstance.destroy(); kpiExecPieChartInstance = null; }
+        var pie = kpiExecData.pie || [];
+        kpiExecPieChartInstance = new Chart(pieCanvas.getContext('2d'), {
+            type: 'pie',
+            data: {
+                labels: pie.map(function(p) { return p.fullName; }),
+                datasets: [{ data: pie.map(function(p) { return p.value; }), backgroundColor: pie.map(function(_, i) { return KPI_EXEC_COLORS[i % KPI_EXEC_COLORS.length]; }) }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } } }
+        });
+    }
+}
+
+function kpiExecRenderRanking() {
+    var el = document.getElementById('kpiExecRankingTable');
+    if (!el || !kpiExecData) return;
+    function avg(arr) { return arr.length ? Math.round(arr.reduce(function(s, v) { return s + v; }, 0) / arr.length) : 0; }
+    var agents = (kpiExecData.agents || []).map(function(a) {
+        return {
+            username: a.username, fullName: a.fullName,
+            avgCompletion: avg(a.dailyCompletionPct || []), avgScore: avg(a.dailyCombinedScore || []), avgAttendance: avg(a.dailyAttendancePct || []),
+            totalChecks: a.totalChecksInRange
+        };
+    }).sort(function(x, y) { return y.avgScore - x.avgScore; });
+
+    el.innerHTML = agents.length ? agents.map(function(a, i) {
+        return '<div class="flex items-center gap-2 py-2 border-b border-theme last:border-0">' +
+            '<span class="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ' + (i === 0 ? 'bg-amber-100 text-amber-600' : 'bg-panel text-subtle') + '">' + (i + 1) + '</span>' +
+            '<div class="flex-1 min-w-0"><div class="text-xs font-bold text-body truncate">' + escapeHtmlClient(a.fullName) + '</div><div class="text-[9px] text-subtle">' + a.totalChecks + ' checks · ' + a.avgCompletion + '% completion · ' + a.avgAttendance + '% attendance</div></div>' +
+            '<span class="text-sm font-black text-indigo-600">' + a.avgScore + '</span>' +
+        '</div>';
+    }).join('') : '<p class="text-xs text-subtle p-3 text-center">No data for this range.</p>';
 }
 
 // ---- DTR Export (CSV, matches the HR DTR template's columns where the data actually exists) ----
