@@ -4987,7 +4987,7 @@ function openKpiOvertimeExportModal() {
             '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Date Range</label>',
             '      <div class="flex items-center gap-2 mb-4"><input type="date" id="kpiOtExportStart" value="' + def.start + '" class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"><span class="text-xs text-subtle">to</span><input type="date" id="kpiOtExportEnd" value="' + def.end + '" class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>',
             '      <p class="text-[10px] text-subtle mb-4">Only approved OT requests in this range are included. Approved by: ' + escapeHtmlClient(KPI_OT_DEPT_HEAD) + '.</p>',
-            '      <button onclick="kpiRunOvertimeExport()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="download" class="h-4 w-4"></i> Download CSV</button>',
+            '      <button onclick="kpiRunOvertimeExport()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="download" class="h-4 w-4"></i> Download OT Form (.xlsx)</button>',
             '    </div>',
             '  </div>',
             '</div>'
@@ -5004,34 +5004,123 @@ function kpiRunOvertimeExport() {
     var startDate = document.getElementById('kpiOtExportStart').value;
     var endDate = document.getElementById('kpiOtExportEnd').value;
     if (!startDate || !endDate) { showPremiumToast('Missing', 'Pick a start and end date.', 'error'); return; }
+    if (typeof ExcelJS === 'undefined') { showPremiumToast('Error', 'Export library did not load. Check your connection and try again.', 'error'); return; }
+
     google.script.run.withSuccessHandler(function(rows) {
         rows = (rows || []).filter(function(r) { return r.status === 'approved' && r.date >= startDate && r.date <= endDate; });
         if (rows.length === 0) { showPremiumToast('Empty', 'No approved OT requests in this range.', 'error'); return; }
-
-        function esc(v) { v = (v === undefined || v === null) ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
-        var lines = [];
-        lines.push(esc('OVERTIME REQUEST FORM'));
-        lines.push('');
-        lines.push(esc('Department:') + ',' + esc(kpiCurrentTeam) + ',,' + esc('Date Filed:') + ',' + esc(startDate + ' to ' + endDate));
-        lines.push('');
-        lines.push(['No.', 'Employee Name', 'Position', 'Date', 'OT Schedule (From-To)', 'Total OT Hours', 'Task Description / Justification'].map(esc).join(','));
-        rows.forEach(function(r, idx) {
-            var schedule = r.otTimeIn ? (r.otTimeIn + '-' + (r.otTimeOut || '')) : '';
-            lines.push([idx + 1, r.fullName, r.position || '', r.date, schedule, r.totalOtHours || '', r.reason].map(esc).join(','));
-        });
-        lines.push('');
-        lines.push(esc('Approved by:') + ',,,' + esc('Date of approval:') + ',');
-        lines.push(esc('Name & Signature of Department Head: ' + KPI_OT_DEPT_HEAD));
-
-        var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url; a.download = 'OT_Form_' + kpiCurrentTeam.replace(/[^a-z0-9\-_ ]/gi, '') + '_' + startDate + '_to_' + endDate + '.csv';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        closeSmoothly('kpiOtExportModal');
-        showPremiumToast('Exported', rows.length + ' OT record(s) exported.', 'success');
+        kpiBuildOvertimeXlsx(rows, startDate, endDate);
     }).getKpiOvertimeRequests(currentSessionToken, kpiCurrentTeam);
+}
+
+function kpiBuildOvertimeXlsx(rows, startDate, endDate) {
+    fetch('assets/signature_lionel.png').then(function(r) {
+        if (!r.ok) throw new Error('signature not found');
+        return r.arrayBuffer();
+    }).catch(function() { return null; }).then(function(sigBuffer) {
+        var wb = new ExcelJS.Workbook();
+        var ws = wb.addWorksheet('OT Form', { pageSetup: { paperSize: 9, orientation: 'landscape' } });
+        var cols = ['No.', 'Employee Name', 'Position', 'Date', 'OT Schedule (From-To)', 'Total OT Hours', 'Task Description / Justification'];
+        ws.columns = [
+            { width: 6 }, { width: 22 }, { width: 20 }, { width: 14 }, { width: 18 }, { width: 14 }, { width: 44 }
+        ];
+        var thin = { style: 'thin', color: { argb: 'FF000000' } };
+        var allBorders = { top: thin, left: thin, bottom: thin, right: thin };
+
+        // Title
+        ws.mergeCells('A1:G2');
+        var titleCell = ws.getCell('A1');
+        titleCell.value = 'OVERTIME REQUEST FORM';
+        titleCell.font = { bold: true, italic: true, size: 20 };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        ws.getRow(1).height = 20; ws.getRow(2).height = 20;
+        ['A1', 'A2'].forEach(function(addr) {}); // border applied to the outer box below
+
+        // Department / Date Filed
+        ws.getCell('A4').value = 'Department:'; ws.getCell('A4').font = { bold: true };
+        ws.mergeCells('B4:C4'); ws.getCell('B4').value = kpiCurrentTeam; ws.getCell('B4').border = { bottom: thin };
+        ws.getCell('E4').value = 'Date Filed:'; ws.getCell('E4').font = { bold: true };
+        ws.mergeCells('F4:G4'); ws.getCell('F4').value = startDate + ' to ' + endDate; ws.getCell('F4').border = { bottom: thin };
+
+        // Table header
+        var headerRowIdx = 6;
+        var headerRow = ws.getRow(headerRowIdx);
+        cols.forEach(function(h, i) { headerRow.getCell(i + 1).value = h; });
+        headerRow.eachCell(function(cell) {
+            cell.font = { bold: true };
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border = allBorders;
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+        });
+
+        var r = headerRowIdx + 1;
+        rows.forEach(function(row, idx) {
+            var schedule = row.otTimeIn ? (row.otTimeIn + '–' + (row.otTimeOut || '')) : '';
+            var vals = [idx + 1, row.fullName, row.position || '', row.date, schedule, row.totalOtHours || '', row.reason];
+            vals.forEach(function(v, i) {
+                var cell = ws.getRow(r).getCell(i + 1);
+                cell.value = v;
+                cell.border = allBorders;
+                cell.alignment = { vertical: 'middle', wrapText: i === 6, horizontal: (i === 0 || i === 3 || i === 4 || i === 5) ? 'center' : 'left' };
+            });
+            r++;
+        });
+        // A couple of blank bordered rows for any manual additions, matching the printed template
+        for (var blankRows = 0; blankRows < 2; blankRows++) {
+            cols.forEach(function(c, i) { ws.getRow(r).getCell(i + 1).border = allBorders; });
+            r++;
+        }
+
+        r += 1;
+        ws.getCell('A' + r).value = 'Approved by:'; ws.getCell('A' + r).font = { bold: true };
+        ws.getCell('E' + r).value = 'Date of approval:'; ws.getCell('E' + r).font = { bold: true };
+        var approvedRow = r;
+        var latestReview = rows.reduce(function(latest, row) { return (!latest || (row.reviewedAt && row.reviewedAt > latest)) ? row.reviewedAt : latest; }, null);
+        ws.mergeCells('F' + r + ':G' + r);
+        ws.getCell('F' + r).value = (latestReview || '').slice(0, 10);
+
+        if (sigBuffer) {
+            var imgId = wb.addImage({ buffer: sigBuffer, extension: 'png' });
+            ws.addImage(imgId, { tl: { col: 0.3, row: approvedRow - 1 + 0.2 }, ext: { width: 160, height: 70 } });
+        }
+        r += 5;
+        ws.getCell('A' + r).value = '_________________________________';
+        r += 1;
+        ws.getCell('A' + r).value = 'Name & Signature of Department Head: ' + KPI_OT_DEPT_HEAD;
+        ws.getCell('A' + r).font = { bold: true };
+
+        r += 2;
+        ws.mergeCells('A' + r + ':G' + (r + 2));
+        var reminderCell = ws.getCell('A' + r);
+        reminderCell.value = 'Reminder: All overtime (OT) work must be pre-approved by your department head. OT forms must be filed no later than the day after the overtime is rendered to ensure accurate payroll, proper documentation, and compliance with company policy. Unauthorized or late-filed OT may not be compensated.';
+        reminderCell.font = { italic: true, size: 9 };
+        reminderCell.alignment = { wrapText: true, vertical: 'top' };
+        reminderCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+
+        // Outer box around the whole form
+        ws.mergeCells('A1:G2');
+        for (var rr = 1; rr <= r + 2; rr++) {
+            var left = ws.getCell('A' + rr), right = ws.getCell('G' + rr);
+            left.border = Object.assign({}, left.border, { left: thin });
+            right.border = Object.assign({}, right.border, { right: thin });
+        }
+        for (var cc = 1; cc <= 7; cc++) {
+            var top = ws.getRow(1).getCell(cc), bottom = ws.getRow(r + 2).getCell(cc);
+            top.border = Object.assign({}, top.border, { top: thin });
+            bottom.border = Object.assign({}, bottom.border, { bottom: thin });
+        }
+
+        wb.xlsx.writeBuffer().then(function(buffer) {
+            var blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url; a.download = 'OT_Form_' + kpiCurrentTeam.replace(/[^a-z0-9\-_ ]/gi, '') + '_' + startDate + '_to_' + endDate + '.xlsx';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            closeSmoothly('kpiOtExportModal');
+            showPremiumToast('Exported', rows.length + ' OT record(s) exported.', 'success');
+        });
+    });
 }
 
 // Summary grid — one row per member, one column per date, showing hours worked that day (blank
