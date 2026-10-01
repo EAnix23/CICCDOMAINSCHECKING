@@ -4010,10 +4010,10 @@ function renderKpiShell(teams) {
     var isSuperAdmin = currentUserRole === 'Super Admin';
     var teamSelectorHtml;
     if (isSuperAdmin) {
+        // No per-team toggle here on purpose: Super Admin manages every team, so every KPI view
+        // already shows all of them combined (each person's team still shows as a tag where relevant).
         teamSelectorHtml = teams.length
-            ? '<select id="kpiTeamSelect" onchange="kpiSwitchTeam(this.value)" class="border border-theme bg-panel rounded-lg text-sm font-bold text-body px-3 py-2 shadow-sm focus:outline-none focus:border-indigo-500">' +
-                teams.map(function(t) { return '<option value="' + escapeHtmlClient(t) + '"' + (t === kpiCurrentTeam ? ' selected' : '') + '>' + escapeHtmlClient(t) + '</option>'; }).join('') +
-              '</select>'
+            ? '<span class="text-sm font-black text-indigo-600 flex items-center gap-1.5"><i data-lucide="layers" class="h-4 w-4"></i> All Teams Combined</span>'
             : '<p class="text-xs text-subtle">No team assigned to any user yet. Go to Settings &gt; User Management.</p>';
     } else {
         teamSelectorHtml = '<span class="text-sm font-black text-indigo-600">' + (kpiCurrentTeam ? escapeHtmlClient(kpiCurrentTeam) : 'No team assigned') + '</span>';
@@ -5882,6 +5882,7 @@ function renderKpiExecutiveTab() {
             '<div class="flex items-center gap-2 mb-4">' +
                 '<span class="text-[10px] font-bold text-subtle uppercase mr-1">Granularity:</span>' +
                 '<button onclick="kpiExecSetGranularity(\'daily\')" id="kpiExecGranDaily" class="px-3 py-1 rounded-lg text-xs font-bold">Daily Trend</button>' +
+                '<button onclick="kpiExecSetGranularity(\'weekly\')" id="kpiExecGranWeekly" class="px-3 py-1 rounded-lg text-xs font-bold">Weekly Trend</button>' +
                 '<button onclick="kpiExecSetGranularity(\'monthly\')" id="kpiExecGranMonthly" class="px-3 py-1 rounded-lg text-xs font-bold">Monthly Trend</button>' +
             '</div>' +
             '<div id="kpiExecVersusBar" class="mb-4"></div>' +
@@ -5904,9 +5905,11 @@ function renderKpiExecutiveTab() {
 
 function kpiExecRefreshGranButtons() {
     var daily = document.getElementById('kpiExecGranDaily');
+    var weekly = document.getElementById('kpiExecGranWeekly');
     var monthly = document.getElementById('kpiExecGranMonthly');
-    if (!daily || !monthly) return;
+    if (!daily || !weekly || !monthly) return;
     daily.className = 'px-3 py-1 rounded-lg text-xs font-bold ' + (kpiExecGranularity === 'daily' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body hover:bg-app');
+    weekly.className = 'px-3 py-1 rounded-lg text-xs font-bold ' + (kpiExecGranularity === 'weekly' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body hover:bg-app');
     monthly.className = 'px-3 py-1 rounded-lg text-xs font-bold ' + (kpiExecGranularity === 'monthly' ? 'bg-indigo-600 text-white' : 'bg-panel border border-theme text-body hover:bg-app');
 }
 
@@ -5978,19 +5981,32 @@ function kpiExecSetVersusMetric(metric) {
     kpiExecRenderCharts();
 }
 
+var KPI_EXEC_MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 function kpiExecAggregateByGranularity(dateList, values) {
     if (kpiExecGranularity === 'daily') return { labels: dateList, values: values };
-    var buckets = {}, order = [];
+
+    var buckets = {}, order = [], labelFor = {};
     dateList.forEach(function(d, i) {
-        var key = d.slice(0, 7);
-        if (!buckets[key]) { buckets[key] = []; order.push(key); }
+        var key, label;
+        if (kpiExecGranularity === 'weekly') {
+            // Bucket into the Monday-starting week containing this date.
+            var dt = new Date(d + 'T00:00:00Z');
+            var day = dt.getUTCDay(); // 0=Sun..6=Sat
+            var diffToMonday = (day === 0 ? -6 : 1 - day);
+            var monday = new Date(dt.getTime() + diffToMonday * 86400000);
+            key = monday.toISOString().slice(0, 10);
+            label = KPI_EXEC_MONTH_NAMES[monday.getUTCMonth()] + ' ' + monday.getUTCDate();
+        } else { // monthly
+            key = d.slice(0, 7);
+            var parts = key.split('-');
+            label = KPI_EXEC_MONTH_NAMES[parseInt(parts[1], 10) - 1] + ' ' + parts[0];
+        }
+        if (!buckets[key]) { buckets[key] = []; order.push(key); labelFor[key] = label; }
         buckets[key].push(values[i]);
     });
-    var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    var labels = order.map(function(k) {
-        var parts = k.split('-');
-        return monthNames[parseInt(parts[1], 10) - 1] + ' ' + parts[0];
-    });
+    order.sort();
+    var labels = order.map(function(k) { return labelFor[k]; });
     var vals = order.map(function(k) {
         var arr = buckets[k];
         return Math.round(arr.reduce(function(s, v) { return s + v; }, 0) / arr.length);

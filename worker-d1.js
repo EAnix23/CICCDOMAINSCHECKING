@@ -561,24 +561,36 @@ const actions = {
     return session.team ? [session.team] : [];
   },
 
+  // Super Admin sees every team they manage combined here (same as the Executive Dashboard,
+  // Scoreboard, and Domain Check Completion already do) — they're the one person holding all of
+  // it, so there's no reason today's uploads/tasks should hide behind which team happens to be
+  // selected in the dropdown. A normal Agent/Admin still only ever sees their own single team.
   async getKpiTodayTasks(db, token, team) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return { autoTasks: [], manualTasks: [], members: [], team: "" };
+    let teamList;
+    if (session.role === "Super Admin") {
+      const { results: teamRows } = await db.prepare("SELECT DISTINCT team FROM users WHERE team != '' ORDER BY team ASC").all();
+      teamList = teamRows.map(r => r.team);
+      if (team && teamList.indexOf(team) === -1) teamList.push(team);
+    } else {
+      teamList = session.team ? [session.team] : [];
+    }
+    if (teamList.length === 0) return { autoTasks: [], manualTasks: [], members: [], team: "" };
+    const placeholders = teamList.map(() => "?").join(",");
 
     const startSQL = getPHTodayStartSQL();
     const { results: bbcRows } = await db.prepare(
-      `SELECT agent, brand, domain FROM domains WHERE created_at >= ? AND agent IN (SELECT username FROM users WHERE team = ?) ORDER BY agent ASC`
-    ).bind(startSQL, targetTeam).all();
+      `SELECT agent, brand, domain FROM domains WHERE created_at >= ? AND agent IN (SELECT username FROM users WHERE team IN (${placeholders})) ORDER BY agent ASC`
+    ).bind(startSQL, ...teamList).all();
     const { results: dpvRows } = await db.prepare(
-      `SELECT agent, domain FROM dpv_records WHERE created_at >= ? AND team = ? AND domain NOT LIKE 'init-%' ORDER BY agent ASC`
-    ).bind(startSQL, targetTeam).all();
+      `SELECT agent, domain FROM dpv_records WHERE created_at >= ? AND team IN (${placeholders}) AND domain NOT LIKE 'init-%' ORDER BY agent ASC`
+    ).bind(startSQL, ...teamList).all();
 
     // Super Admin can assign a task to anyone across every team they manage, not just this one —
-    // an Agent/Admin only ever sees their own team, so they're still limited to targetTeam.
+    // an Agent/Admin only ever sees their own team, so they're still limited to teamList.
     const memberResult = session.role === "Super Admin"
       ? await db.prepare("SELECT username, full_name as fullName FROM users WHERE team != '' ORDER BY username ASC").all()
-      : await db.prepare("SELECT username, full_name as fullName FROM users WHERE team = ? ORDER BY username ASC").bind(targetTeam).all();
+      : await db.prepare(`SELECT username, full_name as fullName FROM users WHERE team IN (${placeholders}) ORDER BY username ASC`).bind(...teamList).all();
     const { results: memberRows } = memberResult;
     const nameMap = {};
     memberRows.forEach(function (r) { nameMap[r.username] = r.fullName || r.username; });
@@ -590,18 +602,26 @@ const actions = {
     // Manual tasks are a persistent Kanban board, not scoped to today — a card created yesterday
     // and still "In Progress" needs to keep showing up, not vanish once the date rolls over.
     const { results: manualTasksRaw } = await db.prepare(
-      "SELECT id, title, description, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team = ? ORDER BY id DESC"
-    ).bind(targetTeam).all();
+      `SELECT id, title, description, status, created_by, assigned_to as assignedTo, created_at FROM kpi_tasks WHERE team IN (${placeholders}) ORDER BY id DESC`
+    ).bind(...teamList).all();
     const manualTasks = manualTasksRaw.map(function (t) {
       return Object.assign({}, t, { assignedToName: t.assignedTo ? (nameMap[t.assignedTo] || t.assignedTo) : "", createdByName: nameMap[t.created_by] || t.created_by });
     });
 
-    return { autoTasks, manualTasks, members: memberRows.map(r => ({ username: r.username, fullName: r.fullName || r.username })), team: targetTeam };
+    return { autoTasks, manualTasks, members: memberRows.map(r => ({ username: r.username, fullName: r.fullName || r.username })), team: teamList.join(", ") };
   },
 
   async addKpiManualTask(db, token, team, title, assignedTo, description) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    // The task's team is whichever team the assignee actually belongs to (correct attribution for
+    // Super Admin's combined board) — only falls back to the passed-in/session team when there's
+    // no specific assignee ("Whole Team").
+    let targetTeam = "";
+    if (assignedTo) {
+      const assigneeRow = await db.prepare("SELECT team FROM users WHERE username = ?").bind(assignedTo).first();
+      targetTeam = (assigneeRow && assigneeRow.team) || "";
+    }
+    if (!targetTeam) targetTeam = session.role === "Super Admin" ? (team || session.team || (await allManagedTeams(db))[0] || "") : (session.team || "");
     if (!targetTeam) return { success: false, message: "No team assigned to your account." };
     if (!title || !title.trim()) return { success: false, message: "Task title is required." };
     await db.prepare("INSERT INTO kpi_tasks (team, task_type, title, description, status, created_by, task_date, assigned_to) VALUES (?, 'manual', ?, ?, 'todo', ?, ?, ?)")
@@ -694,32 +714,35 @@ const actions = {
     return { success: true, time_out: nowTime };
   },
 
+  // Super Admin sees every team they manage combined here, same as the rest of the KPI Report.
   async getKpiAttendanceLog(db, token, team) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return [];
+    const teamList = session.role === "Super Admin" ? await allManagedTeams(db, team) : (session.team ? [session.team] : []);
+    if (teamList.length === 0) return [];
+    const placeholders = teamList.map(() => "?").join(",");
     const startSQL = getPeriodStartSQL(14);
     const { results } = await db.prepare(
-      "SELECT username, date, time_in, time_out FROM kpi_attendance WHERE team = ? AND date >= substr(?,1,10) ORDER BY date DESC, username ASC"
-    ).bind(targetTeam, startSQL).all();
+      `SELECT username, date, time_in, time_out FROM kpi_attendance WHERE team IN (${placeholders}) AND date >= substr(?,1,10) ORDER BY date DESC, username ASC`
+    ).bind(...teamList, startSQL).all();
     return results;
   },
 
   async getKpiAchievements(db, token, team) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return [];
+    const teamList = session.role === "Super Admin" ? await allManagedTeams(db, team) : (session.team ? [session.team] : []);
+    if (teamList.length === 0) return [];
+    const placeholders = teamList.map(() => "?").join(",");
     const { results } = await db.prepare(
       "SELECT id, category, title, description, created_by, created_at, " +
       "(SELECT full_name FROM users WHERE username = kpi_achievements.created_by) as createdByName " +
-      "FROM kpi_achievements WHERE team = ? ORDER BY id DESC"
-    ).bind(targetTeam).all();
+      `FROM kpi_achievements WHERE team IN (${placeholders}) ORDER BY id DESC`
+    ).bind(...teamList).all();
     return results.map(function (r) { return Object.assign({}, r, { createdByName: r.createdByName || r.created_by }); });
   },
 
   async addKpiAchievement(db, token, team, category, title, description) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
+    const targetTeam = session.role === "Super Admin" ? (team || session.team || (await allManagedTeams(db))[0] || "") : (session.team || "");
     if (!targetTeam) return { success: false, message: "No team assigned to your account." };
     if (!title || !title.trim()) return { success: false, message: "Title is required." };
     const cat = ["accomplishment", "ongoing", "achievement"].indexOf(category) !== -1 ? category : "accomplishment";
@@ -1203,11 +1226,12 @@ const actions = {
   // the management list they can delete from.
   async getKpiDayoffs(db, token, team) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return [];
+    const teamList = session.role === "Super Admin" ? await allManagedTeams(db, team) : (session.team ? [session.team] : []);
+    if (teamList.length === 0) return [];
+    const placeholders = teamList.map(() => "?").join(",");
     const { results } = await db.prepare(
-      "SELECT d.id, d.username, d.date, d.created_at, u.full_name as fullName FROM kpi_dayoffs d LEFT JOIN users u ON u.username = d.username WHERE d.team = ? ORDER BY d.date ASC"
-    ).bind(targetTeam).all();
+      `SELECT d.id, d.username, d.date, d.created_at, u.full_name as fullName FROM kpi_dayoffs d LEFT JOIN users u ON u.username = d.username WHERE d.team IN (${placeholders}) ORDER BY d.date ASC`
+    ).bind(...teamList).all();
     return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
   },
 
@@ -1276,11 +1300,12 @@ const actions = {
   // uses to review, so both share one action instead of two near-identical queries.
   async getKpiLeaves(db, token, team) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return [];
+    const teamList = session.role === "Super Admin" ? await allManagedTeams(db, team) : (session.team ? [session.team] : []);
+    if (teamList.length === 0) return [];
+    const placeholders = teamList.map(() => "?").join(",");
     const { results } = await db.prepare(
-      "SELECT l.id, l.username, l.leave_type, l.start_date, l.end_date, l.reason, l.attachment_filename, l.status, l.created_at, l.reviewed_by, u.full_name as fullName FROM kpi_leaves l LEFT JOIN users u ON u.username = l.username WHERE l.team = ? ORDER BY l.created_at DESC"
-    ).bind(targetTeam).all();
+      `SELECT l.id, l.username, l.leave_type, l.start_date, l.end_date, l.reason, l.attachment_filename, l.status, l.created_at, l.reviewed_by, u.full_name as fullName FROM kpi_leaves l LEFT JOIN users u ON u.username = l.username WHERE l.team IN (${placeholders}) ORDER BY l.created_at DESC`
+    ).bind(...teamList).all();
     return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
   },
 
@@ -1821,14 +1846,15 @@ const actions = {
   // Self-view and Super-Admin-review share this one action, like getKpiLeaves.
   async getKpiOvertimeRequests(db, token, team) {
     const session = await checkSession(db, token);
-    const targetTeam = session.role === "Super Admin" ? (team || session.team || "") : (session.team || "");
-    if (!targetTeam) return [];
+    const teamList = session.role === "Super Admin" ? await allManagedTeams(db, team) : (session.team ? [session.team] : []);
+    if (teamList.length === 0) return [];
+    const placeholders = teamList.map(() => "?").join(",");
     const { results } = await db.prepare(
       `SELECT o.id, o.username, u.full_name as fullName, u.position, o.team, o.date, o.reason,
        o.ot_time_in as otTimeIn, o.ot_time_out as otTimeOut, o.total_ot_hours as totalOtHours,
        o.status, o.reviewed_by as reviewedBy, o.reviewed_at as reviewedAt
-       FROM kpi_overtime o LEFT JOIN users u ON u.username = o.username WHERE o.team = ? ORDER BY o.date DESC`
-    ).bind(targetTeam).all();
+       FROM kpi_overtime o LEFT JOIN users u ON u.username = o.username WHERE o.team IN (${placeholders}) ORDER BY o.date DESC`
+    ).bind(...teamList).all();
     return results.map(function (r) { return Object.assign({}, r, { fullName: r.fullName || r.username }); });
   },
 
@@ -2002,6 +2028,17 @@ function buildCsvString(headers, rows) {
   const lines = [headers.map(esc).join(",")];
   rows.forEach(function (r) { lines.push(r.map(esc).join(",")); });
   return "﻿" + lines.join("\r\n");
+}
+
+// Every team a Super Admin manages, combined — used by the KPI Report's view-only endpoints so
+// Super Admin always sees all of it at once instead of filtering by whichever team happens to be
+// selected somewhere in the UI. `extraTeam`, if given and not already in the list, is appended
+// (keeps old callers that still pass a specific team working without excluding it).
+async function allManagedTeams(db, extraTeam) {
+  const { results } = await db.prepare("SELECT DISTINCT team FROM users WHERE team != '' ORDER BY team ASC").all();
+  const teamList = results.map(r => r.team);
+  if (extraTeam && teamList.indexOf(extraTeam) === -1) teamList.push(extraTeam);
+  return teamList;
 }
 
 // "YYYY-MM-DD HH:MM:SS" for the start of "today" in Philippine time (UTC+8, no DST) — matches the
