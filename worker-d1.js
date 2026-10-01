@@ -1212,6 +1212,29 @@ const actions = {
     return { success: true, message: "Photo added." };
   },
 
+  // Machine-to-machine (shared AUTOMATION_API_KEY, like the checker.js endpoints) — called by the
+  // Apps Script onEdit trigger bound to the Daily Competitor Promotions Tracker sheet. The sheet
+  // entry itself is the evidence (no photo required), so this just marks the matching
+  // kpi_checklist_assignments row (category='competitor_promo', label=competitor) done for that
+  // date — same completions table the Daily Brand Status UI already reads, so it shows up there too.
+  async syncCompetitorPromoCheck(db, params) {
+    const username = String(params.username || "").trim();
+    const competitor = String(params.competitor || "").trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(params.date || "")) ? params.date : getPHDateStr();
+    if (!username || !competitor) return { success: false, message: "username and competitor are required." };
+
+    const assignment = await db.prepare(
+      "SELECT id FROM kpi_checklist_assignments WHERE username = ? AND category = 'competitor_promo' AND label = ? AND active = 1"
+    ).bind(username, competitor).first();
+    if (!assignment) return { success: false, message: "No active assignment for " + username + " / " + competitor + "." };
+
+    await db.prepare(
+      `INSERT INTO kpi_checklist_completions (assignment_id, username, task_date) VALUES (?, ?, ?)
+       ON CONFLICT(assignment_id, task_date) DO UPDATE SET completed_at = datetime('now')`
+    ).bind(assignment.id, username, date).run();
+    return { success: true, message: "Synced." };
+  },
+
   // ---- Checklist assignment management (Super Admin) — who is responsible for which brand/
   // competitor/etc, under which category. Lets Super Admin add/edit/deactivate/delete without
   // going through direct SQL every time a brand gets added or reassigned.
@@ -2143,7 +2166,7 @@ export default {
 
       // Machine-to-machine actions: gated by a shared secret (env.AUTOMATION_API_KEY), not a user
       // session — the domain-checker script has no human logging in to hand it a token.
-      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow"];
+      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow"];
       if (automationActions.indexOf(action) !== -1) {
         const apiKey = args[0];
         const params = args[1] || {};
