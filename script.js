@@ -5867,7 +5867,7 @@ function renderKpiExecutiveTab() {
     }
 
     content.innerHTML =
-        '<div id="kpiExecStatsRow" class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5"></div>' +
+        '<div id="kpiExecStatsRow" class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5"></div>' +
         '<div class="panel-card p-5 mb-5">' +
             '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
                 '<div><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="trending-up" class="h-4 w-4 text-indigo-500"></i> Performance Trend</h3><p class="text-[10px] text-subtle mt-0.5">Completion, Combined Score, and Attendance over time</p></div>' +
@@ -5970,7 +5970,7 @@ function kpiExecApplyCustomRange() {
 
 function kpiExecLoadData() {
     var statsEl = document.getElementById('kpiExecStatsRow');
-    if (statsEl) statsEl.innerHTML = skeletonCards(4);
+    if (statsEl) statsEl.innerHTML = skeletonCards(5, 5);
     google.script.run.withSuccessHandler(function(data) {
         kpiExecData = data || { dateList: [], agents: [], teamTotals: {}, pie: [] };
         kpiExecRenderStatCards();
@@ -5993,14 +5993,18 @@ function kpiExecRenderStatCards() {
     var avgAttendance = agents.length ? Math.round(agents.reduce(function(s, a) { return s + avg(a.dailyAttendancePct || []); }, 0) / agents.length) : 0;
     var top = agents.map(function(a) { return { fullName: a.fullName, score: avg(a.dailyCombinedScore || []) }; }).sort(function(x, y) { return y.score - x.score; })[0];
 
+    var avgUploads = kpiExecData.avgUploadsPerDay || 0;
+    var totalUploads = kpiExecData.totalUploadsInRange || 0;
     var cards = [
         { label: 'Total Checks', value: totalChecks.toLocaleString(), icon: 'shield-check', accent: 'indigo' },
+        { label: 'Avg Uploads / Day', value: avgUploads.toLocaleString(), sub: totalUploads.toLocaleString() + ' total', icon: 'upload-cloud', accent: 'cyan' },
         { label: 'Avg Completion', value: avgCompletion + '%', icon: 'target', accent: 'emerald' },
         { label: 'Avg Attendance', value: avgAttendance + '%', icon: 'calendar-check', accent: 'amber' },
         { label: 'Top Performer', value: top ? top.fullName : '—', sub: top ? ('Score ' + top.score) : '', icon: 'crown', accent: 'rose' }
     ];
     var accentMap = {
         indigo: { bg: 'bg-indigo-tint', text: 'text-indigo-500' },
+        cyan: { bg: 'bg-cyan-500/10', text: 'text-cyan-500' },
         emerald: { bg: 'bg-emerald-500/10', text: 'text-emerald-500' },
         amber: { bg: 'bg-amber-500/10', text: 'text-amber-500' },
         rose: { bg: 'bg-rose-tint', text: 'text-rose-500' }

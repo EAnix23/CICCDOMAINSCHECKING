@@ -949,6 +949,16 @@ const actions = {
     const attendedSet = {};
     attRows.forEach(function (r) { (attendedSet[r.username] = attendedSet[r.username] || {})[r.date] = true; });
 
+    // New domain uploads (BBC + DPV) within the selected range, for the "Avg Uploads/Day" stat card.
+    const uploadStartSQL = startDate + " 00:00:00", uploadEndSQL = endDate + " 23:59:59";
+    const bbcUploadRow = await db.prepare(
+      `SELECT COUNT(*) as cnt FROM domains WHERE created_at >= ? AND created_at <= ? AND agent IN (SELECT username FROM users WHERE team IN (${placeholders}))`
+    ).bind(uploadStartSQL, uploadEndSQL, ...teamList).first();
+    const dpvUploadRow = await db.prepare(
+      `SELECT COUNT(*) as cnt FROM dpv_records WHERE created_at >= ? AND created_at <= ? AND team IN (${placeholders}) AND domain NOT LIKE 'init-%'`
+    ).bind(uploadStartSQL, uploadEndSQL, ...teamList).first();
+    const totalUploadsInRange = (bbcUploadRow ? bbcUploadRow.cnt : 0) + (dpvUploadRow ? dpvUploadRow.cnt : 0);
+
     const { results: checkCountRows } = await db.prepare(
       `SELECT username, date(checked_at) as d, COUNT(*) as cnt FROM kpi_domain_checks WHERE username IN (SELECT username FROM users WHERE team IN (${placeholders})) AND date(checked_at) >= ? AND date(checked_at) <= ? GROUP BY username, d`
     ).bind(...teamList, startDate, endDate).all();
@@ -1039,7 +1049,9 @@ const actions = {
       teamTotals.dailyCombinedScore.push(Math.round(agents.reduce(function (s, a) { return s + a.dailyCombinedScore[i]; }, 0) / n));
     });
 
-    return { dateList: dateList, agents: agents, teamTotals: teamTotals, pie: pie };
+    const avgUploadsPerDay = dateList.length > 0 ? Math.round((totalUploadsInRange / dateList.length) * 10) / 10 : 0;
+
+    return { dateList: dateList, agents: agents, teamTotals: teamTotals, pie: pie, totalUploadsInRange: totalUploadsInRange, avgUploadsPerDay: avgUploadsPerDay };
   },
 
   // Raw material for the bi-monthly DTR spreadsheet HR asks for — per-member daily hours computed
