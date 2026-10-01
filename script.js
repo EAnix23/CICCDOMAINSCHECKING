@@ -4987,7 +4987,10 @@ function openKpiOvertimeExportModal() {
             '      <label class="block text-[10px] font-bold text-subtle uppercase tracking-widest mb-2">Date Range</label>',
             '      <div class="flex items-center gap-2 mb-4"><input type="date" id="kpiOtExportStart" value="' + def.start + '" class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"><span class="text-xs text-subtle">to</span><input type="date" id="kpiOtExportEnd" value="' + def.end + '" class="flex-1 border border-theme bg-panel rounded-lg text-sm text-body px-3 py-2"></div>',
             '      <p class="text-[10px] text-subtle mb-4">Only approved OT requests in this range are included. Approved by: ' + escapeHtmlClient(KPI_OT_DEPT_HEAD) + '.</p>',
-            '      <button onclick="kpiRunOvertimeExport()" class="w-full px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="download" class="h-4 w-4"></i> Download OT Form (.xlsx)</button>',
+            '      <div class="flex gap-2">',
+            '        <button onclick="kpiRunOvertimeExport(\'xlsx\')" class="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><i data-lucide="file-spreadsheet" class="h-4 w-4"></i> Excel</button>',
+            '        <button onclick="kpiRunOvertimeExport(\'pdf\')" class="flex-1 px-4 py-3 bg-panel border border-theme rounded-xl text-sm font-bold text-body hover:bg-app flex items-center justify-center gap-2"><i data-lucide="file-text" class="h-4 w-4"></i> PDF</button>',
+            '      </div>',
             '    </div>',
             '  </div>',
             '</div>'
@@ -5000,17 +5003,71 @@ function openKpiOvertimeExportModal() {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
-function kpiRunOvertimeExport() {
+function kpiRunOvertimeExport(format) {
     var startDate = document.getElementById('kpiOtExportStart').value;
     var endDate = document.getElementById('kpiOtExportEnd').value;
     if (!startDate || !endDate) { showPremiumToast('Missing', 'Pick a start and end date.', 'error'); return; }
-    if (typeof ExcelJS === 'undefined') { showPremiumToast('Error', 'Export library did not load. Check your connection and try again.', 'error'); return; }
+    if (format === 'xlsx' && typeof ExcelJS === 'undefined') { showPremiumToast('Error', 'Export library did not load. Check your connection and try again.', 'error'); return; }
+    if (format === 'pdf' && typeof window.jspdf === 'undefined') { showPremiumToast('Error', 'PDF library did not load. Check your connection and try again.', 'error'); return; }
 
     google.script.run.withSuccessHandler(function(rows) {
         rows = (rows || []).filter(function(r) { return r.status === 'approved' && r.date >= startDate && r.date <= endDate; });
         if (rows.length === 0) { showPremiumToast('Empty', 'No approved OT requests in this range.', 'error'); return; }
-        kpiBuildOvertimeXlsx(rows, startDate, endDate);
+        if (format === 'pdf') kpiBuildOvertimePdf(rows, startDate, endDate);
+        else kpiBuildOvertimeXlsx(rows, startDate, endDate);
     }).getKpiOvertimeRequests(currentSessionToken, kpiCurrentTeam);
+}
+
+function kpiLatestOtReview(rows) {
+    return rows.reduce(function(latest, row) { return (!latest || (row.reviewedAt && row.reviewedAt > latest)) ? row.reviewedAt : latest; }, null);
+}
+
+function kpiBuildOvertimePdf(rows, startDate, endDate) {
+    fetch('assets/signature_lionel.png').then(function(r) { return r.ok ? r.blob() : null; }).catch(function() { return null; }).then(function(blob) {
+        if (!blob) { kpiRenderOvertimePdf(rows, startDate, endDate, null); return; }
+        var reader = new FileReader();
+        reader.onload = function() { kpiRenderOvertimePdf(rows, startDate, endDate, reader.result); };
+        reader.onerror = function() { kpiRenderOvertimePdf(rows, startDate, endDate, null); };
+        reader.readAsDataURL(blob);
+    });
+}
+
+function kpiRenderOvertimePdf(rows, startDate, endDate, sigDataUrl) {
+    var doc = new window.jspdf.jsPDF({ orientation: 'landscape' });
+    doc.setFontSize(18);
+    doc.setFont(undefined, 'bolditalic');
+    doc.text('OVERTIME REQUEST FORM', 148, 15, { align: 'center' });
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(10);
+    doc.text('Department: ' + kpiCurrentTeam, 14, 25);
+    doc.text('Date Filed: ' + startDate + ' to ' + endDate, 200, 25);
+
+    var head = [['No.', 'Employee Name', 'Position', 'Date', 'OT Schedule (From-To)', 'Total OT Hours', 'Task Description / Justification']];
+    var body = rows.map(function(r, idx) {
+        var schedule = r.otTimeIn ? (r.otTimeIn + '-' + (r.otTimeOut || '')) : '';
+        return [idx + 1, r.fullName, r.position || '', r.date, schedule, r.totalOtHours || '', r.reason];
+    });
+    doc.autoTable({
+        head: head, body: body, startY: 30, styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [229, 231, 235], textColor: [0, 0, 0] }
+    });
+
+    var finalY = doc.lastAutoTable.finalY + 15;
+    doc.setFontSize(10);
+    doc.text('Approved by:', 14, finalY);
+    doc.text('Date of approval: ' + (kpiLatestOtReview(rows) || '').slice(0, 10), 200, finalY);
+    if (sigDataUrl) { doc.addImage(sigDataUrl, 'PNG', 14, finalY + 3, 45, 20); }
+    doc.text('_________________________________', 14, finalY + 28);
+    doc.text('Name & Signature of Department Head: ' + KPI_OT_DEPT_HEAD, 14, finalY + 34);
+
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'italic');
+    var reminder = 'Reminder: All overtime (OT) work must be pre-approved by your department head. OT forms must be filed no later than the day after the overtime is rendered to ensure accurate payroll, proper documentation, and compliance with company policy. Unauthorized or late-filed OT may not be compensated.';
+    doc.text(doc.splitTextToSize(reminder, 270), 14, finalY + 44);
+
+    doc.save('OT_Form_' + kpiCurrentTeam.replace(/[^a-z0-9\-_ ]/gi, '') + '_' + startDate + '_to_' + endDate + '.pdf');
+    closeSmoothly('kpiOtExportModal');
+    showPremiumToast('Exported', rows.length + ' OT record(s) exported.', 'success');
 }
 
 function kpiBuildOvertimeXlsx(rows, startDate, endDate) {
@@ -5075,7 +5132,7 @@ function kpiBuildOvertimeXlsx(rows, startDate, endDate) {
         ws.getCell('A' + r).value = 'Approved by:'; ws.getCell('A' + r).font = { bold: true };
         ws.getCell('E' + r).value = 'Date of approval:'; ws.getCell('E' + r).font = { bold: true };
         var approvedRow = r;
-        var latestReview = rows.reduce(function(latest, row) { return (!latest || (row.reviewedAt && row.reviewedAt > latest)) ? row.reviewedAt : latest; }, null);
+        var latestReview = kpiLatestOtReview(rows);
         ws.mergeCells('F' + r + ':G' + r);
         ws.getCell('F' + r).value = (latestReview || '').slice(0, 10);
 
