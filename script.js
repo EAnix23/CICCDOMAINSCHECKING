@@ -5865,36 +5865,46 @@ function renderKpiExecutiveTab() {
         kpiExecRange.start = r.start; kpiExecRange.end = r.end;
     }
 
+    var presetBtnClass = 'px-3.5 py-1.5 rounded-lg text-xs font-bold text-subtle hover:text-body hover:bg-app transition-colors';
     content.innerHTML =
+        '<div id="kpiExecStatsRow" class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5"></div>' +
         '<div class="panel-card p-5 mb-5">' +
-            '<div class="flex items-center justify-between flex-wrap gap-3 mb-4">' +
-                '<h3 class="text-sm font-black text-heading">Performance Trend</h3>' +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
+                '<div><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="trending-up" class="h-4 w-4 text-indigo-500"></i> Performance Trend</h3><p class="text-[10px] text-subtle mt-0.5">Completion, Combined Score, and Attendance over time</p></div>' +
                 '<div class="flex items-center gap-2 flex-wrap">' +
-                    '<button onclick="kpiExecSetPreset(\'7d\')" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Last 7 Days</button>' +
-                    '<button onclick="kpiExecSetPreset(\'1m\')" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Last Month</button>' +
-                    '<button onclick="kpiExecSetPreset(\'1y\')" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Last Year</button>' +
-                    '<input type="date" id="kpiExecStartInput" value="' + kpiExecRange.start + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5">' +
-                    '<span class="text-xs text-subtle">to</span>' +
-                    '<input type="date" id="kpiExecEndInput" value="' + kpiExecRange.end + '" class="border border-theme bg-panel rounded-lg text-xs text-body px-2 py-1.5">' +
-                    '<button onclick="kpiExecApplyCustomRange()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Apply</button>' +
+                    '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm">' +
+                        '<button onclick="kpiExecSetPreset(\'7d\')" class="' + presetBtnClass + '">Last 7 Days</button>' +
+                        '<button onclick="kpiExecSetPreset(\'1m\')" class="' + presetBtnClass + '">Last Month</button>' +
+                        '<button onclick="kpiExecSetPreset(\'1y\')" class="' + presetBtnClass + '">Last Year</button>' +
+                    '</div>' +
+                    '<div class="flex items-center gap-1.5 bg-app border border-theme rounded-xl px-2.5 py-1.5 shadow-sm">' +
+                        '<i data-lucide="calendar" class="h-3.5 w-3.5 text-subtle"></i>' +
+                        '<input type="date" id="kpiExecStartInput" value="' + kpiExecRange.start + '" class="bg-transparent text-xs font-semibold text-body focus:outline-none">' +
+                        '<span class="text-xs text-subtle">&ndash;</span>' +
+                        '<input type="date" id="kpiExecEndInput" value="' + kpiExecRange.end + '" class="bg-transparent text-xs font-semibold text-body focus:outline-none">' +
+                    '</div>' +
+                    '<button onclick="kpiExecApplyCustomRange()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 shadow-[0_4px_12px_rgba(79,70,229,0.3)] transition-all">Apply</button>' +
                 '</div>' +
             '</div>' +
             '<div class="flex items-center gap-2 mb-4">' +
-                '<span class="text-[10px] font-bold text-subtle uppercase mr-1">Granularity:</span>' +
-                '<button onclick="kpiExecSetGranularity(\'daily\')" id="kpiExecGranDaily" class="px-3 py-1 rounded-lg text-xs font-bold">Daily Trend</button>' +
-                '<button onclick="kpiExecSetGranularity(\'weekly\')" id="kpiExecGranWeekly" class="px-3 py-1 rounded-lg text-xs font-bold">Weekly Trend</button>' +
-                '<button onclick="kpiExecSetGranularity(\'monthly\')" id="kpiExecGranMonthly" class="px-3 py-1 rounded-lg text-xs font-bold">Monthly Trend</button>' +
+                '<span class="text-[10px] font-bold text-subtle uppercase mr-1 flex items-center gap-1"><i data-lucide="sliders-horizontal" class="h-3 w-3"></i> Granularity</span>' +
+                '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm">' +
+                    '<button onclick="kpiExecSetGranularity(\'daily\')" id="kpiExecGranDaily" class="px-3.5 py-1 rounded-lg text-xs font-bold transition-all">Daily Trend</button>' +
+                    '<button onclick="kpiExecSetGranularity(\'weekly\')" id="kpiExecGranWeekly" class="px-3.5 py-1 rounded-lg text-xs font-bold transition-all">Weekly Trend</button>' +
+                    '<button onclick="kpiExecSetGranularity(\'monthly\')" id="kpiExecGranMonthly" class="px-3.5 py-1 rounded-lg text-xs font-bold transition-all">Monthly Trend</button>' +
+                '</div>' +
             '</div>' +
             '<div id="kpiExecVersusBar" class="mb-4"></div>' +
             '<div style="height:320px"><canvas id="kpiExecLineChart"></canvas></div>' +
         '</div>' +
         '<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">' +
             '<div class="panel-card p-5">' +
-                '<h3 class="text-sm font-black text-heading mb-4">Checks by Agent</h3>' +
+                '<h3 class="text-sm font-black text-heading mb-1 flex items-center gap-2"><i data-lucide="pie-chart" class="h-4 w-4 text-indigo-500"></i> Checks by Agent</h3>' +
+                '<p class="text-[10px] text-subtle mb-4">Share of total domain/ISP checks run in this range</p>' +
                 '<div style="height:280px"><canvas id="kpiExecPieChart"></canvas></div>' +
             '</div>' +
             '<div class="panel-card p-5">' +
-                '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-black text-heading">Agent Ranking</h3><p class="text-[9px] text-subtle">Avg Combined Score, highest first</p></div>' +
+                '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="trophy" class="h-4 w-4 text-amber-500"></i> Agent Ranking</h3><p class="text-[9px] text-subtle">Avg Combined Score, highest first</p></div>' +
                 '<div id="kpiExecRankingTable" class="overflow-y-auto" style="max-height:280px"></div>' +
             '</div>' +
         '</div>';
@@ -5938,14 +5948,53 @@ function kpiExecApplyCustomRange() {
 }
 
 function kpiExecLoadData() {
+    var statsEl = document.getElementById('kpiExecStatsRow');
+    if (statsEl) statsEl.innerHTML = skeletonCards(4);
     google.script.run.withSuccessHandler(function(data) {
         kpiExecData = data || { dateList: [], agents: [], teamTotals: {}, pie: [] };
+        kpiExecRenderStatCards();
         renderKpiExecVersusBar();
         kpiExecRenderCharts();
         kpiExecRenderRanking();
     }).withFailureHandler(function() {
         showPremiumToast('Error', 'Could not load Executive Dashboard data.', 'error');
     }).getKpiExecutiveDashboard(currentSessionToken, kpiCurrentTeam, kpiExecRange.start, kpiExecRange.end);
+}
+
+function kpiExecRenderStatCards() {
+    var el = document.getElementById('kpiExecStatsRow');
+    if (!el || !kpiExecData) return;
+    var agents = kpiExecData.agents || [];
+    function avg(arr) { return arr.length ? Math.round(arr.reduce(function(s, v) { return s + v; }, 0) / arr.length) : 0; }
+
+    var totalChecks = agents.reduce(function(s, a) { return s + (a.totalChecksInRange || 0); }, 0);
+    var avgCompletion = agents.length ? Math.round(agents.reduce(function(s, a) { return s + avg(a.dailyCompletionPct || []); }, 0) / agents.length) : 0;
+    var avgAttendance = agents.length ? Math.round(agents.reduce(function(s, a) { return s + avg(a.dailyAttendancePct || []); }, 0) / agents.length) : 0;
+    var top = agents.map(function(a) { return { fullName: a.fullName, score: avg(a.dailyCombinedScore || []) }; }).sort(function(x, y) { return y.score - x.score; })[0];
+
+    var cards = [
+        { label: 'Total Checks', value: totalChecks.toLocaleString(), icon: 'shield-check', accent: 'indigo' },
+        { label: 'Avg Completion', value: avgCompletion + '%', icon: 'target', accent: 'emerald' },
+        { label: 'Avg Attendance', value: avgAttendance + '%', icon: 'calendar-check', accent: 'amber' },
+        { label: 'Top Performer', value: top ? top.fullName : '—', sub: top ? ('Score ' + top.score) : '', icon: 'crown', accent: 'rose' }
+    ];
+    var accentMap = {
+        indigo: { bg: 'bg-indigo-tint', text: 'text-indigo-500' },
+        emerald: { bg: 'bg-emerald-500/10', text: 'text-emerald-500' },
+        amber: { bg: 'bg-amber-500/10', text: 'text-amber-500' },
+        rose: { bg: 'bg-rose-tint', text: 'text-rose-500' }
+    };
+
+    el.innerHTML = cards.map(function(c) {
+        var a = accentMap[c.accent];
+        return '<div class="panel-card p-4 flex items-center gap-3 hover:shadow-md transition-shadow">' +
+            '<div class="h-11 w-11 rounded-xl ' + a.bg + ' ' + a.text + ' flex items-center justify-center flex-shrink-0"><i data-lucide="' + c.icon + '" class="h-5 w-5"></i></div>' +
+            '<div class="min-w-0"><p class="text-[9px] font-bold text-subtle uppercase tracking-widest truncate">' + c.label + '</p>' +
+            '<p class="text-lg font-black text-heading truncate">' + escapeHtmlClient(c.value) + '</p>' +
+            (c.sub ? '<p class="text-[9px] text-subtle truncate">' + escapeHtmlClient(c.sub) + '</p>' : '') +
+            '</div></div>';
+    }).join('');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 function renderKpiExecVersusBar() {
@@ -6014,8 +6063,31 @@ function kpiExecAggregateByGranularity(dateList, values) {
     return { labels: labels, values: vals };
 }
 
+// Draws the combined total in the center of the "Checks by Agent" doughnut — Chart.js has no
+// built-in center-text, so this is a tiny inline plugin registered just for that one chart.
+var kpiExecCenterTextPlugin = {
+    id: 'kpiExecCenterText',
+    afterDraw: function(chart) {
+        if (!chart.config.options.kpiCenterText) return;
+        var ctx = chart.ctx;
+        var meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data || !meta.data[0]) return;
+        var x = meta.data[0].x, y = meta.data[0].y;
+        ctx.save();
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#1e293b';
+        ctx.font = '800 20px Inter, sans-serif';
+        ctx.fillText(chart.config.options.kpiCenterText.value, x, y - 9);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '700 9px Inter, sans-serif';
+        ctx.fillText(chart.config.options.kpiCenterText.label, x, y + 11);
+        ctx.restore();
+    }
+};
+
 function kpiExecRenderCharts() {
     if (!kpiExecData || typeof Chart === 'undefined') return;
+    var gridColor = 'rgba(148, 163, 184, 0.15)';
     var dateList = kpiExecData.dateList || [];
     var canvas = document.getElementById('kpiExecLineChart');
     if (canvas) {
@@ -6029,7 +6101,12 @@ function kpiExecRenderCharts() {
                 var agg = kpiExecAggregateByGranularity(dateList, agent[kpiExecVersusMetric] || []);
                 labels = agg.labels;
                 var c = KPI_EXEC_COLORS[idx % KPI_EXEC_COLORS.length];
-                datasets.push({ label: agent.fullName, data: agg.values, borderColor: c, backgroundColor: c + '22', tension: 0.3, fill: false });
+                datasets.push({
+                    label: agent.fullName, data: agg.values, borderColor: c, backgroundColor: c + '14',
+                    borderWidth: 2.5, tension: 0.35, fill: true,
+                    pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: '#fff', pointBorderColor: c, pointBorderWidth: 2,
+                    pointHoverBackgroundColor: c, pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2
+                });
             });
         } else {
             var tt = kpiExecData.teamTotals || {};
@@ -6040,7 +6117,12 @@ function kpiExecRenderCharts() {
             ].forEach(function(m) {
                 var agg = kpiExecAggregateByGranularity(dateList, tt[m.key] || []);
                 labels = agg.labels;
-                datasets.push({ label: m.label, data: agg.values, borderColor: m.color, backgroundColor: m.color + '22', tension: 0.3, fill: false });
+                datasets.push({
+                    label: m.label, data: agg.values, borderColor: m.color, backgroundColor: m.color + '14',
+                    borderWidth: 2.5, tension: 0.35, fill: true,
+                    pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: '#fff', pointBorderColor: m.color, pointBorderWidth: 2,
+                    pointHoverBackgroundColor: m.color, pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2
+                });
             });
         }
 
@@ -6049,8 +6131,18 @@ function kpiExecRenderCharts() {
             data: { labels: labels, datasets: datasets },
             options: {
                 responsive: true, maintainAspectRatio: false,
-                scales: { y: { beginAtZero: true, max: 100 } },
-                plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    y: { beginAtZero: true, max: 100, grid: { color: gridColor, drawTicks: false }, border: { display: false }, ticks: { font: { size: 10 }, color: '#94a3b8', padding: 8 } },
+                    x: { grid: { display: false }, border: { display: false }, ticks: { font: { size: 10 }, color: '#94a3b8' } }
+                },
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11, weight: '600' }, color: '#475569' } },
+                    tooltip: {
+                        backgroundColor: '#1e293b', padding: 10, cornerRadius: 10, titleFont: { size: 11, weight: '700' }, bodyFont: { size: 11 },
+                        boxPadding: 4, usePointStyle: true
+                    }
+                }
             }
         });
     }
@@ -6059,13 +6151,32 @@ function kpiExecRenderCharts() {
     if (pieCanvas) {
         if (kpiExecPieChartInstance) { kpiExecPieChartInstance.destroy(); kpiExecPieChartInstance = null; }
         var pie = kpiExecData.pie || [];
+        var totalChecks = pie.reduce(function(s, p) { return s + p.value; }, 0);
         kpiExecPieChartInstance = new Chart(pieCanvas.getContext('2d'), {
-            type: 'pie',
+            type: 'doughnut',
+            plugins: [kpiExecCenterTextPlugin],
             data: {
                 labels: pie.map(function(p) { return p.fullName; }),
-                datasets: [{ data: pie.map(function(p) { return p.value; }), backgroundColor: pie.map(function(_, i) { return KPI_EXEC_COLORS[i % KPI_EXEC_COLORS.length]; }) }]
+                datasets: [{
+                    data: pie.map(function(p) { return p.value; }),
+                    backgroundColor: pie.map(function(_, i) { return KPI_EXEC_COLORS[i % KPI_EXEC_COLORS.length]; }),
+                    borderColor: '#fff', borderWidth: 3, hoverOffset: 10
+                }]
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } } }
+            options: {
+                responsive: true, maintainAspectRatio: false, cutout: '68%',
+                kpiCenterText: { value: totalChecks.toLocaleString(), label: 'TOTAL CHECKS' },
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle', padding: 14, font: { size: 11, weight: '600' }, color: '#475569' } },
+                    tooltip: {
+                        backgroundColor: '#1e293b', padding: 10, cornerRadius: 10, boxPadding: 4, usePointStyle: true,
+                        callbacks: { label: function(ctx) {
+                            var pct = totalChecks > 0 ? Math.round((ctx.parsed / totalChecks) * 100) : 0;
+                            return ' ' + ctx.label + ': ' + ctx.parsed.toLocaleString() + ' (' + pct + '%)';
+                        } }
+                    }
+                }
+            }
         });
     }
 }
