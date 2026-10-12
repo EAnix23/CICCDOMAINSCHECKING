@@ -4030,6 +4030,7 @@ function renderKpiShell(teams) {
             '<button onclick="kpiSwitchTab(\'scoreboard\')" id="kpiTabBtnScoreboard" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Scoreboard</button>' +
             '<button onclick="kpiSwitchTab(\'achievements\')" id="kpiTabBtnAchievements" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Accomplishments</button>' +
             '<button onclick="kpiSwitchTab(\'executive\')" id="kpiTabBtnExecutive" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Executive Dashboard</button>' +
+            (isSuperAdmin ? '<button onclick="kpiSwitchTab(\'reportdeck\')" id="kpiTabBtnReportdeck" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Report Deck</button>' : '') +
         '</div>' +
         '<div id="kpiTabContent"></div>';
 
@@ -4044,7 +4045,7 @@ function kpiSwitchTeam(team) {
 
 function kpiSwitchTab(tabName) {
     kpiCurrentTab = tabName;
-    ['Todo', 'Attendance', 'Scoreboard', 'Achievements', 'Executive'].forEach(function(t) {
+    ['Todo', 'Attendance', 'Scoreboard', 'Achievements', 'Executive', 'Reportdeck'].forEach(function(t) {
         var btn = document.getElementById('kpiTabBtn' + t);
         if (!btn) return;
         var isActive = t.toLowerCase() === tabName;
@@ -4060,6 +4061,7 @@ function kpiSwitchTab(tabName) {
     else if (tabName === 'scoreboard') renderKpiScoreboardTab();
     else if (tabName === 'achievements') renderKpiAchievementsTab();
     else if (tabName === 'executive') renderKpiExecutiveTab();
+    else if (tabName === 'reportdeck') renderKpiReportDeckTab();
 }
 
 // ---- Tab 1: To-Do List (auto-listed uploads + manual tasks) ----

@@ -73,6 +73,88 @@ async function checkSession(db, token, requireSuperAdmin) {
 }
 
 // ============================================================
+// REPORT DECK (Super Admin) — live data for the slide report in the KPI module
+// ============================================================
+const REPORT_SHEET_ID = "1tvHjXv8GBLh6-aSgevryskhBVbWtnNxVfsENveviYoY";
+// [competitor, sheet tab gid]. The tab is "<competitor> Daily Promotion". Add a line here when a new competitor tab is created.
+const REPORT_COMPETITORS = [
+  ["Playtime", "1485934075"], ["CasinoPlus", "314681885"], ["Gamezone", "1299729057"], ["Winzir", "976963596"],
+  ["747", "1643976765"], ["789 Bingo", "2143518349"], ["Okbet", "1636870610"], ["Nustar", "259247714"],
+  ["Okada Online", "242025985"], ["Megaperya", "695902304"], ["Inplay", "730651582"]
+];
+// Same order as the tactic columns in the slide deck. A campaign can match several tactics.
+const REPORT_TACTICS = [
+  ["Jackpot / raffle / drops", /jackpot|raffle|lucky|giveaway|prize drop|cash drop|scratch|\bspin|mystery|\bdraw\b|bonanza|panalo|perya|prize pool|fiesta|bomba|win \d|wins\b/i],
+  ["Tournament / leaderboard", /tournament|leaderboard|\brace\b|ranking|championship|challenge|contest|multiplier mania/i],
+  ["Cashback / rebate", /cashback|rebate|rakeback|loss (return|rebate|insurance)|instant return|return on|unlimited bonus/i],
+  ["Welcome / free credits", /welcome|first deposit|new (player|user|member)|newbie|register|verification|sign.?up|free (spin|credit|play|bet|chip)/i],
+  ["VIP / loyalty / levels", /\bvip\b|loyalty|level|member'?s day|rewards circle|tier|royale|club|community/i],
+  ["Reload / time-boxed boost", /reload|deposit (bonus|boost)|happy hour|\+\d+%|top.?up|weekday|luck hour|extra/i],
+  ["Referral / affiliate", /refer|invite|affiliate|commission/i]
+];
+
+function parseCsvText(t) {
+  const rows = []; let row = [], f = "", q = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { row.push(f); f = ""; }
+    else if (c === "\n") { row.push(f); rows.push(row); row = []; f = ""; }
+    else if (c !== "\r") f += c;
+  }
+  if (f.length || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+
+function reportIsoDate(s) {
+  const d = new Date(String(s || "").replace(/\./g, "").replace(/\s+/g, " ").trim() + " UTC");
+  return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+
+async function loadReportCompetitors() {
+  const cache = caches.default;
+  const cacheKey = new Request("https://report-cache.internal/competitors-v1");
+  try {
+    const hit = await cache.match(cacheKey);
+    if (hit) return await hit.json();
+  } catch (e) {}
+
+  const clean = (c) => String(c || "").replace(/\s+/g, " ").trim();
+  const competitors = await Promise.all(REPORT_COMPETITORS.map(async ([name, gid]) => {
+    try {
+      const url = "https://docs.google.com/spreadsheets/d/" + REPORT_SHEET_ID + "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(name + " Daily Promotion");
+      const res = await fetch(url);
+      if (!res.ok) return { name, gid, error: "HTTP " + res.status, entries: [] };
+      const rows = parseCsvText(await res.text());
+      const byKey = new Map();
+      rows.forEach((x, i) => {
+        if (i === 0 && /date checked/i.test(x[0] || "")) return;
+        const title = clean(x[3]), type = clean(x[4]);
+        if (!title && !type) return;
+        const key = title.toLowerCase().replace(/[^a-z0-9₱%]+/g, " ").trim();
+        if (!key) return;
+        const date = reportIsoDate(x[0]);
+        const hit = byKey.get(key);
+        if (hit) { if (date && date > (hit.lastDate || "")) hit.lastDate = date; return; }
+        const hay = title + " " + type;
+        const tactics = [];
+        REPORT_TACTICS.forEach(([, re], ti) => { if (re.test(hay)) tactics.push(ti); });
+        byKey.set(key, { row: i + 1, date, lastDate: date, title: title.slice(0, 160), type: type.slice(0, 100), tactics });
+      });
+      return { name, gid, entries: [...byKey.values()] };
+    } catch (e) {
+      return { name, gid, error: String(e && e.message || e), entries: [] };
+    }
+  }));
+  const payload = { sheetId: REPORT_SHEET_ID, tactics: REPORT_TACTICS.map((t) => t[0]), competitors, fetchedAt: new Date().toISOString() };
+  try {
+    await cache.put(cacheKey, new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=900" } }));
+  } catch (e) {}
+  return payload;
+}
+
+// ============================================================
 // ACTION HANDLERS — same names/signatures as the old code.gs
 // ============================================================
 const actions = {
@@ -915,6 +997,58 @@ const actions = {
   // Used for the Line/Pie charts and the agent-vs-agent "Versus" comparison on the frontend — one
   // call returns everything needed for the whole date range, so switching Last 7 Days/Month/Year
   // or picking agents to compare is just re-slicing data already in hand, not a new request.
+  // Everything the Report Deck slides need, in one call. Super Admin only.
+  // "Waiting" = at least one ISP column is '-' or empty; "all 4 blocked" = every ISP says blocked.
+  async getReportDeckData(db, token) {
+    await checkSession(db, token, true);
+    const NI = "substr(domain,1,5)<>'init-'";
+    const ISPS = ["pldt", "globe", "converge", "dito"];
+    const all4 = "(" + ISPS.map(c => `INSTR(LOWER(${c}),'block')>0`).join(" AND ") + ")";
+    const anyActive = "(" + ISPS.map(c => `INSTR(LOWER(${c}),'active')>0`).join(" OR ") + ")";
+    const anyRedirect = "(" + ISPS.map(c => `INSTR(LOWER(${c}),'redirect')>0`).join(" OR ") + ")";
+    const anySpare = "(" + ISPS.map(c => `INSTR(LOWER(${c}),'spare')>0`).join(" OR ") + ")";
+    const anyWaiting = "(" + ISPS.map(c => `TRIM(${c}) IN ('-','')`).join(" OR ") + ")";
+    const allWaiting = "(" + ISPS.map(c => `TRIM(${c}) IN ('-','')`).join(" AND ") + ")";
+    const q = (sql) => db.prepare(sql).all().then(r => r.results);
+    const ispSql = (tbl, where) => ISPS.map(c =>
+      `SELECT '${c}' isp, SUM(CASE WHEN INSTR(LOWER(${c}),'block')>0 THEN 1 ELSE 0 END) blocked, SUM(CASE WHEN INSTR(LOWER(${c}),'active')>0 THEN 1 ELSE 0 END) active, ` +
+      `SUM(CASE WHEN INSTR(LOWER(${c}),'redirect')>0 THEN 1 ELSE 0 END) redirected, SUM(CASE WHEN TRIM(${c}) IN ('-','') THEN 1 ELSE 0 END) waiting, COUNT(*) total FROM ${tbl} ${where}`
+    ).join(" UNION ALL ");
+
+    const [dpvTot, byTeam, isp, batches, checks, checksAgent, userOps, uplMonth, uplDaily, uploaders, bbcTot, brands, checklist, achievements, members, lastUp] = await Promise.all([
+      q(`SELECT COUNT(*) total, SUM(CASE WHEN ${all4} THEN 1 ELSE 0 END) all4Blocked, SUM(CASE WHEN ${anyActive} THEN 1 ELSE 0 END) anyActive, SUM(CASE WHEN ${anyWaiting} THEN 1 ELSE 0 END) waiting, SUM(CASE WHEN ${anyRedirect} THEN 1 ELSE 0 END) anyRedirect FROM dpv_records WHERE ${NI}`),
+      q(`SELECT team, COUNT(*) total, SUM(CASE WHEN ${all4} THEN 1 ELSE 0 END) all4Blocked, SUM(CASE WHEN ${anyActive} THEN 1 ELSE 0 END) anyActive, SUM(CASE WHEN ${anyWaiting} THEN 1 ELSE 0 END) waiting FROM dpv_records WHERE ${NI} GROUP BY team ORDER BY team`),
+      q(ispSql("dpv_records", `WHERE ${NI}`)),
+      q(`SELECT batch_id batchId, team, COUNT(*) total, SUM(CASE WHEN ${anyWaiting} THEN 1 ELSE 0 END) waiting, SUM(CASE WHEN ${allWaiting} THEN 1 ELSE 0 END) untouched, MIN(created_at) firstUpload FROM dpv_records WHERE ${NI} GROUP BY batch_id, team`),
+      q("SELECT COUNT(*) total, COUNT(DISTINCT domain) uniq, MIN(checked_at) first, MAX(checked_at) last FROM kpi_domain_checks"),
+      q("SELECT u.full_name name, u.team team, COUNT(*) checks, COUNT(DISTINCT k.domain) uniq FROM kpi_domain_checks k LEFT JOIN users u ON u.username = k.username GROUP BY k.username ORDER BY checks DESC"),
+      q("SELECT d.team domainTeam, u.team operatorTeam, COUNT(DISTINCT k.domain) uniq FROM kpi_domain_checks k JOIN dpv_records d ON d.domain = k.domain LEFT JOIN users u ON u.username = k.username WHERE k.target = 'dpv' GROUP BY d.team, u.team"),
+      q(`SELECT team, substr(created_at,1,7) m, COUNT(*) c FROM dpv_records WHERE ${NI} GROUP BY team, m ORDER BY m`),
+      q(`SELECT team, substr(created_at,1,10) d, COUNT(*) c FROM dpv_records WHERE ${NI} AND created_at >= date('now','-21 day') GROUP BY team, d ORDER BY d`),
+      q(`SELECT SUM(CASE WHEN agent IS NULL OR agent = '' OR agent NOT IN (SELECT username FROM users) THEN 1 ELSE 0 END) unlinked, COUNT(*) total FROM dpv_records WHERE ${NI}`),
+      q(`SELECT COUNT(*) total, COUNT(DISTINCT brand) brands, SUM(CASE WHEN ${all4} THEN 1 ELSE 0 END) all4Blocked, SUM(CASE WHEN ${anyActive} THEN 1 ELSE 0 END) anyActive FROM domains`),
+      q(`SELECT brand, COUNT(*) total, SUM(CASE WHEN ${all4} THEN 1 ELSE 0 END) all4Blocked, SUM(CASE WHEN ${anyActive} THEN 1 ELSE 0 END) anyActive, SUM(CASE WHEN ${anySpare} THEN 1 ELSE 0 END) spare FROM domains GROUP BY brand ORDER BY total DESC`),
+      q("SELECT a.category, COUNT(*) c, COUNT(DISTINCT c.task_date) days FROM kpi_checklist_completions c JOIN kpi_checklist_assignments a ON a.id = c.assignment_id GROUP BY a.category"),
+      q("SELECT team, category, title, description, substr(created_at,1,10) date FROM kpi_achievements ORDER BY id DESC LIMIT 80"),
+      q("SELECT full_name name, team FROM users WHERE team != '' ORDER BY team, full_name"),
+      q("SELECT MAX(created_at) lastDpv FROM dpv_records")
+    ]);
+    return {
+      asOf: new Date().toISOString(), lastDpvUpload: lastUp[0] && lastUp[0].lastDpv,
+      dpv: { totals: dpvTot[0], byTeam, isp, batches },
+      checks: { totals: checks[0], byOperator: checksAgent, domainsByOperatorTeam: userOps },
+      uploads: { byMonth: uplMonth, byDay: uplDaily, unlinked: uploaders[0].unlinked, total: uploaders[0].total },
+      bbc: { totals: bbcTot[0], brands },
+      checklist, achievements, members
+    };
+  },
+
+  // Competitor promo data read live from the public Daily Competitor Promotions Tracker sheet (cached ~15 min).
+  async getReportCompetitors(db, token) {
+    await checkSession(db, token, true);
+    return await loadReportCompetitors();
+  },
+
   async getKpiExecutiveDashboard(db, token, team, startDate, endDate) {
     const session = await checkSession(db, token);
     let teamList;
