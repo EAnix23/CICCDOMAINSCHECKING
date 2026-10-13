@@ -61,6 +61,34 @@ function rdDateLabel(iso) {
     return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
+// Payment names arrive in many spellings (Gcash / GCASH / G-CASH CH.20 ...): fold them into one label, keep the top N.
+function rdNormPay(raw) {
+    var u = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!u) return 'Unknown';
+    if (u.indexOf('GCASH') === 0) return 'GCash';
+    if (u.indexOf('GOTYME') === 0) return 'GoTyme';
+    if (u.indexOf('MAYA') === 0 || u.indexOf('PAYMAYA') === 0) return 'Maya';
+    if (u.indexOf('QRPH') === 0) return 'QR Ph (other bank)';
+    if (u.indexOf('OTHER') === 0) return 'Other / unknown';
+    if (u.indexOf('GRABPAY') === 0) return 'GrabPay';
+    return String(raw).trim().replace(/\s+/g, ' ').slice(0, 22);
+}
+function rdTopGroups(rows, key, top) {
+    var map = {};
+    rows.forEach(function (r) { var k = rdNormPay(r[key]); map[k] = (map[k] || 0) + (+r.c); });
+    var list = Object.keys(map).map(function (k) { return { name: k, c: map[k] }; }).sort(function (a, b) { return b.c - a.c; });
+    if (list.length > top) { var rest = list.slice(top).reduce(function (s, x) { return s + x.c; }, 0); list = list.slice(0, top); list.push({ name: 'Others (' + (Object.keys(map).length - top) + ')', c: rest }); }
+    return list;
+}
+function rdShortDate(s) { return s ? rdDateLabel(String(s).slice(0, 10) + 'T00:00:00Z').replace(/, \d{4}$/, '') + ', ' + String(s).slice(0, 4) : '-'; }
+function rdDaysAgo(s, asOf) { if (!s) return 0; return Math.max(0, Math.round((new Date(asOf) - new Date(String(s).slice(0, 10) + 'T00:00:00Z')) / 86400000)); }
+function rdUserList(rows, color) {
+    var max = rows.length ? +rows[0].c : 1;
+    return rows.slice(0, 6).map(function (r) {
+        return '<div style="margin:9px 0"><div style="display:flex;justify-content:space-between;font-size:15px"><span>' + rdEsc(r.name || '(unassigned)') + '</span><b>' + rdN(r.c) + '</b></div><div style="height:7px;border-radius:4px;background:#1E2A44;margin-top:4px"><div style="height:7px;border-radius:4px;background:' + color + ';width:' + Math.max(3, Math.round(r.c / max * 100)) + '%"></div></div></div>';
+    }).join('');
+}
+
 // ---- model: everything derived from the raw Worker data ----
 function rdBuildModel(d, comp) {
     var m = {};
@@ -320,6 +348,45 @@ function rdSlides(m, d) {
         return rdFrame(i, n, 'Daily Upload Output by Team', 'Uploads arrive in bursts. ' + rdN(m.unlinkedUploads) + ' of ' + rdN(d.uploads.total) + ' DPV domains are not linked to an agent.', body);
     });
 
+    // Payment Gateway (two slides)
+    if (d.payments) {
+        S.push(function (i, n) {
+            var pg = d.payments.registry, t = pg.totals, total = +t.total, pending = +t.pending;
+            var months = pg.byMonth, prov = rdTopGroups(pg.providers, 'provider', 7), c1 = 'rdc_pgm', c2 = 'rdc_pgp';
+            var mn = function (k) { return new Date(k + '-01T00:00:00Z').toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }); };
+            rdAddChart({ id: c1, type: 'bar', data: { labels: months.map(function (r) { return mn(r.m); }), datasets: [{ label: 'Registered', data: months.map(function (r) { return +r.c; }), backgroundColor: RD_C.teal }] }, options: rdBarOpts({ labelMin: 0, pos: 'end', suffix: '', labelColor: '#E2E8F0', legend: false, int: true }) });
+            rdAddChart({ id: c2, type: 'bar', data: { labels: prov.map(function (r) { return r.name; }), datasets: [{ label: 'QRs', data: prov.map(function (r) { return r.c; }), backgroundColor: RD_C.sky }] }, options: rdBarOpts({ indexAxis: 'y', labelMin: 0, pos: 'end', suffix: '', labelColor: '#E2E8F0', legend: false, int: true, max: Math.ceil((prov[0] ? prov[0].c : 1) * 1.18) }) });
+            var ago = rdDaysAgo(t.last, d.asOf);
+            var body = '<div class="rd-grid3">' +
+                rdStat('Merchant QRs registered', rdN(total), rdShortDate(t.first) + ' to ' + rdShortDate(t.last), RD_C.teal) +
+                rdStat('Still Pending', rdPct(pending, total) + '%', rdN(pending) + ' of ' + rdN(total) + ' have no resolution status yet', pending === total ? RD_C.rose : RD_C.amber) +
+                rdStat('Last registration', '<span style="font-size:40px">' + ago + ' days ago</span>', rdShortDate(t.last), ago > 30 ? RD_C.amber : RD_C.sky) + '</div>' +
+                '<div style="display:grid;grid-template-columns:4.4fr 4.4fr 3.2fr;gap:18px;margin-top:18px"><div class="rd-card" style="padding:16px 20px"><div class="rd-card-h">Registered per month</div>' + rdCanvas(c1, 410, 190) + '</div>' +
+                '<div class="rd-card" style="padding:16px 20px"><div class="rd-card-h">By payment provider</div>' + rdCanvas(c2, 410, 190) + '</div>' +
+                '<div class="rd-card" style="padding:16px 22px"><div class="rd-card-h">By analyst</div>' + rdUserList(pg.byUser, RD_C.violet) + '</div></div>';
+            return rdFrame(i, n, 'Payment Gateway: Merchant QR Registry', rdN(total) + ' merchant QRs on record' + (pending === total ? '. Every one is still marked Pending.' : '. ' + rdN(total - pending) + ' have moved past Pending.'), body);
+        });
+        S.push(function (i, n) {
+            var sb = d.payments.submissions, modes = {}, first = '', last = '';
+            sb.byMode.forEach(function (r) { modes[r.mode] = r; if (!first || r.first < first) first = r.first; if (!last || r.last > last) last = r.last; });
+            var auto = modes.automated || { c: 0, amount: 0 }, man = modes.manual || { c: 0, amount: 0 };
+            var total = +auto.c + +man.c, vend = rdTopGroups(sb.vendors, 'vendor', 6), banks = rdTopGroups(sb.banks, 'bank', 5), c1 = 'rdc_bspv', c2 = 'rdc_bspb';
+            var mx = function (g) { return Math.ceil((g[0] ? g[0].c : 1) * 1.18); };
+            rdAddChart({ id: c1, type: 'bar', data: { labels: vend.map(function (r) { return r.name; }), datasets: [{ label: 'QR scans', data: vend.map(function (r) { return r.c; }), backgroundColor: RD_C.teal }] }, options: rdBarOpts({ indexAxis: 'y', labelMin: 0, pos: 'end', suffix: '', labelColor: '#E2E8F0', legend: false, int: true, max: mx(vend) }) });
+            rdAddChart({ id: c2, type: 'bar', data: { labels: banks.map(function (r) { return r.name; }), datasets: [{ label: 'Manual entries', data: banks.map(function (r) { return r.c; }), backgroundColor: RD_C.amber }] }, options: rdBarOpts({ indexAxis: 'y', labelMin: 0, pos: 'end', suffix: '', labelColor: '#E2E8F0', legend: false, int: true, max: mx(banks) }) });
+            var ago = rdDaysAgo(last, d.asOf);
+            var body = '<div class="rd-grid4">' +
+                rdStat('Payment submissions', rdN(total), rdShortDate(first) + ' to ' + rdShortDate(last), RD_C.teal) +
+                rdStat('Automated QR scans', rdN(auto.c), rdPct(auto.c, total) + '% of submissions', RD_C.sky) +
+                rdStat('Manual entries', rdN(man.c), 'Total amount PHP ' + rdN(Math.round(+man.amount)), RD_C.amber) +
+                rdStat('Last submission', '<span style="font-size:40px">' + ago + ' days ago</span>', rdShortDate(last), ago > 30 ? RD_C.rose : RD_C.sky) + '</div>' +
+                '<div style="display:grid;grid-template-columns:4.4fr 4.4fr 3.2fr;gap:18px;margin-top:18px"><div class="rd-card" style="padding:16px 20px"><div class="rd-card-h">QR scans by payment vendor</div>' + rdCanvas(c1, 410, 190) + '</div>' +
+                '<div class="rd-card" style="padding:16px 20px"><div class="rd-card-h">Manual entries by bank / e-wallet</div>' + rdCanvas(c2, 410, 190) + '</div>' +
+                '<div class="rd-card" style="padding:16px 22px"><div class="rd-card-h">By analyst</div>' + rdUserList(sb.byUser, RD_C.violet) + '</div></div>';
+            return rdFrame(i, n, 'Payment Reporting: Investigator Submissions', 'Automated QR scans and manual payment entries. Provider spellings are merged into one name.', body);
+        });
+    }
+
     // competitor slides need the Sheet data
     if (!m.comp) {
         S.push(function (i, n) { return rdFrame(i, n, 'Competitor Intelligence', 'The Daily Competitor Promotions Tracker could not be read right now.', '<div class="rd-card" style="padding:40px;font-size:20px;color:' + RD_C.sub + '">Press Refresh to try again. Make sure the sheet is still shared as "Anyone with the link can view".</div>'); });
@@ -445,7 +512,7 @@ function rdSlides(m, d) {
             ['Blocked on all 4', 'Every one of the four ISPs reports the domain as blocked.'],
             ['Block rate', 'Blocked results divided by completed (non-pending) results. DPV: ' + rdN(m.blockedRes) + ' / ' + rdN(m.checkedRes) + '.'],
             ['Blocked / Active / Redirected / Spare', 'Status recorded per ISP by checker.js or manual update. Spare = reserve domain not in use.'],
-            ['Sources and refresh', 'BBC-SEC Domain_Guard database plus the Daily Competitor Promotions Tracker sheet. This deck reloads live every time it is opened or refreshed. Checker attribution begins ' + rdEsc((m.checks.first || '').slice(0, 10)) + '.']
+            ['Sources and refresh', 'BBC-SEC Domain_Guard database (incl. the Payment Gateway registry and submissions) plus the Daily Competitor Promotions Tracker sheet. This deck reloads live every time it is opened or refreshed. Checker attribution begins ' + rdEsc((m.checks.first || '').slice(0, 10)) + '.']
         ];
         var body = '<div class="rd-grid2" style="grid-template-rows:repeat(3,auto)">' + defs.map(function (x) { return '<div class="rd-card" style="padding:20px 24px"><div style="font-size:19px;font-weight:800;color:' + RD_C.teal + '">' + rdEsc(x[0]) + '</div><div class="rd-sub" style="font-size:16px;margin-top:6px;line-height:1.4">' + x[1] + '</div></div>'; }).join('') + '</div>';
         return rdFrame(i, n, 'Appendix: Definitions and Sources', 'How the numbers in this report are calculated.', body);

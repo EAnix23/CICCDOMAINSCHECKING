@@ -1015,7 +1015,7 @@ const actions = {
       `SUM(CASE WHEN INSTR(LOWER(${c}),'redirect')>0 THEN 1 ELSE 0 END) redirected, SUM(CASE WHEN TRIM(${c}) IN ('-','') THEN 1 ELSE 0 END) waiting, COUNT(*) total FROM ${tbl} ${where}`
     ).join(" UNION ALL ");
 
-    const [dpvTot, byTeam, isp, batches, checks, checksAgent, userOps, uplMonth, uplDaily, uploaders, bbcTot, brands, checklist, achievements, members, lastUp] = await Promise.all([
+    const [dpvTot, byTeam, isp, batches, checks, checksAgent, userOps, uplMonth, uplDaily, uploaders, bbcTot, brands, checklist, achievements, members, lastUp, pgTot, pgProv, pgMonth, pgUser, bspMode, bspVendor, bspBank, bspUser, bspMonth] = await Promise.all([
       q(`SELECT COUNT(*) total, SUM(CASE WHEN ${all4} THEN 1 ELSE 0 END) all4Blocked, SUM(CASE WHEN ${anyActive} THEN 1 ELSE 0 END) anyActive, SUM(CASE WHEN ${anyWaiting} THEN 1 ELSE 0 END) waiting, SUM(CASE WHEN ${anyRedirect} THEN 1 ELSE 0 END) anyRedirect FROM dpv_records WHERE ${NI}`),
       q(`SELECT team, COUNT(*) total, SUM(CASE WHEN ${all4} THEN 1 ELSE 0 END) all4Blocked, SUM(CASE WHEN ${anyActive} THEN 1 ELSE 0 END) anyActive, SUM(CASE WHEN ${anyWaiting} THEN 1 ELSE 0 END) waiting FROM dpv_records WHERE ${NI} GROUP BY team ORDER BY team`),
       q(ispSql("dpv_records", `WHERE ${NI}`)),
@@ -1031,7 +1031,17 @@ const actions = {
       q("SELECT a.category, COUNT(*) c, COUNT(DISTINCT c.task_date) days FROM kpi_checklist_completions c JOIN kpi_checklist_assignments a ON a.id = c.assignment_id GROUP BY a.category"),
       q("SELECT team, category, title, description, substr(created_at,1,10) date FROM kpi_achievements ORDER BY id DESC LIMIT 80"),
       q("SELECT full_name name, team FROM users WHERE team != '' ORDER BY team, full_name"),
-      q("SELECT MAX(created_at) lastDpv FROM dpv_records")
+      q("SELECT MAX(created_at) lastDpv FROM dpv_records"),
+      // Payment Gateway: merchant/QR registry (payment_gateway_merchants) + investigator submissions (bsp_submissions)
+      q("SELECT COUNT(*) total, SUM(CASE WHEN LOWER(status) = 'pending' THEN 1 ELSE 0 END) pending, COUNT(DISTINCT CASE WHEN merchant_id != '' THEN merchant_id END) merchantIds, MIN(submitted_at) first, MAX(submitted_at) last FROM payment_gateway_merchants"),
+      q("SELECT provider, COUNT(*) c FROM payment_gateway_merchants GROUP BY provider"),
+      q("SELECT substr(submitted_at,1,7) m, COUNT(*) c FROM payment_gateway_merchants GROUP BY m ORDER BY m"),
+      q("SELECT u.full_name name, m.team team, COUNT(*) c FROM payment_gateway_merchants m LEFT JOIN users u ON u.username = m.username GROUP BY m.username ORDER BY c DESC"),
+      q("SELECT mode, COUNT(*) c, MIN(submitted_at) first, MAX(submitted_at) last, SUM(COALESCE(amount,0)) amount FROM bsp_submissions GROUP BY mode"),
+      q("SELECT payment_vendor vendor, COUNT(*) c FROM bsp_submissions WHERE payment_vendor != '' GROUP BY payment_vendor"),
+      q("SELECT bank, COUNT(*) c FROM bsp_submissions WHERE bank != '' GROUP BY bank"),
+      q("SELECT u.full_name name, b.team team, COUNT(*) c FROM bsp_submissions b LEFT JOIN users u ON u.username = b.username GROUP BY b.username ORDER BY c DESC"),
+      q("SELECT substr(submitted_at,1,7) m, mode, COUNT(*) c FROM bsp_submissions GROUP BY m, mode ORDER BY m")
     ]);
     return {
       asOf: new Date().toISOString(), lastDpvUpload: lastUp[0] && lastUp[0].lastDpv,
@@ -1039,7 +1049,8 @@ const actions = {
       checks: { totals: checks[0], byOperator: checksAgent, domainsByOperatorTeam: userOps },
       uploads: { byMonth: uplMonth, byDay: uplDaily, unlinked: uploaders[0].unlinked, total: uploaders[0].total },
       bbc: { totals: bbcTot[0], brands },
-      checklist, achievements, members
+      checklist, achievements, members,
+      payments: { registry: { totals: pgTot[0], providers: pgProv, byMonth: pgMonth, byUser: pgUser }, submissions: { byMode: bspMode, vendors: bspVendor, banks: bspBank, byUser: bspUser, byMonth: bspMonth } }
     };
   },
 
