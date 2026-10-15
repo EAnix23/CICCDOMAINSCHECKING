@@ -1054,6 +1054,18 @@ const actions = {
     };
   },
 
+  // Which DPV batches have a CICC reference number. A batch is complete when every domain in it has one.
+  async getCiccBatchStatus(db, token) {
+    await checkSession(db, token, true);
+    const { results } = await db.prepare(
+      "SELECT team, batch_id batchId, COUNT(*) total, " +
+      "SUM(CASE WHEN TRIM(COALESCE(cicc,'')) <> '' THEN 1 ELSE 0 END) withCicc, MIN(created_at) firstUpload, " +
+      "GROUP_CONCAT(DISTINCT CASE WHEN TRIM(COALESCE(cicc,'')) <> '' THEN TRIM(cicc) END) ciccs " +
+      "FROM dpv_records WHERE substr(domain,1,5) <> 'init-' GROUP BY team, batch_id"
+    ).all();
+    return { asOf: new Date().toISOString(), batches: results };
+  },
+
   // Competitor promo data read live from the public Daily Competitor Promotions Tracker sheet (cached ~15 min).
   async getReportCompetitors(db, token) {
     await checkSession(db, token, true);

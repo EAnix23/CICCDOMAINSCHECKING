@@ -700,3 +700,105 @@ function rdKey(e) {
 function rdPrint() { window.print(); }
 function rdBeforePrint() { if (!document.getElementById('rdRoot')) return; document.body.classList.add('rd-printing'); RD.idx = -1; rdFit(1); }
 function rdAfterPrint() { document.body.classList.remove('rd-printing'); RD.idx = 0; rdFit(); }
+
+
+// ============================================================
+// CICC BATCHES — which DPV batches still have no CICC reference number (Super Admin, live)
+// ============================================================
+var RC = { rows: [], view: 'missing', team: 'all', q: '', asOf: null };
+var RC_TEAMS = ['Team 001', 'Team 002', 'TCG Batch', 'Kyle Batch'];
+
+function renderKpiCiccTab() {
+    var content = document.getElementById('kpiTabContent');
+    if (!content) return;
+    if (currentUserRole !== 'Super Admin') { content.innerHTML = '<p class="text-sm text-subtle">Available to Super Admin only.</p>'; return; }
+    content.innerHTML = '<div id="rcRoot"></div>';
+    google.script.run.withSuccessHandler(function (d) {
+        RC.asOf = d.asOf;
+        RC.rows = (d.batches || []).map(function (b) {
+            var total = +b.total, w = +b.withCicc;
+            var m = String(b.batchId).match(/(\d+)\s*$/);
+            return { team: rdTeamLabel(b.team), batch: String(b.batchId).trim(), total: total, withCicc: w, status: w === 0 ? 'none' : (w >= total ? 'full' : 'partial'), ciccs: b.ciccs ? String(b.ciccs).split(',') : [], first: (b.firstUpload || '').slice(0, 10), num: m ? +m[1] : 0 };
+        }).sort(function (a, b) { return (RC_TEAMS.indexOf(a.team) - RC_TEAMS.indexOf(b.team)) || (a.num - b.num) || a.batch.localeCompare(b.batch); });
+        rcRender();
+    }).withFailureHandler(function () {
+        var el = document.getElementById('rcRoot'); if (el) el.innerHTML = '<p class="text-sm text-subtle">Could not load CICC batch data. Try again.</p>';
+    }).getCiccBatchStatus(currentSessionToken);
+}
+
+function rcFiltered() {
+    var q = RC.q.trim().toLowerCase();
+    return RC.rows.filter(function (r) {
+        if (RC.view === 'missing' && r.status === 'full') return false;
+        if (RC.team !== 'all' && r.team !== RC.team) return false;
+        if (q && (r.batch + ' ' + r.ciccs.join(' ')).toLowerCase().indexOf(q) === -1) return false;
+        return true;
+    });
+}
+
+function rcRender() {
+    var root = document.getElementById('rcRoot'); if (!root) return;
+    var all = RC.rows, none = all.filter(function (r) { return r.status === 'none'; }), part = all.filter(function (r) { return r.status === 'partial'; });
+    var full = all.length - none.length - part.length;
+    var domMissing = all.reduce(function (s, r) { return s + (r.total - r.withCicc); }, 0);
+    function stat(label, val, sub, color) { return '<div class="panel-card p-4"><p class="text-[10px] font-bold text-subtle uppercase">' + label + '</p><p class="text-2xl font-black mt-1 ' + color + '">' + val + '</p><p class="text-[10px] text-subtle mt-0.5">' + sub + '</p></div>'; }
+    function pill(id, label, active, fn) { return '<button onclick="' + fn + '" id="' + id + '" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ' + (active ? 'bg-indigo-600 text-white shadow-sm' : 'text-subtle hover:text-body') + '">' + label + '</button>'; }
+    var teamPills = [['all', 'All teams']].concat(RC_TEAMS.map(function (t) { return [t, t]; })).map(function (t) {
+        var n = all.filter(function (r) { return (RC.view === 'all' || r.status !== 'full') && (t[0] === 'all' || r.team === t[0]); }).length;
+        return pill('rcT' + t[0].replace(/\W/g, ''), t[1] + ' (' + n + ')', RC.team === t[0], "rcSetTeam('" + t[0] + "')");
+    }).join('');
+    root.innerHTML =
+        '<div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">' +
+            stat('Batches in system', all.length, 'DPV batches (all teams)', 'text-heading') +
+            stat('Complete', full, 'every domain has a CICC ref', 'text-emerald-500') +
+            stat('No CICC reference', none.length, 'nothing recorded yet', 'text-rose-500') +
+            stat('Partial', part.length, 'some domains missing', 'text-amber-500') +
+            stat('Domains without CICC', rdN(domMissing), 'across all batches', 'text-indigo-500') +
+        '</div>' +
+        '<div class="panel-card p-5">' +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-4">' +
+                '<div><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="file-warning" class="h-4 w-4 text-indigo-500"></i> DPV Batches and CICC Reference Numbers</h3><p class="text-[10px] text-subtle mt-0.5">Live from the portal. Add a CICC reference to a batch in Domain Post Verification and it drops off this list. As of ' + rdEsc(rdDateLabel(RC.asOf)) + '.</p></div>' +
+                '<div class="flex items-center gap-2 flex-wrap">' +
+                    '<input id="rcSearch" oninput="rcSetQuery(this.value)" value="' + rdEsc(RC.q) + '" placeholder="Search batch or CICC..." class="px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none w-44">' +
+                    '<button onclick="rcCopyNames()" class="px-3 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app shadow-sm flex items-center gap-1.5"><i data-lucide="copy" class="h-3.5 w-3.5"></i> Copy batch names</button>' +
+                    '<button onclick="rcDownload()" class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm flex items-center gap-1.5"><i data-lucide="download" class="h-3.5 w-3.5"></i> Download CSV</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="flex items-center gap-3 flex-wrap mb-4">' +
+                '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm">' + pill('rcVmissing', 'Missing CICC (' + (none.length + part.length) + ')', RC.view === 'missing', "rcSetView('missing')") + pill('rcVall', 'All batches (' + all.length + ')', RC.view === 'all', "rcSetView('all')") + '</div>' +
+                '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + teamPills + '</div>' +
+            '</div>' +
+            '<div id="rcTable" class="overflow-x-auto"></div>' +
+        '</div>';
+    rcRenderTable();
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function rcRenderTable() {
+    var el = document.getElementById('rcTable'); if (!el) return;
+    var rows = rcFiltered();
+    if (!rows.length) { el.innerHTML = '<p class="text-sm text-subtle py-6 text-center">Nothing to show for this filter.</p>'; return; }
+    var badge = { none: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-500">No CICC</span>', partial: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-500">Partial</span>', full: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-500">Complete</span>' };
+    el.innerHTML = '<table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-subtle border-b border-theme"><th class="py-2 pr-3">Team</th><th class="py-2 pr-3">Batch name</th><th class="py-2 pr-3 text-right">Domains</th><th class="py-2 pr-3 text-right">With CICC</th><th class="py-2 pr-3">Status</th><th class="py-2 pr-3">CICC reference</th><th class="py-2">First uploaded</th></tr></thead><tbody>' +
+        rows.map(function (r) {
+            return '<tr class="border-b border-theme/60"><td class="py-2 pr-3 text-subtle">' + rdEsc(r.team) + '</td><td class="py-2 pr-3 font-bold text-heading">' + rdEsc(r.batch) + '</td><td class="py-2 pr-3 text-right text-body">' + rdN(r.total) + '</td><td class="py-2 pr-3 text-right text-body">' + rdN(r.withCicc) + '</td><td class="py-2 pr-3">' + badge[r.status] + '</td><td class="py-2 pr-3 font-mono text-[11px] text-body">' + (r.ciccs.length ? r.ciccs.map(rdEsc).join('<br>') : '<span class="text-subtle">-</span>') + '</td><td class="py-2 text-subtle">' + rdEsc(r.first) + '</td></tr>';
+        }).join('') + '</tbody></table><p class="text-[10px] text-subtle mt-3">' + rows.length + ' batches shown.</p>';
+}
+
+function rcSetView(v) { RC.view = v; rcRender(); }
+function rcSetTeam(t) { RC.team = t; rcRender(); }
+function rcSetQuery(v) { RC.q = v; rcRenderTable(); }
+function rcCopyNames() {
+    var txt = rcFiltered().map(function (r) { return r.batch; }).join('\n');
+    if (navigator.clipboard) navigator.clipboard.writeText(txt).then(function () { showPremiumToast('Copied', rcFiltered().length + ' batch names copied.', 'success'); });
+}
+function rcDownload() {
+    var rows = rcFiltered();
+    var csv = 'Team,Batch Name,Domains,Domains With CICC,Status,CICC Reference,First Uploaded\n' + rows.map(function (r) {
+        return [r.team, r.batch, r.total, r.withCicc, r.status === 'none' ? 'No CICC' : (r.status === 'partial' ? 'Partial' : 'Complete'), r.ciccs.join(' | '), r.first].map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(',');
+    }).join('\n');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'dpv-batches-' + (RC.view === 'missing' ? 'without-cicc' : 'all') + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+}
