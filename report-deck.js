@@ -295,7 +295,7 @@ function rdSlides(m, d) {
     S.push(function (i, n) {
         var body = '<div class="rd-grid3">' +
             rdStat('DPV domains managed', rdN(m.T1.total), m.T1.batches + ' batches', RD_C.teal) +
-            rdStat('Blocked on all 4 / still active', '<span style="font-size:40px">' + rdN(m.T1.all4) + ' / ' + rdN(m.T1.active) + '</span>', 'Domains with a recorded outcome', RD_C.sky) +
+            rdStat('Blocked on all 4 ISPs', rdN(m.T1.all4), rdPct(m.T1.all4, m.T1.total) + '% of domains. ' + rdN(m.T1.active) + ' (' + rdPct(m.T1.active, m.T1.total) + '%) still active on at least 1 ISP', RD_C.sky) +
             rdStat('Fully verified', rdPct(m.T1.total - m.T1.waiting, m.T1.total) + '%', rdN(m.T1.waiting) + ' domains still waiting', RD_C.amber) + '</div>' +
             rdAccomplishments(d, 'Team 001', RD_C.teal);
         return rdFrame(i, n, 'Team 001 Accomplishments', 'Delivered work logged in KPI > Accomplishments, plus the domain volume the team carries.', body);
@@ -528,9 +528,11 @@ function rdAccomplishments(d, teamName, color) {
     var items = d.achievements.filter(function (a) { return rdTeamLabel(a.team) === teamName; }).slice(0, 4);
     if (!items.length) return '<div class="rd-card" style="padding:26px;margin-top:20px;color:' + RD_C.sub + ';font-size:17px">No accomplishments logged yet for ' + teamName + '. Add them in KPI &gt; Accomplishments and they appear here automatically.</div>';
     return '<div class="rd-grid2" style="margin-top:16px;gap:14px">' + items.map(function (a) {
-        return '<div class="rd-card" style="padding:12px 18px;border-left:4px solid ' + color + '"><div style="font-size:16.5px;font-weight:800;line-height:1.25">' + rdEsc(String(a.title).slice(0, 70)) + '</div><div class="rd-sub" style="font-size:13.5px;margin-top:4px;line-height:1.35">' + rdEsc(String(a.description || '').slice(0, 105)) + '</div><div class="rd-sub" style="font-size:12px;margin-top:5px">' + rdEsc(a.category) + ' &middot; ' + rdEsc(a.date) + '</div></div>';
+        return '<div class="rd-card" style="padding:12px 18px;border-left:4px solid ' + color + '"><div style="font-size:16.5px;font-weight:800;line-height:1.25">' + rdEsc(rdTrim(a.title, 70)) + '</div><div class="rd-sub" style="font-size:13.5px;margin-top:4px;line-height:1.35">' + rdEsc(rdTrim(a.description, 110)) + '</div><div class="rd-sub" style="font-size:12px;margin-top:5px">' + rdEsc(a.category) + ' &middot; ' + rdEsc(a.date) + '</div></div>';
     }).join('') + '</div>';
 }
+
+function rdTrim(t, n) { t = String(t || ''); if (t.length <= n) return t; var c = t.slice(0, n), i = c.lastIndexOf(' '); return (i > n * 0.6 ? c.slice(0, i) : c).replace(/[\s,;:.\-—]+$/, '') + '...'; }
 
 // Shared Chart.js options for bar charts (with value labels drawn by the rdLabels plugin below).
 function rdBarOpts(o) {
