@@ -4033,7 +4033,6 @@ function renderKpiShell(teams) {
             (isSuperAdmin ? '<button onclick="kpiSwitchTab(\'reportdeck\')" id="kpiTabBtnReportdeck" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">Report Deck</button>' : '') +
             (isSuperAdmin ? '<button onclick="kpiSwitchTab(\'cicc\')" id="kpiTabBtnCicc" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">CICC Batches</button>' : '') +
             ((isSuperAdmin || kpiCurrentTeam) ? '<button onclick="kpiSwitchTab(\'godaddy\')" id="kpiTabBtnGodaddy" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">GoDaddy</button>' : '') +
-            ((isSuperAdmin || kpiCurrentTeam) ? '<button onclick="kpiSwitchTab(\'godaddyns\')" id="kpiTabBtnGodaddyns" class="kpi-tab-btn px-4 py-2.5 text-sm font-bold border-b-2 transition-colors whitespace-nowrap">GoDaddy NS Change</button>' : '') +
         '</div>' +
         '<div id="kpiTabContent"></div>';
 
@@ -4048,7 +4047,7 @@ function kpiSwitchTeam(team) {
 
 function kpiSwitchTab(tabName) {
     kpiCurrentTab = tabName;
-    ['Todo', 'Attendance', 'Scoreboard', 'Achievements', 'Executive', 'Reportdeck', 'Cicc', 'Godaddy', 'Godaddyns'].forEach(function(t) {
+    ['Todo', 'Attendance', 'Scoreboard', 'Achievements', 'Executive', 'Reportdeck', 'Cicc', 'Godaddy'].forEach(function(t) {
         var btn = document.getElementById('kpiTabBtn' + t);
         if (!btn) return;
         var isActive = t.toLowerCase() === tabName;
@@ -4067,7 +4066,6 @@ function kpiSwitchTab(tabName) {
     else if (tabName === 'reportdeck') renderKpiReportDeckTab();
     else if (tabName === 'cicc') renderKpiCiccTab();
     else if (tabName === 'godaddy') renderKpiGodaddyTab();
-    else if (tabName === 'godaddyns') renderKpiGodaddyNsTab();
 }
 
 // ---- Tab 1: To-Do List (auto-listed uploads + manual tasks) ----

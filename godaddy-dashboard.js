@@ -25,7 +25,6 @@ function gdNormDomain(d) { return String(d || '').toLowerCase().replace(/^https?
 function renderKpiGodaddyTab() {
     var content = document.getElementById('kpiTabContent');
     if (!content) return;
-    if (GD.tab === 'ns') GD.tab = 'renewal';
     content.innerHTML = '<div id="gdRoot"></div>';
     gdLoad(true);
 }
@@ -86,7 +85,7 @@ function gdRenderHead() {
     var el = document.getElementById('gdHead'); if (!el || !GD.data) return;
     el.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5"><div><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="globe" class="h-4 w-4 text-indigo-500"></i> GoDaddy Monitor</h3>' +
         '<p class="text-[10px] text-subtle mt-0.5">Live from the GoDaddy accounts. Last synced ' + (GD.data.lastSync ? gdEsc(gdAgo(GD.data.lastSync)) : 'never') + '. It refreshes by itself when older than 6 hours.</p></div>' +
-        '<button onclick="gdSync(false)" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm flex items-center gap-1.5 ' + (GD.syncing ? 'opacity-60 pointer-events-none' : '') + '"><i data-lucide="refresh-cw" class="h-3.5 w-3.5 ' + (GD.syncing ? 'animate-spin' : '') + '"></i> ' + (GD.syncing ? 'Syncing...' : 'Sync now') + '</button></div>';
+        '<div class="flex items-center gap-2"><button onclick="gdOpenNs()" class="px-4 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app shadow-sm flex items-center gap-1.5"><i data-lucide="server-cog" class="h-3.5 w-3.5"></i> Change nameservers</button><button onclick="gdSync(false)" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm flex items-center gap-1.5 ' + (GD.syncing ? 'opacity-60 pointer-events-none' : '') + '"><i data-lucide="refresh-cw" class="h-3.5 w-3.5 ' + (GD.syncing ? 'animate-spin' : '') + '"></i> ' + (GD.syncing ? 'Syncing...' : 'Sync now') + '</button></div></div>';
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
@@ -119,7 +118,6 @@ function gdTabBtn(id, label, n) { var on = GD.tab === id; return '<button onclic
 function gdRenderBody() {
     var el = document.getElementById('gdBody'); if (!el) return; var m = gdModel();
     var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + '</div>';
-    if (GD.tab === 'ns') { el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + '</div><div id="gdNs"></div></div>'; gdRenderNs(); if (typeof lucide !== 'undefined') lucide.createIcons(); return; }
     var accounts = GD.data.accounts.map(function (a) { return a.account.replace(/^Godaddy\s+/i, ''); });
     var tools = '<div class="flex items-center gap-2 flex-wrap">' +
         '<select onchange="GD.account=this.value;gdRenderTable()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">All accounts</option>' + accounts.map(function (a) { return '<option value="' + gdEsc(a) + '"' + (GD.account === a ? ' selected' : '') + '>' + gdEsc(a) + '</option>'; }).join('') + '</select>' +
@@ -283,12 +281,22 @@ function gdNsRetry() {
     if (failed.length && !GD.ns.running) gdNsRun(failed);
 }
 
-// Separate KPI section: change nameservers (its own tab next to the GoDaddy monitor).
-function renderKpiGodaddyNsTab() {
-    var content = document.getElementById('kpiTabContent'); if (!content) return;
-    GD.tab = 'ns';
-    content.innerHTML = '<div class="panel-card p-5"><div class="mb-4"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="server-cog" class="h-4 w-4 text-indigo-500"></i> Change Nameservers</h3><p class="text-[10px] text-subtle mt-0.5">Paste the domains, set the new nameservers, check, then confirm. The change goes straight to the GoDaddy account that owns each domain and is saved under your name in GoDaddy &gt; Changes.</p></div><div id="gdNs"></div></div>';
+// Change nameservers opens as a modal inside the GoDaddy section.
+function gdOpenNs() {
+    var m = document.getElementById('gdNsModal');
+    if (!m) {
+        m = document.createElement('div'); m.id = 'gdNsModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(2,6,23,.6);display:flex;align-items:flex-start;justify-content:center;padding:4vh 16px;overflow-y:auto';
+        m.onclick = function (e) { if (e.target === m) gdCloseNs(); };
+        document.body.appendChild(m);
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') gdCloseNs(); });
+    }
+    m.innerHTML = '<div class="panel-card" style="width:min(980px,100%);padding:22px;box-shadow:0 25px 60px rgba(0,0,0,.4)"><div class="flex items-start justify-between gap-4 mb-4"><div><h3 class="text-base font-black text-heading flex items-center gap-2"><i data-lucide="server-cog" class="h-4 w-4 text-indigo-500"></i> Change Nameservers</h3><p class="text-[11px] text-subtle mt-1">Paste the domains, set the new nameservers, check, then confirm. The change goes straight to the GoDaddy account that owns each domain and is saved under your name in the Changes tab.</p></div><button onclick="gdCloseNs()" aria-label="Close" class="text-subtle hover:text-heading text-2xl leading-none px-2">&times;</button></div><div id="gdNs"></div></div>';
+    m.style.display = 'flex';
     gdRenderNs();
     if (typeof lucide !== 'undefined') lucide.createIcons();
-    if (!GD.loaded) gdLoad(false);
+}
+function gdCloseNs() {
+    var m = document.getElementById('gdNsModal');
+    if (m && !GD.ns.running) m.style.display = 'none';
 }
