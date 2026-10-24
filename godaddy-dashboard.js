@@ -22,9 +22,17 @@ function gdDays(s) { var d = gdTime(s); return d && !isNaN(d) ? Math.floor((d.ge
 function gdAgo(s) { var d = gdTime(s); if (!d) return ''; var m = Math.round((Date.now() - d.getTime()) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago'; }
 function gdNormDomain(d) { return String(d || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].replace(/\.$/, ''); }
 
+// One typeface (Montserrat) for the whole GoDaddy section and its nameserver modal, including hostnames and numbers.
+function gdInjectFont() {
+    if (document.getElementById('gdFontStyle')) return;
+    var st = document.createElement('style'); st.id = 'gdFontStyle';
+    st.textContent = '#gdRoot, #gdRoot *, #gdNsModal, #gdNsModal *, #gdRoot .font-mono, #gdNsModal .font-mono, #gdRoot input, #gdRoot select, #gdRoot textarea, #gdNsModal input, #gdNsModal select, #gdNsModal textarea, #gdRoot button, #gdNsModal button { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif !important; } #gdRoot, #gdNsModal { font-variant-numeric: tabular-nums; }';
+    document.head.appendChild(st);
+}
 function renderKpiGodaddyTab() {
     var content = document.getElementById('kpiTabContent');
     if (!content) return;
+    gdInjectFont();
     content.innerHTML = '<div id="gdRoot"></div>';
     gdLoad(true);
 }
@@ -216,6 +224,7 @@ function gdNsCmp(a, b, dir) { a = a == null ? '' : a; b = b == null ? '' : b; re
 
 // ----- modal shell -----
 function gdOpenNs(keep) {
+    gdInjectFont();
     var m = document.getElementById('gdNsModal');
     if (!m) {
         m = document.createElement('div'); m.id = 'gdNsModal';
