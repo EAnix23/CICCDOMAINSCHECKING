@@ -1366,6 +1366,47 @@ const actions = {
     return { moved, skipped, requested: list.length };
   },
 
+  // ---- Bulk redirect ("Redirected To" of the Target Brand domains) ----
+  // Looks the domains up in the Target Brand list and returns the current value for each.
+  async previewGodaddyRedirects(db, token, items) {
+    await requireGodaddyAccess(db, token);
+    const list = (Array.isArray(items) ? items : []).slice(0, 300);
+    const out = [];
+    for (const it of list) {
+      const d = gdCleanDomain(it && it.domain);
+      if (!d) continue;
+      const { results } = await db.prepare("SELECT brand, redirected FROM domains WHERE " + GD_NORM_SQL + " = ?").bind(d).all();
+      if (!results.length) { out.push({ domain: d, ok: false, reason: "Not in the Target Brand list. Add it to a brand first." }); continue; }
+      out.push({ domain: d, ok: true, brand: results.map(function (r) { return r.brand; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(", "), current: results[0].redirected || "" });
+    }
+    const { results: common } = await db.prepare("SELECT redirected value, COUNT(*) c FROM domains WHERE redirected != '' GROUP BY redirected ORDER BY c DESC LIMIT 8").all();
+    return { items: out, common };
+  },
+
+  // Saves the new "Redirected To" for each domain (10 to 100 per call from the screen) and logs who did it.
+  async setGodaddyRedirects(db, token, items) {
+    const s = await requireGodaddyAccess(db, token);
+    const list = (Array.isArray(items) ? items : []).slice(0, 100);
+    if (!list.length) throw new Error("No domains given.");
+    const results = [];
+    for (const it of list) {
+      const d = gdCleanDomain(it && it.domain);
+      const target = String((it && it.target) || "").trim();
+      if (!d) { results.push({ domain: String(it && it.domain || ""), ok: false, error: "Empty domain" }); continue; }
+      if (!(target.toLowerCase() === "about:blank" || /^https?:\/\/[^\s]{3,500}$/i.test(target))) { results.push({ domain: d, ok: false, error: "Target must be about:blank or a full link starting with http:// or https://" }); continue; }
+      const { results: rows } = await db.prepare("SELECT id, redirected FROM domains WHERE " + GD_NORM_SQL + " = ?").bind(d).all();
+      if (!rows.length) { results.push({ domain: d, ok: false, error: "Not in the Target Brand list" }); continue; }
+      const old = rows[0].redirected || "";
+      if (old === target) { results.push({ domain: d, ok: true, skipped: true, note: "Already set" }); continue; }
+      const g = await db.prepare("SELECT account FROM gd_domains WHERE domain = ? LIMIT 1").bind(d).first();
+      const st = rows.map(function (r) { return db.prepare("UPDATE domains SET redirected = ?, updated_at = datetime('now') WHERE id = ?").bind(target, r.id); });
+      st.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'redirect_set', ?, ?, ?, 'portal')").bind(d, g ? g.account : "", old, target, s.username));
+      await db.batch(st);
+      results.push({ domain: d, ok: true, old: old });
+    }
+    return { results };
+  },
+
   // ---- Target brand link ----
   // Adds GoDaddy domains that have no brand yet to the BBC domain list under an existing or a new brand.
   async assignGodaddyBrand(db, token, domains, brand, mode) {

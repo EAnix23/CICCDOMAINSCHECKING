@@ -12,7 +12,7 @@ var GD_LAPSED_LABEL = {
     UPDATED_OWNERSHIP: 'Moved to another owner',
     UPDATE_ACCOUNT_AUCTION: 'Going to auction'
 };
-var GD_EVENT_LABEL = { ns_failed: 'NS change failed', brand_assigned: 'Brand assigned', moved_out: 'Moved out of Target Brands', restored: 'Restored to Target Brands', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
+var GD_EVENT_LABEL = { ns_failed: 'NS change failed', brand_assigned: 'Brand assigned', redirect_set: 'Redirect changed', moved_out: 'Moved out of Target Brands', restored: 'Restored to Target Brands', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
 
 function gdEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function gdN(v) { return Number(v || 0).toLocaleString('en-US'); }
@@ -95,7 +95,7 @@ function gdRenderHead() {
     var el = document.getElementById('gdHead'); if (!el || !GD.data) return;
     el.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5"><div><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="globe" class="h-4 w-4 text-indigo-500"></i> GoDaddy Monitor</h3>' +
         '<p class="text-[10px] text-subtle mt-0.5">Live from the GoDaddy accounts. Last synced ' + (GD.data.lastSync ? gdEsc(gdAgo(GD.data.lastSync)) : 'never') + '. It refreshes by itself when older than 6 hours.</p></div>' +
-        '<div class="flex items-center gap-2"><button onclick="gdOpenNs()" class="px-4 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app shadow-sm flex items-center gap-1.5"><i data-lucide="server-cog" class="h-3.5 w-3.5"></i> Change nameservers</button><button onclick="gdSync(false)" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm flex items-center gap-1.5 ' + (GD.syncing ? 'opacity-60 pointer-events-none' : '') + '"><i data-lucide="refresh-cw" class="h-3.5 w-3.5 ' + (GD.syncing ? 'animate-spin' : '') + '"></i> ' + (GD.syncing ? 'Syncing...' : 'Sync now') + '</button></div></div>';
+        '<div class="flex items-center gap-2"><button onclick="gdRdOpen()" class="px-4 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app shadow-sm flex items-center gap-1.5"><i data-lucide="corner-up-right" class="h-3.5 w-3.5"></i> Bulk redirect</button><button onclick="gdOpenNs()" class="px-4 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app shadow-sm flex items-center gap-1.5"><i data-lucide="server-cog" class="h-3.5 w-3.5"></i> Change nameservers</button><button onclick="gdSync(false)" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm flex items-center gap-1.5 ' + (GD.syncing ? 'opacity-60 pointer-events-none' : '') + '"><i data-lucide="refresh-cw" class="h-3.5 w-3.5 ' + (GD.syncing ? 'animate-spin' : '') + '"></i> ' + (GD.syncing ? 'Syncing...' : 'Sync now') + '</button></div></div>';
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
@@ -505,7 +505,7 @@ function gdRenderSelBar() {
     var el = document.getElementById('gdSelBar'); if (!el) return;
     var n = gdSelCount();
     var pickedFn = 'Object.keys(GD.sel).filter(function (k) { return GD.sel[k]; })';
-    el.innerHTML = n ? '<div class="flex items-center gap-3 flex-wrap mb-3 px-4 py-2.5 rounded-xl bg-indigo-600/10 border border-indigo-500/30"><b class="text-xs text-heading">' + n + ' domain' + (n === 1 ? '' : 's') + ' selected</b>' + (GD.tab === 'unassigned' ? '<button onclick="gdAsOpen(' + pickedFn + ')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Add to brand</button>' : '<button onclick="gdEditNs(' + pickedFn + ')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Edit nameservers</button>') + '<button onclick="GD.sel={};gdRenderTable();gdRenderSelBar()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Clear</button></div>' : '';
+    el.innerHTML = n ? '<div class="flex items-center gap-3 flex-wrap mb-3 px-4 py-2.5 rounded-xl bg-indigo-600/10 border border-indigo-500/30"><b class="text-xs text-heading">' + n + ' domain' + (n === 1 ? '' : 's') + ' selected</b>' + (GD.tab === 'unassigned' ? '<button onclick="gdAsOpen(' + pickedFn + ')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Add to brand</button>' : '<button onclick="gdEditNs(' + pickedFn + ')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Edit nameservers</button><button onclick="gdRdOpen(' + pickedFn + ')" class="px-3 py-1.5 bg-panel border border-theme text-body rounded-lg text-[11px] font-bold hover:bg-app">Redirect</button>') + '<button onclick="GD.sel={};gdRenderTable();gdRenderSelBar()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Clear</button></div>' : '';
 }
 function gdToggleSel(d, on) { GD.sel = GD.sel || {}; if (on) GD.sel[d] = true; else delete GD.sel[d]; gdRenderSelBar(); }
 function gdToggleAll(on) { var rows = gdCurrentRows().rows.slice(0, 300); GD.sel = GD.sel || {}; rows.forEach(function (r) { if (r.status === 'ACTIVE') { if (on) GD.sel[r.domain] = true; else delete GD.sel[r.domain]; } }); gdRenderTable(); gdRenderSelBar(); }
@@ -886,4 +886,217 @@ function gdMvApply() {
             .withFailureHandler(function () { skipped += chunks[k].length; v.done += chunks[k].length; gdMvRender(); next(k + 1); })
             .moveLapsedFromBrands(currentSessionToken, chunks[k]);
     })(0);
+}
+
+
+// ============================================================
+// Bulk redirect: set "Redirected To" for many Target Brand domains at once (modal wizard).
+// Steps: Domains > Redirect to > Review > Result
+// ============================================================
+var GD_RD_STEPS = ['Domains', 'Redirect to', 'Review', 'Result'];
+function gdRdFresh() { return { step: 1, sel: [], pickQ: '', pickAcct: 'all', pickBrand: 'all', pickSort: 'domain', pickDir: 1, paste: '', mode: 'same', target: '', common: [], review: null, reviewQ: '', revOnly: 'all', revSort: 'domain', revDir: 1, confirmed: false, loading: false, running: false, done: 0, total: 0, results: null, resFilter: 'all', resSort: 'domain', resDir: 1, discard: false }; }
+function gdRdTargetOk(t) { t = String(t || '').trim(); return t.toLowerCase() === 'about:blank' || /^https?:\/\/[^\s]{3,500}$/i.test(t); }
+function gdRdHasInput() { var r = GD.rd; return r.sel.length > 0 || r.target.trim() !== '' || r.paste.trim() !== ''; }
+function gdRdTargetFor(item) { var r = GD.rd; return r.mode === 'pairs' ? (item.target || '') : r.target.trim(); }
+
+function gdRdOpen(domains) {
+    gdInjectFont();
+    var m = document.getElementById('gdRdModal');
+    if (!m) {
+        m = document.createElement('div'); m.id = 'gdRdModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(2,6,23,.62);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;padding:3vh 16px;overflow-y:auto';
+        m.onmousedown = function (e) { if (e.target === m) gdRdRequestClose(); };
+        document.body.appendChild(m);
+        document.addEventListener('keydown', function (e) { var mm = document.getElementById('gdRdModal'); if (e.key === 'Escape' && mm && mm.style.display !== 'none') gdRdRequestClose(); });
+    }
+    if (!GD.rd || !GD.rd.running) GD.rd = gdRdFresh();
+    if (domains && domains.length) { GD.rd.sel = domains.slice(0, 300).map(function (d) { return { domain: d }; }); GD.rd.step = 2; }
+    m.style.display = 'flex'; gdRdRender();
+    if (!GD.rd.commonLoaded) { GD.rd.commonLoaded = true; google.script.run.withSuccessHandler(function (r) { GD.rd.common = r.common || []; if (GD.rd.step === 2) gdRdRender(); }).withFailureHandler(function () {}).previewGodaddyRedirects(currentSessionToken, []); }
+}
+function gdRdHide() { var m = document.getElementById('gdRdModal'); if (m) m.style.display = 'none'; }
+function gdRdRequestClose() {
+    var r = GD.rd;
+    if (r.running) { if (typeof showPremiumToast === 'function') showPremiumToast('Please wait', 'The redirect update is still running.', 'warning'); return; }
+    if (r.step < 4 && gdRdHasInput()) { r.discard = true; gdRdRender(); return; }
+    gdRdHide();
+}
+function gdRdDiscard() { GD.rd = gdRdFresh(); gdRdHide(); }
+function gdRdDone() { GD.rd = gdRdFresh(); gdRdHide(); gdLoad(false); }
+
+function gdRdRender() {
+    var m = document.getElementById('gdRdModal'), r = GD.rd; if (!m || !r) return;
+    var stepper = '<div class="flex items-center gap-2 flex-wrap mt-4">' + GD_RD_STEPS.map(function (s, i) {
+        var k = i + 1, on = r.step === k, done = r.step > k;
+        return '<div class="flex items-center gap-2"><span class="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black ' + (on ? 'bg-indigo-600 text-white' : done ? 'bg-emerald-500 text-white' : 'bg-app text-subtle border border-theme') + '">' + (done ? '&#10003;' : k) + '</span><span class="text-xs font-bold ' + (on ? 'text-heading' : 'text-subtle') + '">' + s + '</span>' + (k < 4 ? '<span class="w-6 h-px bg-current opacity-20 mx-1"></span>' : '') + '</div>';
+    }).join('') + '</div>';
+    var body = r.step === 1 ? gdRdStep1() : r.step === 2 ? gdRdStep2() : r.step === 3 ? gdRdStep3() : gdRdStep4();
+    var disc = r.discard ? '<div style="position:absolute;inset:0;background:rgba(2,6,23,.55);border-radius:1rem;display:flex;align-items:center;justify-content:center;padding:20px;z-index:5"><div class="panel-card p-6" style="max-width:420px"><h4 class="text-base font-black text-heading">Discard this redirect?</h4><p class="text-xs text-body mt-2">You have ' + r.sel.length + ' domain' + (r.sel.length === 1 ? '' : 's') + ' picked. If you cancel now they are cleared. Nothing has been changed.</p><div class="flex justify-end gap-2 mt-5"><button onclick="GD.rd.discard=false;gdRdRender()" class="px-4 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Keep editing</button><button onclick="gdRdDiscard()" class="px-4 py-2 bg-rose-600 text-white rounded-lg text-xs font-bold hover:bg-rose-700">Yes, discard</button></div></div></div>' : '';
+    var back = (r.step === 2 || r.step === 3) && !r.running ? '<button onclick="gdRdBack()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Back</button>' : '';
+    var csv = r.step === 4 ? '<button onclick="gdRdDownload()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app" ' + (r.running ? 'style="opacity:.4;pointer-events:none"' : '') + '>Download CSV</button>' : '';
+    m.innerHTML = '<div class="panel-card" style="position:relative;width:min(1040px,100%);padding:0;border-radius:1rem;box-shadow:0 30px 70px rgba(0,0,0,.45)">' +
+        '<div style="padding:22px 26px 18px;border-bottom:1px solid var(--border-theme)"><div class="flex items-start justify-between gap-4"><div><h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="corner-up-right" class="h-5 w-5 text-indigo-500"></i> Bulk Redirect</h3><p class="text-[11px] text-subtle mt-1">Sets where each domain redirects to in the Target Brand list. Every change is saved under your name.</p></div><button onclick="gdRdRequestClose()" aria-label="Close" class="text-subtle hover:text-heading text-2xl leading-none px-2">&times;</button></div>' + stepper + '</div>' +
+        '<div style="padding:20px 26px">' + body + '</div>' +
+        '<div style="padding:14px 26px;border-top:1px solid var(--border-theme);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><div class="flex items-center gap-3">' + (r.step < 4 ? '<button onclick="gdRdRequestClose()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Cancel</button>' : '') + '<span id="gdRdHint" class="text-[11px] text-subtle"></span></div><div class="flex items-center gap-2">' + back + csv + '<button id="gdRdNext" onclick="gdRdNext()" class="px-5 py-2.5 text-white rounded-lg text-xs font-bold shadow-sm ' + (r.step === 3 ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700') + '">Next</button></div></div>' + disc + '</div>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    if (r.step === 1) gdRdRenderPick();
+    if (r.step === 3) gdRdRenderRev();
+    if (r.step === 4) gdRdRenderRes();
+    gdRdNav();
+}
+function gdRdNavState() {
+    var r = GD.rd;
+    if (r.step === 1) return { can: r.sel.length > 0, label: 'Next: redirect to (' + r.sel.length + ')', hint: r.sel.length ? '' : 'Pick or paste at least one domain.' };
+    if (r.step === 2) {
+        if (r.mode === 'pairs') { var miss = r.sel.filter(function (x) { return !gdRdTargetOk(x.target); }).length; return { can: miss === 0 && r.sel.length > 0, label: 'Next: review', hint: miss ? miss + ' domain' + (miss === 1 ? ' has' : 's have') + ' no valid target in the pasted list.' : '' }; }
+        var ok = gdRdTargetOk(r.target); return { can: ok, label: 'Next: review', hint: r.target.trim() && !ok ? 'Use about:blank or a full link starting with http:// or https://' : (ok ? '' : 'Type where the domains should redirect to.') };
+    }
+    if (r.step === 3) { var todo = gdRdTodo().length; return { can: r.confirmed && todo > 0 && !r.loading, label: 'Redirect ' + todo + ' domain' + (todo === 1 ? '' : 's'), hint: r.loading ? 'Checking the Target Brand list...' : (todo === 0 ? 'Nothing to change.' : (r.confirmed ? '' : 'Tick the confirmation to continue.')) }; }
+    return { can: !r.running, label: r.running ? 'Working...' : 'Done', hint: '' };
+}
+function gdRdNav() {
+    var b = document.getElementById('gdRdNext'), h = document.getElementById('gdRdHint'); if (!b) return;
+    var s = gdRdNavState(); b.textContent = s.label; b.style.opacity = s.can ? '1' : '.45'; b.style.pointerEvents = s.can ? 'auto' : 'none'; if (h) h.textContent = s.hint;
+}
+function gdRdBack() { var r = GD.rd; if (r.running) return; if (r.step === 3) r.review = null; r.step--; r.confirmed = false; gdRdRender(); }
+function gdRdNext() {
+    var r = GD.rd, s = gdRdNavState(); if (!s.can) return;
+    if (r.step === 1) { r.step = 2; gdRdRender(); }
+    else if (r.step === 2) { r.step = 3; r.review = null; r.confirmed = false; r.loading = true; gdRdRender(); gdRdLoadReview(); }
+    else if (r.step === 3) gdRdApply();
+    else gdRdDone();
+}
+
+// ----- step 1 -----
+function gdRdStep1() {
+    var r = GD.rd, accts = (GD.data ? GD.data.accounts : []).map(function (a) { return a.account.replace(/^Godaddy\s+/i, ''); }), brands = gdBrandList();
+    return '<div class="grid grid-cols-1 lg:grid-cols-5 gap-5"><div class="lg:col-span-3"><div class="flex items-center justify-between mb-2"><label class="text-xs font-black text-heading">Find domains</label><span id="gdRdPickCount" class="text-[10px] text-subtle"></span></div>' +
+        '<div class="flex gap-2 flex-wrap mb-2"><input id="gdRdQ" oninput="GD.rd.pickQ=this.value;gdRdRenderPick()" value="' + gdEsc(r.pickQ) + '" placeholder="Search domain..." class="flex-1 min-w-[140px] px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none">' +
+        '<select onchange="GD.rd.pickBrand=this.value;gdRdRenderPick()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body" style="max-width:150px"><option value="all">All brands</option>' + brands.map(function (b) { return '<option value="' + gdEsc(b.name) + '"' + (r.pickBrand === b.name ? ' selected' : '') + '>' + gdEsc(b.name) + ' (' + b.count + ')</option>'; }).join('') + '</select>' +
+        '<select onchange="GD.rd.pickAcct=this.value;gdRdRenderPick()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">All accounts</option>' + accts.map(function (a) { return '<option value="' + gdEsc(a) + '"' + (r.pickAcct === a ? ' selected' : '') + '>' + gdEsc(a) + '</option>'; }).join('') + '</select>' +
+        '<select onchange="var v=this.value.split(\':\');GD.rd.pickSort=v[0];GD.rd.pickDir=+v[1];gdRdRenderPick()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="domain:1">Name A-Z</option><option value="domain:-1">Name Z-A</option><option value="brand:1">Brand</option><option value="account:1">Account</option></select></div>' +
+        '<div class="flex gap-2 mb-2"><button onclick="gdRdSelectShown()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Select all shown</button><button onclick="GD.rd.sel=[];gdRdRender()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Clear</button></div>' +
+        '<div id="gdRdPickList" class="border border-theme rounded-xl overflow-y-auto" style="max-height:330px"></div></div>' +
+        '<div class="lg:col-span-2"><label class="text-xs font-black text-heading">Or paste a list</label><p class="text-[10px] text-subtle mb-1.5">One domain per line. To give each its own target, write <b>domain, target</b> on the same line.</p><textarea oninput="GD.rd.paste=this.value;gdRdNav()" rows="4" class="w-full px-3 py-2 bg-app border border-theme rounded-xl text-xs font-mono text-body focus:outline-none" placeholder="example1.com&#10;example2.net, https://newsite.com">' + gdEsc(r.paste) + '</textarea>' +
+        '<button onclick="gdRdAddPasted()" class="mt-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Add pasted domains</button>' +
+        '<div class="mt-4 mb-1.5"><span class="text-xs font-black text-heading">Selected <span id="gdRdSelCount" class="text-indigo-500"></span></span></div><div id="gdRdSelList" class="border border-theme rounded-xl overflow-y-auto p-2 flex flex-wrap gap-1.5" style="max-height:150px"></div></div></div>';
+}
+function gdRdPickRows() {
+    var r = GD.rd; if (!GD.data) return [];
+    var q = r.pickQ.trim().toLowerCase();
+    var rows = gdModel().rows.filter(function (x) { return x.brand && x.status === 'ACTIVE' && (r.pickAcct === 'all' || x.account === r.pickAcct) && (r.pickBrand === 'all' || x.brand === r.pickBrand) && (!q || x.domain.indexOf(q) !== -1); });
+    rows.sort(function (a, b) { return gdNsCmp(a[r.pickSort], b[r.pickSort], r.pickDir) || a.domain.localeCompare(b.domain); });
+    return rows;
+}
+function gdRdIdx(d) { for (var i = 0; i < GD.rd.sel.length; i++) if (GD.rd.sel[i].domain === d) return i; return -1; }
+function gdRdRenderPick() {
+    var el = document.getElementById('gdRdPickList'); if (!el) return;
+    var rows = gdRdPickRows(), shown = rows.slice(0, 250), c = document.getElementById('gdRdPickCount'); if (c) c.textContent = rows.length + ' match' + (rows.length === 1 ? '' : 'es');
+    el.innerHTML = shown.length ? shown.map(function (x) { return '<label class="flex items-center gap-3 px-3 py-2 border-b border-theme/60 hover:bg-app cursor-pointer text-xs"><input type="checkbox" ' + (gdRdIdx(x.domain) !== -1 ? 'checked' : '') + ' data-d="' + gdEsc(x.domain) + '" onchange="gdRdPick(this.getAttribute(\'data-d\'),this.checked)"><span class="font-bold text-heading flex-1 truncate">' + gdEsc(x.domain) + '</span><span class="text-subtle truncate" style="max-width:120px">' + gdEsc(x.brand) + '</span><span class="text-subtle">' + gdEsc(x.account) + '</span></label>'; }).join('') + (rows.length > shown.length ? '<p class="text-[10px] text-subtle p-2">Showing the first ' + shown.length + '. Search or pick a brand to narrow down.</p>' : '') : '<p class="text-xs text-subtle p-6 text-center">No domain matches.</p>';
+    gdRdRenderSel();
+}
+function gdRdRenderSel() {
+    var r = GD.rd, el = document.getElementById('gdRdSelList'), c = document.getElementById('gdRdSelCount'); if (c) c.textContent = '(' + r.sel.length + ')';
+    if (el) el.innerHTML = r.sel.length ? r.sel.map(function (x) { return '<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-app border border-theme text-[10px] font-mono text-body">' + gdEsc(x.domain) + (x.target ? ' &rarr; ' + gdEsc(x.target.length > 22 ? x.target.slice(0, 22) + '...' : x.target) : '') + '<button onclick="gdRdPick(this.getAttribute(\'data-d\'),false);gdRdRenderPick()" data-d="' + gdEsc(x.domain) + '" class="text-subtle hover:text-rose-500" aria-label="Remove">&times;</button></span>'; }).join('') : '<span class="text-[11px] text-subtle p-1">Nothing selected yet.</span>';
+    gdRdNav();
+}
+function gdRdPick(d, on) { var r = GD.rd, i = gdRdIdx(d); if (on && i === -1) { if (r.sel.length >= 300) { if (typeof showPremiumToast === 'function') showPremiumToast('Limit reached', 'Up to 300 domains at a time.', 'warning'); gdRdRenderPick(); return; } r.sel.push({ domain: d }); } if (!on && i !== -1) r.sel.splice(i, 1); gdRdRenderSel(); }
+function gdRdSelectShown() { gdRdPickRows().forEach(function (x) { if (gdRdIdx(x.domain) === -1 && GD.rd.sel.length < 300) GD.rd.sel.push({ domain: x.domain }); }); gdRdRenderPick(); }
+function gdRdAddPasted() {
+    var r = GD.rd, added = 0, dup = 0, pairs = 0;
+    String(r.paste || '').split(/\n/).forEach(function (line) {
+        var parts = line.trim().split(/[\s,;]+/).filter(Boolean); if (!parts.length) return;
+        var d = gdNsClean(parts[0]); if (!d) return;
+        var target = parts[1] ? parts[1].trim() : '', i = gdRdIdx(d);
+        if (i !== -1) { dup++; if (target) { r.sel[i].target = target; pairs++; } }
+        else if (r.sel.length < 300) { r.sel.push(target ? { domain: d, target: target } : { domain: d }); added++; if (target) pairs++; }
+    });
+    r.paste = ''; if (pairs) r.mode = 'pairs';
+    if (typeof showPremiumToast === 'function') showPremiumToast(added ? 'Domains added' : 'Nothing new', added + ' added' + (dup ? ', ' + dup + ' already picked' : '') + (pairs ? ', ' + pairs + ' with their own target' : '') + '.', added ? 'success' : 'warning');
+    gdRdRender();
+}
+
+// ----- step 2 -----
+function gdRdStep2() {
+    var r = GD.rd, withPairs = r.sel.filter(function (x) { return x.target; }).length;
+    var presets = [{ value: 'about:blank', c: 0 }].concat((r.common || []).filter(function (c) { return c.value !== 'about:blank'; }).slice(0, 5)).map(function (c, i) { return '<button onclick="gdRdUseTarget(' + i + ')" class="px-3 py-2 rounded-xl border border-theme text-[11px] font-mono text-body hover:bg-app hover:border-indigo-400 text-left break-all" data-v="' + gdEsc(c.value) + '">' + gdEsc(c.value) + (c.c ? ' <span class="text-subtle font-sans">(' + c.c + ' domains)</span>' : '') + '</button>'; }).join('');
+    return '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6"><div><div class="inline-flex gap-0.5 bg-app border border-theme rounded-xl p-1 mb-3">' + [['same', 'Same target for all'], ['pairs', 'Each domain has its own target']].map(function (x) { return '<button onclick="GD.rd.mode=\'' + x[0] + '\';gdRdRender()" class="px-4 py-1.5 rounded-lg text-xs font-bold ' + (r.mode === x[0] ? 'bg-indigo-600 text-white shadow-sm' : 'text-subtle hover:text-body') + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+        (r.mode === 'same' ? '<label class="text-xs font-black text-heading">Redirect ' + r.sel.length + ' domain' + (r.sel.length === 1 ? '' : 's') + ' to</label><input id="gdRdTarget" oninput="GD.rd.target=this.value;gdRdLive();gdRdNav()" value="' + gdEsc(r.target) + '" placeholder="https://www.example.com/ or about:blank" class="mt-1.5 w-full px-3 py-2.5 bg-app border border-theme rounded-xl text-sm font-mono text-body focus:outline-none"><p id="gdRdLive" class="text-[11px] mt-2"></p>' :
+            '<p class="text-xs text-body">' + (withPairs ? '<b>' + withPairs + ' of ' + r.sel.length + '</b> domains have their own target from the pasted list.' : 'No target was pasted yet. Go back and paste lines like <span class="font-mono">domain, https://target.com</span>.') + '</p><div class="mt-3 max-h-48 overflow-y-auto border border-theme rounded-xl">' + r.sel.map(function (x) { return '<div class="flex gap-2 px-3 py-1.5 border-b border-theme/60 text-[11px]"><span class="font-bold text-heading">' + gdEsc(x.domain) + '</span><span class="font-mono ' + (gdRdTargetOk(x.target) ? 'text-subtle' : 'text-rose-500') + ' break-all">' + gdEsc(x.target || 'no target') + '</span></div>'; }).join('') + '</div>') + '</div>' +
+        '<div>' + (r.mode === 'same' ? '<label class="text-xs font-black text-heading">Used before <span class="text-subtle font-normal">click to fill in</span></label><div class="mt-1.5 flex flex-col gap-2">' + presets + '</div>' : '') + '<div class="mt-5 p-3 rounded-xl border border-dashed border-theme text-[11px] text-subtle">This updates the <b class="text-heading">Redirected To</b> record of the domains in Target Brands. It does not change the redirect at GoDaddy or Cloudflare.</div></div></div>';
+}
+function gdRdUseTarget(i) { var btn = document.querySelectorAll('#gdRdModal [data-v]')[i]; if (!btn) return; GD.rd.target = btn.getAttribute('data-v'); var el = document.getElementById('gdRdTarget'); if (el) el.value = GD.rd.target; gdRdLive(); gdRdNav(); }
+function gdRdLive() { var el = document.getElementById('gdRdLive'); if (!el) return; var t = GD.rd.target.trim(), ok = gdRdTargetOk(t); el.className = 'text-[11px] mt-2 ' + (t && !ok ? 'text-rose-500' : 'text-subtle'); el.textContent = !t ? '' : (ok ? 'Looks good.' : 'Use about:blank or a full link starting with http:// or https://'); }
+
+// ----- step 3: review -----
+function gdRdLoadReview() {
+    var r = GD.rd;
+    google.script.run.withSuccessHandler(function (res) { r.loading = false; r.review = res.items || []; gdRdRenderRev(); gdRdNav(); })
+        .withFailureHandler(function (e) { r.loading = false; r.review = []; gdRdRenderRev(); if (typeof showPremiumToast === 'function') showPremiumToast('Could not check', (e && e.message) || 'Try again.', 'error'); })
+        .previewGodaddyRedirects(currentSessionToken, r.sel.map(function (x) { return { domain: x.domain }; }));
+}
+function gdRdItems() {
+    var r = GD.rd, bySel = {}; r.sel.forEach(function (x) { bySel[x.domain] = x; });
+    return (r.review || []).map(function (i) {
+        var target = gdRdTargetFor(bySel[i.domain] || {});
+        var st = !i.ok ? { k: 'cannot', label: i.reason || 'Cannot be changed', cls: 'text-rose-500' } : (i.current === target ? { k: 'same', label: 'Already set', cls: 'text-subtle' } : { k: 'change', label: 'Will change', cls: 'text-emerald-500' });
+        return { i: i, domain: i.domain, brand: i.brand || '', current: i.current || '', target: target, s: st, st: st.label };
+    });
+}
+function gdRdTodo() { return gdRdItems().filter(function (x) { return x.s.k === 'change'; }); }
+function gdRdStep3() {
+    return '<div class="flex items-center justify-between flex-wrap gap-3 mb-3"><div id="gdRdCounts" class="flex items-center gap-4 text-xs"></div><div class="flex gap-2 flex-wrap"><input id="gdRdRevQ" oninput="GD.rd.reviewQ=this.value;gdRdRenderRev()" value="' + gdEsc(GD.rd.reviewQ) + '" placeholder="Search domain or brand..." class="px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none w-48"><select onchange="GD.rd.revOnly=this.value;gdRdRenderRev()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">Show all</option><option value="change">Will change</option><option value="same">Already set</option><option value="cannot">Cannot change</option></select></div></div>' +
+        '<div id="gdRdRevTable" class="overflow-auto border border-theme rounded-xl" style="max-height:340px"></div>' +
+        '<label class="flex items-start gap-2 text-xs text-body mt-4 p-3 rounded-xl border border-amber-500/40 bg-amber-500/5 cursor-pointer"><input type="checkbox" ' + (GD.rd.confirmed ? 'checked' : '') + ' onchange="GD.rd.confirmed=this.checked;gdRdNav()" class="mt-0.5"> <span>I understand this changes the Redirected To record of these domains and is saved under my name.</span></label>';
+}
+function gdRdSortRev(k) { var r = GD.rd; if (r.revSort === k) r.revDir *= -1; else { r.revSort = k; r.revDir = 1; } gdRdRenderRev(); }
+function gdRdRenderRev() {
+    var el = document.getElementById('gdRdRevTable'); if (!el) return; var r = GD.rd;
+    if (r.loading) { el.innerHTML = '<p class="text-xs text-subtle p-8 text-center">Checking the Target Brand list...</p>'; return; }
+    var all = gdRdItems(), c = { change: 0, same: 0, cannot: 0 }; all.forEach(function (x) { c[x.s.k]++; });
+    var cEl = document.getElementById('gdRdCounts'); if (cEl) cEl.innerHTML = '<b class="text-emerald-500">' + c.change + ' will change</b>' + (c.same ? '<span class="text-subtle">' + c.same + ' already set</span>' : '') + (c.cannot ? '<b class="text-rose-500">' + c.cannot + ' cannot change</b>' : '');
+    var q = r.reviewQ.trim().toLowerCase();
+    var rows = all.filter(function (x) { return (r.revOnly === 'all' || x.s.k === r.revOnly) && (!q || x.domain.indexOf(q) !== -1 || x.brand.toLowerCase().indexOf(q) !== -1); });
+    rows.sort(function (a, b) { return gdNsCmp(a[r.revSort], b[r.revSort], r.revDir) || a.domain.localeCompare(b.domain); });
+    var th = function (l, k) { return gdNsSortTh(l, k, r.revSort, r.revDir, 'gdRdSortRev'); };
+    el.innerHTML = rows.length ? '<table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] text-subtle border-b border-theme">' + th('Domain', 'domain') + th('Brand', 'brand') + th('Now redirects to', 'current') + th('Will redirect to', 'target') + th('Status', 'st') + '</tr></thead><tbody>' +
+        rows.map(function (x) { return '<tr class="border-b border-theme/60 align-top"><td class="p-2 font-bold text-heading">' + gdEsc(x.domain) + '</td><td class="p-2 text-subtle">' + gdEsc(x.brand || '-') + '</td><td class="p-2 font-mono text-[10px] text-subtle break-all" style="max-width:220px">' + gdEsc(x.current || '-') + '</td><td class="p-2 font-mono text-[10px] text-body break-all" style="max-width:220px">' + gdEsc(x.target || '-') + '</td><td class="p-2 font-bold ' + x.s.cls + '">' + gdEsc(x.s.label) + '</td></tr>'; }).join('') + '</tbody></table>' : '<p class="text-xs text-subtle p-8 text-center">Nothing matches this filter.</p>';
+    gdRdNav();
+}
+
+// ----- apply + result -----
+function gdRdApply() {
+    var r = GD.rd; if (r.running) return;
+    var todo = gdRdTodo().map(function (x) { return { domain: x.domain, target: x.target }; }); if (!todo.length) return;
+    r.step = 4; r.results = []; gdRdRun(todo);
+}
+function gdRdRun(items) {
+    var r = GD.rd, chunks = []; for (var i = 0; i < items.length; i += 40) chunks.push(items.slice(i, i + 40));
+    r.running = true; r.done = 0; r.total = items.length; r.results = (r.results || []).filter(function (x) { return !items.some(function (y) { return y.domain === x.domain; }); }); r.lastItems = items; gdRdRender();
+    (function next(k) {
+        if (k >= chunks.length) { r.running = false; gdRdRender(); if (typeof showPremiumToast === 'function') showPremiumToast('Redirect update finished', r.results.filter(function (x) { return x.ok; }).length + ' of ' + r.results.length + ' done.', 'success'); gdLoad(false); return; }
+        google.script.run.withSuccessHandler(function (res) { r.results = r.results.concat(res.results); r.done += chunks[k].length; gdRdRenderRes(); next(k + 1); })
+            .withFailureHandler(function (e) { chunks[k].forEach(function (x) { r.results.push({ domain: x.domain, ok: false, error: (e && e.message) || 'Request failed' }); }); r.done += chunks[k].length; gdRdRenderRes(); next(k + 1); })
+            .setGodaddyRedirects(currentSessionToken, chunks[k]);
+    })(0);
+}
+function gdRdStep4() {
+    return '<div id="gdRdResHead"></div><div class="flex items-center justify-between flex-wrap gap-3 my-3"><div class="flex gap-0.5 bg-app border border-theme rounded-xl p-1">' + [['all', 'All'], ['ok', 'Done'], ['fail', 'Failed']].map(function (t) { return '<button onclick="GD.rd.resFilter=\'' + t[0] + '\';gdRdRenderRes()" class="px-3 py-1 rounded-lg text-[11px] font-bold ' + (GD.rd.resFilter === t[0] ? 'bg-indigo-600 text-white' : 'text-subtle hover:text-body') + '">' + t[1] + '</button>'; }).join('') + '</div><div id="gdRdRetry"></div></div><div id="gdRdResTable" class="overflow-auto border border-theme rounded-xl" style="max-height:340px"></div>';
+}
+function gdRdSortRes(k) { var r = GD.rd; if (r.resSort === k) r.resDir *= -1; else { r.resSort = k; r.resDir = 1; } gdRdRenderRes(); }
+function gdRdRenderRes() {
+    var r = GD.rd, head = document.getElementById('gdRdResHead'), tbl = document.getElementById('gdRdResTable'); if (!tbl) return;
+    var res = r.results || [], good = res.filter(function (x) { return x.ok; }).length, fail = res.length - good;
+    if (head) head.innerHTML = r.running ? '<div class="h-2 rounded bg-app overflow-hidden"><div class="h-2 bg-indigo-600" style="width:' + Math.round(r.done / Math.max(1, r.total) * 100) + '%;transition:width .3s"></div></div><p class="text-[11px] text-subtle mt-1.5">' + r.done + ' of ' + r.total + ' done. Please keep this window open.</p>' : '<div class="flex items-center gap-4"><div class="text-3xl font-black ' + (fail ? 'text-amber-500' : 'text-emerald-500') + '">' + good + '<span class="text-sm text-subtle font-bold"> of ' + res.length + ' updated</span></div>' + (fail ? '<b class="text-rose-500 text-xs">' + fail + ' failed</b>' : '<b class="text-emerald-500 text-xs">All done</b>') + '</div><p class="text-[11px] text-subtle mt-1">Saved under GoDaddy &gt; Changes with your name.</p>';
+    var rt = document.getElementById('gdRdRetry'); if (rt) rt.innerHTML = (!r.running && fail) ? '<button onclick="gdRdRetry()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Retry the failed ones</button>' : '';
+    var rows = res.filter(function (x) { return r.resFilter === 'all' || (r.resFilter === 'ok' ? x.ok : !x.ok); }).map(function (x) { return { x: x, domain: x.domain, st: x.ok ? (x.skipped ? 'Already set' : 'Updated') : 'Failed' }; });
+    rows.sort(function (a, b) { return gdNsCmp(a[r.resSort], b[r.resSort], r.resDir); });
+    tbl.innerHTML = rows.length ? '<table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] text-subtle border-b border-theme">' + gdNsSortTh('Domain', 'domain', r.resSort, r.resDir, 'gdRdSortRes') + gdNsSortTh('Result', 'st', r.resSort, r.resDir, 'gdRdSortRes') + '<th class="p-2">Details</th></tr></thead><tbody>' + rows.map(function (y) { return '<tr class="border-b border-theme/60"><td class="p-2 font-bold text-heading">' + gdEsc(y.domain) + '</td><td class="p-2 font-bold ' + (y.x.ok ? 'text-emerald-500' : 'text-rose-500') + '">' + y.st + '</td><td class="p-2 text-subtle">' + gdEsc(y.x.error || y.x.note || '') + '</td></tr>'; }).join('') + '</tbody></table>' : '<p class="text-xs text-subtle p-8 text-center">' + (r.running ? 'Working...' : 'Nothing here.') + '</p>';
+    gdRdNav();
+}
+function gdRdRetry() { var r = GD.rd; if (r.running) return; var failed = (r.results || []).filter(function (x) { return !x.ok; }).map(function (x) { return x.domain; }); var items = (r.lastItems || []).filter(function (it) { return failed.indexOf(it.domain) !== -1; }); if (items.length) gdRdRun(items); }
+function gdRdDownload() {
+    var rows = (GD.rd.results || []), lookup = {}; (GD.rd.lastItems || []).forEach(function (i) { lookup[i.domain] = i.target; });
+    var csv = 'Domain,Result,Redirected To,Details\n' + rows.map(function (x) { return [x.domain, x.ok ? (x.skipped ? 'Already set' : 'Updated') : 'Failed', lookup[x.domain] || '', x.error || x.note || ''].map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
+    var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'godaddy-bulk-redirect.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
