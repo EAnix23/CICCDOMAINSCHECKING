@@ -1384,6 +1384,14 @@ const actions = {
     return await syncGodaddyAccounts(db, env);
   },
 
+  // Feed for the Domain System Google Sheet (Apps Script, shared automation key): every Target Brand domain, plus the
+  // domains that left GoDaddy recently so the Sheet can move them to a Removed tab instead of the team pasting by hand.
+  async getBrandSheetFeed(db, params) {
+    const { results: domains } = await db.prepare("SELECT brand, domain, agent, expiration, account, notes FROM domains ORDER BY brand, domain").all();
+    const { results: removed } = await db.prepare("SELECT domain, brand, account, removed_at removedAt FROM gd_removed WHERE removed_at >= datetime('now','-400 day') ORDER BY removed_at DESC LIMIT 2000").all();
+    return { generatedAt: new Date().toISOString(), domains, removed };
+  },
+
   // Re-reads a batch of nameservers right now (the 15-minute cron does the same). params.limit, default 30.
   async rotateGodaddyNsNow(db, params, env) {
     return await rotateGodaddyNs(db, env, Math.min(40, Math.max(1, +(params && params.limit) || 30)));
@@ -2893,7 +2901,7 @@ export default {
 
       // Machine-to-machine actions: gated by a shared secret (env.AUTOMATION_API_KEY), not a user
       // session — the domain-checker script has no human logging in to hand it a token.
-      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow", "syncGodaddyNow", "rotateGodaddyNsNow"];
+      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow", "syncGodaddyNow", "rotateGodaddyNsNow", "getBrandSheetFeed"];
       if (automationActions.indexOf(action) !== -1) {
         const apiKey = args[0];
         const params = args[1] || {};
