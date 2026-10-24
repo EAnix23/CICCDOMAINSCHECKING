@@ -12,7 +12,7 @@ var GD_LAPSED_LABEL = {
     UPDATED_OWNERSHIP: 'Moved to another owner',
     UPDATE_ACCOUNT_AUCTION: 'Going to auction'
 };
-var GD_EVENT_LABEL = { ns_failed: 'NS change failed', brand_assigned: 'Brand assigned', redirect_set: 'Redirect changed', moved_out: 'Moved out of Target Brands', restored: 'Restored to Target Brands', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
+var GD_EVENT_LABEL = { ns_failed: 'NS change failed', brand_assigned: 'Brand assigned', forward_set: 'GoDaddy forwarding set', forward_removed: 'GoDaddy forwarding removed', redirect_set: 'Redirect changed', moved_out: 'Moved out of Target Brands', restored: 'Restored to Target Brands', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
 
 function gdEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function gdN(v) { return Number(v || 0).toLocaleString('en-US'); }
@@ -903,7 +903,7 @@ function gdMvApply() {
 // Steps: Domains > Redirect to > Review > Result
 // ============================================================
 var GD_RD_STEPS = ['Domains', 'Redirect to', 'Review', 'Result'];
-function gdRdFresh() { return { step: 1, sel: [], pickQ: '', pickAcct: 'all', pickBrand: 'all', pickSort: 'domain', pickDir: 1, paste: '', mode: 'same', target: '', common: [], review: null, reviewQ: '', revOnly: 'all', revSort: 'domain', revDir: 1, confirmed: false, loading: false, running: false, done: 0, total: 0, results: null, resFilter: 'all', resSort: 'domain', resDir: 1, discard: false }; }
+function gdRdFresh() { return { gdSet: false, gdType: 'REDIRECT_PERMANENT', nsMap: {}, fwResults: {}, step: 1, sel: [], pickQ: '', pickAcct: 'all', pickBrand: 'all', pickSort: 'domain', pickDir: 1, paste: '', mode: 'same', target: '', common: [], review: null, reviewQ: '', revOnly: 'all', revSort: 'domain', revDir: 1, confirmed: false, loading: false, running: false, done: 0, total: 0, results: null, resFilter: 'all', resSort: 'domain', resDir: 1, discard: false }; }
 function gdRdTargetOk(t) { t = String(t || '').trim(); return t.toLowerCase() === 'about:blank' || /^https?:\/\/[^\s]{3,500}$/i.test(t); }
 function gdRdHasInput() { var r = GD.rd; return r.sel.length > 0 || r.target.trim() !== '' || r.paste.trim() !== ''; }
 function gdRdTargetFor(item) { var r = GD.rd; return r.mode === 'pairs' ? (item.target || '') : r.target.trim(); }
@@ -1032,7 +1032,7 @@ function gdRdStep2() {
     return '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6"><div><div class="inline-flex gap-0.5 bg-app border border-theme rounded-xl p-1 mb-3">' + [['same', 'Same target for all'], ['pairs', 'Each domain has its own target']].map(function (x) { return '<button onclick="GD.rd.mode=\'' + x[0] + '\';gdRdRender()" class="px-4 py-1.5 rounded-lg text-xs font-bold ' + (r.mode === x[0] ? 'bg-indigo-600 text-white shadow-sm' : 'text-subtle hover:text-body') + '">' + x[1] + '</button>'; }).join('') + '</div>' +
         (r.mode === 'same' ? '<label class="text-xs font-black text-heading">Redirect ' + r.sel.length + ' domain' + (r.sel.length === 1 ? '' : 's') + ' to</label><input id="gdRdTarget" oninput="GD.rd.target=this.value;gdRdLive();gdRdNav()" value="' + gdEsc(r.target) + '" placeholder="https://www.example.com/ or about:blank" class="mt-1.5 w-full px-3 py-2.5 bg-app border border-theme rounded-xl text-sm font-mono text-body focus:outline-none"><p id="gdRdLive" class="text-[11px] mt-2"></p>' :
             '<p class="text-xs text-body">' + (withPairs ? '<b>' + withPairs + ' of ' + r.sel.length + '</b> domains have their own target from the pasted list.' : 'No target was pasted yet. Go back and paste lines like <span class="font-mono">domain, https://target.com</span>.') + '</p><div class="mt-3 max-h-48 overflow-y-auto border border-theme rounded-xl">' + r.sel.map(function (x) { return '<div class="flex gap-2 px-3 py-1.5 border-b border-theme/60 text-[11px]"><span class="font-bold text-heading">' + gdEsc(x.domain) + '</span><span class="font-mono ' + (gdRdTargetOk(x.target) ? 'text-subtle' : 'text-rose-500') + ' break-all">' + gdEsc(x.target || 'no target') + '</span></div>'; }).join('') + '</div>') + '</div>' +
-        '<div>' + (r.mode === 'same' ? '<label class="text-xs font-black text-heading">Used before <span class="text-subtle font-normal">click to fill in</span></label><div class="mt-1.5 flex flex-col gap-2">' + presets + '</div>' : '') + '<div class="mt-5 p-3 rounded-xl border border-dashed border-theme text-[11px] text-subtle">This updates the <b class="text-heading">Redirected To</b> record of the domains in Target Brands. It does not change the redirect at GoDaddy or Cloudflare.</div></div></div>';
+        '<div>' + (r.mode === 'same' ? '<label class="text-xs font-black text-heading">Used before <span class="text-subtle font-normal">click to fill in</span></label><div class="mt-1.5 flex flex-col gap-2">' + presets + '</div>' : '') + '<div class="mt-5 p-4 rounded-xl border border-theme"><label class="flex items-start gap-2 cursor-pointer"><input type="checkbox" ' + (r.gdSet ? 'checked' : '') + ' onchange="GD.rd.gdSet=this.checked;gdRdRender()" class="mt-0.5"><span class="text-xs text-body"><b class="text-heading">Also set the forwarding at GoDaddy</b><br><span class="text-subtle">Creates or updates the domain forwarding in each GoDaddy account. Only domains whose DNS is at GoDaddy are changed; domains on Cloudflare nameservers are skipped (a GoDaddy forward would have no effect there). Needs a full link, not about:blank.</span></span></label>' + (r.gdSet ? '<div class="mt-3 flex items-center gap-2"><span class="text-[11px] font-bold text-heading">Type</span><select onchange="GD.rd.gdType=this.value" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="REDIRECT_PERMANENT"' + (r.gdType === 'REDIRECT_PERMANENT' ? ' selected' : '') + '>Permanent (301)</option><option value="REDIRECT_TEMPORARY"' + (r.gdType === 'REDIRECT_TEMPORARY' ? ' selected' : '') + '>Temporary (302)</option></select></div>' : '') + '<p class="text-[11px] text-subtle mt-3">The Redirected To record in Target Brands is always updated.</p></div></div></div>';
 }
 function gdRdUseTarget(i) { var btn = document.querySelectorAll('#gdRdModal [data-v]')[i]; if (!btn) return; GD.rd.target = btn.getAttribute('data-v'); var el = document.getElementById('gdRdTarget'); if (el) el.value = GD.rd.target; gdRdLive(); gdRdNav(); }
 function gdRdLive() { var el = document.getElementById('gdRdLive'); if (!el) return; var t = GD.rd.target.trim(), ok = gdRdTargetOk(t); el.className = 'text-[11px] mt-2 ' + (t && !ok ? 'text-rose-500' : 'text-subtle'); el.textContent = !t ? '' : (ok ? 'Looks good.' : 'Use about:blank or a full link starting with http:// or https://'); }
@@ -1040,54 +1040,108 @@ function gdRdLive() { var el = document.getElementById('gdRdLive'); if (!el) ret
 // ----- step 3: review -----
 function gdRdLoadReview() {
     var r = GD.rd;
-    google.script.run.withSuccessHandler(function (res) { r.loading = false; r.review = res.items || []; gdRdRenderRev(); gdRdNav(); })
+    google.script.run.withSuccessHandler(function (res) { r.loading = false; r.review = res.items || []; gdRdRenderRev(); gdRdNav(); if (r.gdSet) gdRdLoadNs(); })
         .withFailureHandler(function (e) { r.loading = false; r.review = []; gdRdRenderRev(); if (typeof showPremiumToast === 'function') showPremiumToast('Could not check', (e && e.message) || 'Try again.', 'error'); })
         .previewGodaddyRedirects(currentSessionToken, r.sel.map(function (x) { return { domain: x.domain }; }));
+}
+// Reads the nameservers of the reviewed domains from GoDaddy (10 per call) to know where their DNS is.
+function gdRdLoadNs() {
+    var r = GD.rd, todo = (r.review || []).filter(function (i) { return i.ok; }).map(function (i) { return i.domain; }), chunks = [];
+    for (var i = 0; i < todo.length; i += 10) chunks.push(todo.slice(i, i + 10));
+    r.loadingNs = chunks.length > 0; var stamp = r.review;
+    (function next(k) {
+        if (GD.rd.review !== stamp) return;
+        if (k >= chunks.length) { GD.rd.loadingNs = false; gdRdRenderRev(); gdRdNav(); return; }
+        google.script.run.withSuccessHandler(function (res) { if (GD.rd.review !== stamp) return; res.results.forEach(function (x) { GD.rd.nsMap[x.domain] = x.ok ? x.ns : null; }); gdRdRenderRev(); next(k + 1); })
+            .withFailureHandler(function () { next(k + 1); }).liveGodaddyNs(currentSessionToken, chunks[k]);
+    })(0);
+}
+function gdRdFw(domain, target) {
+    var r = GD.rd; if (!r.gdSet) return null;
+    if (!/^https?:\/\//i.test(target || '')) return { k: 'skip', label: 'Skipped: needs a full link', cls: 'text-subtle' };
+    if (!(domain in r.nsMap)) return { k: 'reading', label: 'Reading DNS...', cls: 'text-indigo-500' };
+    var ns = r.nsMap[domain];
+    if (ns == null) return { k: 'skip', label: 'Skipped: could not read DNS', cls: 'text-rose-500' };
+    if (String(ns).indexOf('domaincontrol.com') === -1) return { k: 'skip', label: 'Skipped: DNS is at ' + (String(ns).indexOf('cloudflare') !== -1 ? 'Cloudflare' : 'another provider'), cls: 'text-subtle' };
+    return { k: 'set', label: 'Will set forwarding', cls: 'text-emerald-500' };
 }
 function gdRdItems() {
     var r = GD.rd, bySel = {}; r.sel.forEach(function (x) { bySel[x.domain] = x; });
     return (r.review || []).map(function (i) {
         var target = gdRdTargetFor(bySel[i.domain] || {});
         var st = !i.ok ? { k: 'cannot', label: i.reason || 'Cannot be changed', cls: 'text-rose-500' } : (i.current === target ? { k: 'same', label: 'Already set', cls: 'text-subtle' } : { k: 'change', label: 'Will change', cls: 'text-emerald-500' });
-        return { i: i, domain: i.domain, brand: i.brand || '', current: i.current || '', target: target, s: st, st: st.label };
+        var fw = i.ok ? gdRdFw(i.domain, target) : null;
+        return { i: i, domain: i.domain, brand: i.brand || '', current: i.current || '', target: target, s: st, st: st.label, fw: fw, fwl: fw ? fw.label : '' };
     });
 }
-function gdRdTodo() { return gdRdItems().filter(function (x) { return x.s.k === 'change'; }); }
+function gdRdTodo() { return gdRdItems().filter(function (x) { return x.s.k === 'change' || (x.fw && x.fw.k === 'set'); }); }
 function gdRdStep3() {
     return '<div class="flex items-center justify-between flex-wrap gap-3 mb-3"><div id="gdRdCounts" class="flex items-center gap-4 text-xs"></div><div class="flex gap-2 flex-wrap"><input id="gdRdRevQ" oninput="GD.rd.reviewQ=this.value;gdRdRenderRev()" value="' + gdEsc(GD.rd.reviewQ) + '" placeholder="Search domain or brand..." class="px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none w-48"><select onchange="GD.rd.revOnly=this.value;gdRdRenderRev()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">Show all</option><option value="change">Will change</option><option value="same">Already set</option><option value="cannot">Cannot change</option></select></div></div>' +
         '<div id="gdRdRevTable" class="overflow-auto border border-theme rounded-xl" style="max-height:340px"></div>' +
-        '<label class="flex items-start gap-2 text-xs text-body mt-4 p-3 rounded-xl border border-amber-500/40 bg-amber-500/5 cursor-pointer"><input type="checkbox" ' + (GD.rd.confirmed ? 'checked' : '') + ' onchange="GD.rd.confirmed=this.checked;gdRdNav()" class="mt-0.5"> <span>I understand this changes the Redirected To record of these domains and is saved under my name.</span></label>';
+        '<label class="flex items-start gap-2 text-xs text-body mt-4 p-3 rounded-xl border border-amber-500/40 bg-amber-500/5 cursor-pointer"><input type="checkbox" ' + (GD.rd.confirmed ? 'checked' : '') + ' onchange="GD.rd.confirmed=this.checked;gdRdNav()" class="mt-0.5"> <span>I understand this changes the Redirected To record' + (GD.rd.gdSet ? ' and sets the live forwarding at GoDaddy for the domains marked "Will set forwarding"' : '') + ', and is saved under my name.</span></label>';
 }
 function gdRdSortRev(k) { var r = GD.rd; if (r.revSort === k) r.revDir *= -1; else { r.revSort = k; r.revDir = 1; } gdRdRenderRev(); }
 function gdRdRenderRev() {
     var el = document.getElementById('gdRdRevTable'); if (!el) return; var r = GD.rd;
     if (r.loading) { el.innerHTML = '<p class="text-xs text-subtle p-8 text-center">Checking the Target Brand list...</p>'; return; }
     var all = gdRdItems(), c = { change: 0, same: 0, cannot: 0 }; all.forEach(function (x) { c[x.s.k]++; });
-    var cEl = document.getElementById('gdRdCounts'); if (cEl) cEl.innerHTML = '<b class="text-emerald-500">' + c.change + ' will change</b>' + (c.same ? '<span class="text-subtle">' + c.same + ' already set</span>' : '') + (c.cannot ? '<b class="text-rose-500">' + c.cannot + ' cannot change</b>' : '');
+    var cEl = document.getElementById('gdRdCounts'); if (cEl) cEl.innerHTML = '<b class="text-emerald-500">' + c.change + ' will change</b>' + (c.same ? '<span class="text-subtle">' + c.same + ' already set</span>' : '') + (c.cannot ? '<b class="text-rose-500">' + c.cannot + ' cannot change</b>' : '') + (r.gdSet ? '<span class="text-subtle">GoDaddy forwarding: <b class="text-emerald-500">' + all.filter(function (x) { return x.fw && x.fw.k === 'set'; }).length + ' will be set</b>, ' + all.filter(function (x) { return x.fw && x.fw.k === 'skip'; }).length + ' skipped' + (r.loadingNs ? ' (reading DNS...)' : '') + '</span>' : '');
     var q = r.reviewQ.trim().toLowerCase();
     var rows = all.filter(function (x) { return (r.revOnly === 'all' || x.s.k === r.revOnly) && (!q || x.domain.indexOf(q) !== -1 || x.brand.toLowerCase().indexOf(q) !== -1); });
     rows.sort(function (a, b) { return gdNsCmp(a[r.revSort], b[r.revSort], r.revDir) || a.domain.localeCompare(b.domain); });
     var th = function (l, k) { return gdNsSortTh(l, k, r.revSort, r.revDir, 'gdRdSortRev'); };
-    el.innerHTML = rows.length ? '<table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] text-subtle border-b border-theme">' + th('Domain', 'domain') + th('Brand', 'brand') + th('Now redirects to', 'current') + th('Will redirect to', 'target') + th('Status', 'st') + '</tr></thead><tbody>' +
-        rows.map(function (x) { return '<tr class="border-b border-theme/60 align-top"><td class="p-2 font-bold text-heading">' + gdEsc(x.domain) + '</td><td class="p-2 text-subtle">' + gdEsc(x.brand || '-') + '</td><td class="p-2 font-mono text-[10px] text-subtle break-all" style="max-width:220px">' + gdEsc(x.current || '-') + '</td><td class="p-2 font-mono text-[10px] text-body break-all" style="max-width:220px">' + gdEsc(x.target || '-') + '</td><td class="p-2 font-bold ' + x.s.cls + '">' + gdEsc(x.s.label) + '</td></tr>'; }).join('') + '</tbody></table>' : '<p class="text-xs text-subtle p-8 text-center">Nothing matches this filter.</p>';
+    el.innerHTML = rows.length ? '<table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] text-subtle border-b border-theme">' + th('Domain', 'domain') + th('Brand', 'brand') + th('Now redirects to', 'current') + th('Will redirect to', 'target') + th('Record', 'st') + (r.gdSet ? th('At GoDaddy', 'fwl') : '') + '</tr></thead><tbody>' +
+        rows.map(function (x) { return '<tr class="border-b border-theme/60 align-top"><td class="p-2 font-bold text-heading">' + gdEsc(x.domain) + '</td><td class="p-2 text-subtle">' + gdEsc(x.brand || '-') + '</td><td class="p-2 font-mono text-[10px] text-subtle break-all" style="max-width:220px">' + gdEsc(x.current || '-') + '</td><td class="p-2 font-mono text-[10px] text-body break-all" style="max-width:220px">' + gdEsc(x.target || '-') + '</td><td class="p-2 font-bold ' + x.s.cls + '">' + gdEsc(x.s.label) + '</td>' + (r.gdSet ? '<td class="p-2 font-bold ' + (x.fw ? x.fw.cls : 'text-subtle') + '">' + gdEsc(x.fw ? x.fw.label : '-') + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table>' : '<p class="text-xs text-subtle p-8 text-center">Nothing matches this filter.</p>';
     gdRdNav();
 }
 
 // ----- apply + result -----
 function gdRdApply() {
     var r = GD.rd; if (r.running) return;
-    var todo = gdRdTodo().map(function (x) { return { domain: x.domain, target: x.target }; }); if (!todo.length) return;
-    r.step = 4; r.results = []; gdRdRun(todo);
+    var all = gdRdItems(), rec = all.filter(function (x) { return x.s.k === 'change'; }).map(function (x) { return { domain: x.domain, target: x.target }; });
+    var fwd = all.filter(function (x) { return x.fw && x.fw.k === 'set'; }).map(function (x) { return { domain: x.domain, target: x.target }; });
+    if (!rec.length && !fwd.length) return;
+    r.step = 4; r.results = []; r.fwResults = {}; r.fwdItems = fwd;
+    gdRdRun(rec, function () { gdRdRunFwd(fwd); });
 }
-function gdRdRun(items) {
+function gdRdRun(items, after) {
     var r = GD.rd, chunks = []; for (var i = 0; i < items.length; i += 40) chunks.push(items.slice(i, i + 40));
-    r.running = true; r.done = 0; r.total = items.length; r.results = (r.results || []).filter(function (x) { return !items.some(function (y) { return y.domain === x.domain; }); }); r.lastItems = items; gdRdRender();
+    r.running = true; r.done = 0; r.total = items.length; r.results = (r.results || []).filter(function (x) { return !items.some(function (y) { return y.domain === x.domain; }); }); r.lastItems = (r.lastItems || []).filter(function (x) { return !items.some(function (y) { return y.domain === x.domain; }); }).concat(items); gdRdRender();
     (function next(k) {
-        if (k >= chunks.length) { r.running = false; gdRdRender(); if (typeof showPremiumToast === 'function') showPremiumToast('Redirect update finished', r.results.filter(function (x) { return x.ok; }).length + ' of ' + r.results.length + ' done.', 'success'); gdLoad(false); return; }
+        if (k >= chunks.length) { if (after) { after(); return; } r.running = false; gdRdRender(); gdLoad(false); return; }
         google.script.run.withSuccessHandler(function (res) { r.results = r.results.concat(res.results); r.done += chunks[k].length; gdRdRenderRes(); next(k + 1); })
             .withFailureHandler(function (e) { chunks[k].forEach(function (x) { r.results.push({ domain: x.domain, ok: false, error: (e && e.message) || 'Request failed' }); }); r.done += chunks[k].length; gdRdRenderRes(); next(k + 1); })
             .setGodaddyRedirects(currentSessionToken, chunks[k]);
     })(0);
+}
+// Phase 2: the live forwarding at GoDaddy, 8 domains per call.
+function gdRdRunFwd(items) {
+    var r = GD.rd, chunks = []; for (var i = 0; i < items.length; i += 8) chunks.push(items.slice(i, i + 8));
+    if (!items.length) { r.running = false; gdRdRender(); gdLoad(false); if (typeof showPremiumToast === 'function') showPremiumToast('Redirect update finished', r.results.filter(function (x) { return x.ok; }).length + ' of ' + r.results.length + ' done.', 'success'); return; }
+    r.running = true; r.done = 0; r.total = items.length; r.phase = 'GoDaddy forwarding'; gdRdRender();
+    items.forEach(function (it) { if (!r.results.some(function (x) { return x.domain === it.domain; })) r.results.push({ domain: it.domain, ok: true, skipped: true, note: 'Record already set' }); });
+    (function next(k) {
+        if (k >= chunks.length) { r.running = false; r.phase = ''; gdRdRender(); gdLoad(false); var set = Object.keys(r.fwResults).filter(function (d) { return r.fwResults[d].ok && !r.fwResults[d].skipped; }).length; if (typeof showPremiumToast === 'function') showPremiumToast('Redirect update finished', 'Record saved. GoDaddy forwarding set on ' + set + ' domain' + (set === 1 ? '' : 's') + '.', 'success'); return; }
+        google.script.run.withSuccessHandler(function (res) { res.results.forEach(function (x) { r.fwResults[x.domain] = x; }); r.done += chunks[k].length; gdRdRenderRes(); next(k + 1); })
+            .withFailureHandler(function (e) { chunks[k].forEach(function (x) { r.fwResults[x.domain] = { domain: x.domain, ok: false, error: (e && e.message) || 'Request failed' }; }); r.done += chunks[k].length; gdRdRenderRes(); next(k + 1); })
+            .setGodaddyForwarding(currentSessionToken, chunks[k], r.gdType);
+    })(0);
+}
+// Undo: remove the forwarding that this run created or updated at GoDaddy.
+function gdRdUndoFwd() {
+    var r = GD.rd; if (r.running) return;
+    var done = Object.keys(r.fwResults).filter(function (d) { var x = r.fwResults[d]; return x.ok && !x.skipped && /created|updated/i.test(x.note || ''); });
+    if (!done.length) return;
+    var go = function () {
+        var chunks = []; for (var i = 0; i < done.length; i += 8) chunks.push(done.slice(i, i + 8));
+        r.running = true; r.done = 0; r.total = done.length; r.phase = 'Removing forwarding'; gdRdRender();
+        (function next(k) {
+            if (k >= chunks.length) { r.running = false; r.phase = ''; gdRdRender(); if (typeof showPremiumToast === 'function') showPremiumToast('Forwarding removed', done.length + ' domain' + (done.length === 1 ? '' : 's') + '.', 'success'); return; }
+            google.script.run.withSuccessHandler(function (res) { res.results.forEach(function (x) { if (x.ok) r.fwResults[x.domain] = { domain: x.domain, ok: true, skipped: true, note: 'Forwarding removed' }; else r.fwResults[x.domain] = x; }); r.done += chunks[k].length; gdRdRenderRes(); next(k + 1); })
+                .withFailureHandler(function () { r.done += chunks[k].length; next(k + 1); }).removeGodaddyForwarding(currentSessionToken, chunks[k]);
+        })(0);
+    };
+    if (typeof showPremiumConfirm === 'function') showPremiumConfirm('Remove the forwarding?', 'This removes the GoDaddy forwarding that was just set on ' + done.length + ' domain' + (done.length === 1 ? '' : 's') + '. The Redirected To record stays as it is.', 'Remove', go); else go();
 }
 function gdRdStep4() {
     return '<div id="gdRdResHead"></div><div class="flex items-center justify-between flex-wrap gap-3 my-3"><div class="flex gap-0.5 bg-app border border-theme rounded-xl p-1">' + [['all', 'All'], ['ok', 'Done'], ['fail', 'Failed']].map(function (t) { return '<button onclick="GD.rd.resFilter=\'' + t[0] + '\';gdRdRenderRes()" class="px-3 py-1 rounded-lg text-[11px] font-bold ' + (GD.rd.resFilter === t[0] ? 'bg-indigo-600 text-white' : 'text-subtle hover:text-body') + '">' + t[1] + '</button>'; }).join('') + '</div><div id="gdRdRetry"></div></div><div id="gdRdResTable" class="overflow-auto border border-theme rounded-xl" style="max-height:340px"></div>';
@@ -1096,17 +1150,27 @@ function gdRdSortRes(k) { var r = GD.rd; if (r.resSort === k) r.resDir *= -1; el
 function gdRdRenderRes() {
     var r = GD.rd, head = document.getElementById('gdRdResHead'), tbl = document.getElementById('gdRdResTable'); if (!tbl) return;
     var res = r.results || [], good = res.filter(function (x) { return x.ok; }).length, fail = res.length - good;
-    if (head) head.innerHTML = r.running ? '<div class="h-2 rounded bg-app overflow-hidden"><div class="h-2 bg-indigo-600" style="width:' + Math.round(r.done / Math.max(1, r.total) * 100) + '%;transition:width .3s"></div></div><p class="text-[11px] text-subtle mt-1.5">' + r.done + ' of ' + r.total + ' done. Please keep this window open.</p>' : '<div class="flex items-center gap-4"><div class="text-3xl font-black ' + (fail ? 'text-amber-500' : 'text-emerald-500') + '">' + good + '<span class="text-sm text-subtle font-bold"> of ' + res.length + ' updated</span></div>' + (fail ? '<b class="text-rose-500 text-xs">' + fail + ' failed</b>' : '<b class="text-emerald-500 text-xs">All done</b>') + '</div><p class="text-[11px] text-subtle mt-1">Saved under GoDaddy &gt; Changes with your name.</p>';
-    var rt = document.getElementById('gdRdRetry'); if (rt) rt.innerHTML = (!r.running && fail) ? '<button onclick="gdRdRetry()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Retry the failed ones</button>' : '';
+    if (head) head.innerHTML = r.running ? '<div class="h-2 rounded bg-app overflow-hidden"><div class="h-2 bg-indigo-600" style="width:' + Math.round(r.done / Math.max(1, r.total) * 100) + '%;transition:width .3s"></div></div><p class="text-[11px] text-subtle mt-1.5">' + r.done + ' of ' + r.total + ' done' + (r.phase ? ' (' + r.phase + ')' : '') + '. Please keep this window open.</p>' : '<div class="flex items-center gap-4"><div class="text-3xl font-black ' + (fail ? 'text-amber-500' : 'text-emerald-500') + '">' + good + '<span class="text-sm text-subtle font-bold"> of ' + res.length + ' updated</span></div>' + (fail ? '<b class="text-rose-500 text-xs">' + fail + ' failed</b>' : '<b class="text-emerald-500 text-xs">All done</b>') + '</div><p class="text-[11px] text-subtle mt-1">' + (r.gdSet ? 'GoDaddy forwarding: <b class="text-emerald-500">' + Object.keys(r.fwResults || {}).filter(function (d) { var x = r.fwResults[d]; return x.ok && !x.skipped; }).length + ' set</b>' + (Object.keys(r.fwResults || {}).filter(function (d) { var x = r.fwResults[d]; return !x.ok && !x.skipped; }).length ? ', <b class="text-rose-500">' + Object.keys(r.fwResults).filter(function (d) { var x = r.fwResults[d]; return !x.ok && !x.skipped; }).length + ' failed</b>' : '') + '. ' : '') + 'Saved under GoDaddy &gt; Changes with your name.</p>';
+    var fwBad = Object.keys(r.fwResults || {}).filter(function (d) { var x = r.fwResults[d]; return !x.ok && !x.skipped; }).length, fwGood = Object.keys(r.fwResults || {}).filter(function (d) { var x = r.fwResults[d]; return x.ok && !x.skipped && /created|updated/i.test(x.note || ''); }).length;
+    var rt = document.getElementById('gdRdRetry'); if (rt) rt.innerHTML = (!r.running && (fail || fwBad) ? '<button onclick="gdRdRetry()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Retry the failed ones</button> ' : '') + (!r.running && fwGood ? '<button onclick="gdRdUndoFwd()" class="px-3 py-1.5 bg-panel border border-theme text-body rounded-lg text-[11px] font-bold hover:bg-app">Undo GoDaddy forwarding (' + fwGood + ')</button>' : '');
     var rows = res.filter(function (x) { return r.resFilter === 'all' || (r.resFilter === 'ok' ? x.ok : !x.ok); }).map(function (x) { return { x: x, domain: x.domain, st: x.ok ? (x.skipped ? 'Already set' : 'Updated') : 'Failed' }; });
     rows.sort(function (a, b) { return gdNsCmp(a[r.resSort], b[r.resSort], r.resDir); });
-    tbl.innerHTML = rows.length ? '<table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] text-subtle border-b border-theme">' + gdNsSortTh('Domain', 'domain', r.resSort, r.resDir, 'gdRdSortRes') + gdNsSortTh('Result', 'st', r.resSort, r.resDir, 'gdRdSortRes') + '<th class="p-2">Details</th></tr></thead><tbody>' + rows.map(function (y) { return '<tr class="border-b border-theme/60"><td class="p-2 font-bold text-heading">' + gdEsc(y.domain) + '</td><td class="p-2 font-bold ' + (y.x.ok ? 'text-emerald-500' : 'text-rose-500') + '">' + y.st + '</td><td class="p-2 text-subtle">' + gdEsc(y.x.error || y.x.note || '') + '</td></tr>'; }).join('') + '</tbody></table>' : '<p class="text-xs text-subtle p-8 text-center">' + (r.running ? 'Working...' : 'Nothing here.') + '</p>';
+    tbl.innerHTML = rows.length ? '<table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] text-subtle border-b border-theme">' + gdNsSortTh('Domain', 'domain', r.resSort, r.resDir, 'gdRdSortRes') + gdNsSortTh('Result', 'st', r.resSort, r.resDir, 'gdRdSortRes') + '<th class="p-2">Details</th>' + (r.gdSet ? '<th class="p-2">GoDaddy forwarding</th>' : '') + '</tr></thead><tbody>' + rows.map(function (y) { var f = r.fwResults[y.domain]; return '<tr class="border-b border-theme/60"><td class="p-2 font-bold text-heading">' + gdEsc(y.domain) + '</td><td class="p-2 font-bold ' + (y.x.ok ? 'text-emerald-500' : 'text-rose-500') + '">' + y.st + '</td><td class="p-2 text-subtle">' + gdEsc(y.x.error || y.x.note || '') + '</td>' + (r.gdSet ? '<td class="p-2 ' + (f ? (f.ok ? 'text-emerald-500 font-bold' : (f.skipped ? 'text-subtle' : 'text-rose-500 font-bold')) : 'text-subtle') + '">' + gdEsc(f ? (f.ok ? (f.note || 'Done') : (f.error || 'Failed')) : (r.running && r.phase ? 'Waiting...' : '-')) + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table>' : '<p class="text-xs text-subtle p-8 text-center">' + (r.running ? 'Working...' : 'Nothing here.') + '</p>';
     gdRdNav();
 }
-function gdRdRetry() { var r = GD.rd; if (r.running) return; var failed = (r.results || []).filter(function (x) { return !x.ok; }).map(function (x) { return x.domain; }); var items = (r.lastItems || []).filter(function (it) { return failed.indexOf(it.domain) !== -1; }); if (items.length) gdRdRun(items); }
+function gdRdRetry() {
+    var r = GD.rd; if (r.running) return;
+    var failedRec = (r.results || []).filter(function (x) { return !x.ok; }).map(function (x) { return x.domain; });
+    var failedFwd = Object.keys(r.fwResults || {}).filter(function (d) { var x = r.fwResults[d]; return !x.ok && !x.skipped; });
+    var recItems = (r.lastItems || []).filter(function (it) { return failedRec.indexOf(it.domain) !== -1; });
+    var fwdItems = (r.fwdItems || []).filter(function (it) { return failedFwd.indexOf(it.domain) !== -1 || failedRec.indexOf(it.domain) !== -1; });
+    if (!recItems.length && !fwdItems.length) return;
+    gdRdRun(recItems, function () { gdRdRunFwd(fwdItems); });
+}
 function gdRdDownload() {
     var rows = (GD.rd.results || []), lookup = {}; (GD.rd.lastItems || []).forEach(function (i) { lookup[i.domain] = i.target; });
-    var csv = 'Domain,Result,Redirected To,Details\n' + rows.map(function (x) { return [x.domain, x.ok ? (x.skipped ? 'Already set' : 'Updated') : 'Failed', lookup[x.domain] || '', x.error || x.note || ''].map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
+    var fwr = GD.rd.fwResults || {};
+    var csv = 'Domain,Result,Redirected To,Details,GoDaddy forwarding\n' + rows.map(function (x) { return [x.domain, x.ok ? (x.skipped ? 'Already set' : 'Updated') : 'Failed', lookup[x.domain] || '', x.error || x.note || '', fwr[x.domain] ? (fwr[x.domain].ok ? (fwr[x.domain].note || 'Done') : (fwr[x.domain].error || 'Failed')) : ''].map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
     var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'godaddy-bulk-redirect.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
 
