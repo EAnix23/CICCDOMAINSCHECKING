@@ -1462,6 +1462,7 @@ const actions = {
             const A = ra.ok ? (await ra.json()).map(function (x) { return x.data; }).join(",") : "HTTP " + ra.status, W = rw.ok ? (await rw.json()).map(function (x) { return x.data; }).join(",") : "HTTP " + rw.status;
             m += " | current forward: " + (curRaw ? curRaw.slice(0, 300) : "none") + " | status " + (dj.status || "?") + ", locked " + dj.locked + ", ns " + gdNs(dj.nameServers) + ", A@ " + (A || "none") + ", CNAME www " + (W || "none");
           } catch (x) {}
+          if (res.status === 422 && /not allowed/i.test(m)) m = "GoDaddy refused this change. It usually needs a security check (OTP) that the API cannot do, so please change this one manually at GoDaddy. Details: " + m.replace(/^GoDaddy HTTP 422 /, "");
           results.push({ domain: d, ok: false, error: m }); continue; }
         await db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'forward_set', ?, ?, ?, 'portal')").bind(d, g.account, oldUrl, (kind === "REDIRECT_PERMANENT" ? "301 " : "302 ") + url, s.username).run();
         results.push({ domain: d, ok: true, note: exists ? "Forwarding updated" : "Forwarding created" });
