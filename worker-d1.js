@@ -1423,73 +1423,33 @@ const actions = {
     return { moved, skipped, requested: list.length };
   },
 
-  // ---- Real forwarding at GoDaddy (v2 API) ----
-  // Sets (or updates) the domain forwarding of each domain at GoDaddy. Only domains whose DNS is at GoDaddy are touched:
-  // with Cloudflare nameservers a GoDaddy forward has no effect, so those are skipped and reported. 8 domains per call.
-  async setGodaddyForwarding(db, env, token, items, type) {
+  // ---- GoDaddy forwarding checklist ----
+  // GoDaddy asks for an OTP when forwarding is created or changed, which the API cannot do. So the portal keeps a shared checklist:
+  // a person does the change at GoDaddy and ticks it here. Ticks are stored as gd_events (forward_set / forward_removed, source 'manual').
+  async markGodaddyForwardDone(db, token, items) {
     const s = await requireGodaddyAccess(db, token);
-    const kind = type === "REDIRECT_TEMPORARY" ? "REDIRECT_TEMPORARY" : "REDIRECT_PERMANENT";
-    const list = (Array.isArray(items) ? items : []).slice(0, 8);
-    if (!list.length) throw new Error("No domains given (8 at a time).");
-    const accounts = gdAccounts(env);
-    let customers = {}; try { customers = JSON.parse(env.GODADDY_CUSTOMERS || "{}"); } catch (e) {}
-    const results = [];
+    const list = (Array.isArray(items) ? items : []).slice(0, 40); let saved = 0;
     for (const it of list) {
-      const d = gdCleanDomain(it && it.domain), url = String((it && it.target) || "").trim();
-      if (!d) continue;
-      if (!/^https?:\/\/[^\s]{3,500}$/i.test(url)) { results.push({ domain: d, ok: false, error: "GoDaddy forwarding needs a full link starting with http:// or https://" }); continue; }
-      const g = await db.prepare("SELECT account FROM gd_domains WHERE domain = ? AND status = 'ACTIVE' LIMIT 1").bind(d).first();
-      if (!g) { results.push({ domain: d, ok: false, error: "Not an active GoDaddy domain" }); continue; }
-      const tok = accounts[g.account], cid = customers[g.account];
-      if (!tok || !cid) { results.push({ domain: d, ok: false, error: "No API key and Customer ID for " + g.account.replace(/^Godaddy\s+/i, "") + " yet" }); continue; }
-      const auth = gdAuthHeader(tok), base = "https://api.godaddy.com/v2/customers/" + cid + "/domains/forwards/" + encodeURIComponent(d);
-      try {
-        const det = await fetch(GD_API + "/" + encodeURIComponent(d), { headers: { Authorization: auth, Accept: "application/json" } });
-        if (!det.ok) { results.push({ domain: d, ok: false, error: "Could not read the domain at GoDaddy (HTTP " + det.status + ")" }); continue; }
-        const detJson = await det.json(), ns = gdNs(detJson.nameServers);
-        if (ns.indexOf("domaincontrol.com") === -1) { results.push({ domain: d, ok: false, skipped: true, error: "DNS is not at GoDaddy (" + (ns || "unknown") + "). A GoDaddy forward would have no effect." }); continue; }
-        const cur = await fetch(base, { headers: { Authorization: auth, Accept: "application/json" } });
-        let oldUrl = "", exists = false, curRaw = "";
-        if (cur.ok) { exists = true; try { curRaw = await cur.text(); const j = JSON.parse(curRaw); oldUrl = j.url || (j.forwarding && j.forwarding.url) || ""; } catch (e) {} }
-        else if (cur.status !== 404) { results.push({ domain: d, ok: false, error: "Could not read current forwarding (HTTP " + cur.status + ")" }); continue; }
-        if (exists && oldUrl.replace(/\/$/, "") === url.replace(/\/$/, "")) { results.push({ domain: d, ok: true, skipped: true, note: "Forwarding already points there" }); continue; }
-        const res = await fetch(base, { method: exists ? "PUT" : "POST", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ type: kind, url: url }) });
-        if (!res.ok) { let m = "GoDaddy HTTP " + res.status + " (" + (exists ? "PUT" : "POST") + (exists ? ", existing: " + oldUrl : "") + ")"; try { const e = await res.json(); if (e && e.message) m += ": " + String(e.message).slice(0, 160); if (e && e.code) m += " [" + e.code + "]"; if (e && e.fields) m += " " + JSON.stringify(e.fields).slice(0, 200); } catch (x) {}
-          // Read-only diagnosis so the real cause is visible: domain status/lock and the A / CNAME records that GoDaddy forwarding conflicts with.
-          try {
-            const H = { Authorization: auth, Accept: "application/json" }, dj = detJson;
-            const [ra, rw] = await Promise.all([fetch(GD_API + "/" + encodeURIComponent(d) + "/records/A/@", { headers: H }), fetch(GD_API + "/" + encodeURIComponent(d) + "/records/CNAME/www", { headers: H })]);
-            const A = ra.ok ? (await ra.json()).map(function (x) { return x.data; }).join(",") : "HTTP " + ra.status, W = rw.ok ? (await rw.json()).map(function (x) { return x.data; }).join(",") : "HTTP " + rw.status;
-            m += " | current forward: " + (curRaw ? curRaw.slice(0, 300) : "none") + " | status " + (dj.status || "?") + ", locked " + dj.locked + ", ns " + gdNs(dj.nameServers) + ", A@ " + (A || "none") + ", CNAME www " + (W || "none");
-          } catch (x) {}
-          if (res.status === 422 && /not allowed/i.test(m)) m = "GoDaddy refused this change. It usually needs a security check (OTP) that the API cannot do, so please change this one manually at GoDaddy. Details: " + m.replace(/^GoDaddy HTTP 422 /, "");
-          results.push({ domain: d, ok: false, error: m }); continue; }
-        await db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'forward_set', ?, ?, ?, 'portal')").bind(d, g.account, oldUrl, (kind === "REDIRECT_PERMANENT" ? "301 " : "302 ") + url, s.username).run();
-        results.push({ domain: d, ok: true, note: exists ? "Forwarding updated" : "Forwarding created" });
-      } catch (e) { results.push({ domain: d, ok: false, error: String(e && e.message || e).slice(0, 140) }); }
+      const d = gdCleanDomain(it && it.domain); if (!d) continue;
+      const g = await db.prepare("SELECT account FROM gd_domains WHERE domain = ? LIMIT 1").bind(d).first();
+      const label = (it.type === "REDIRECT_TEMPORARY" ? "302 " : "301 ") + String(it.target || "").slice(0, 500);
+      await db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, ?, '', ?, ?, 'manual')")
+        .bind(d, g ? g.account : "", it.done ? "forward_set" : "forward_removed", it.done ? label : "", s.username).run();
+      saved++;
     }
-    return { results };
+    return { saved };
   },
 
-  // Removes the forwarding of domains at GoDaddy (undo). 8 domains per call.
-  async removeGodaddyForwarding(db, env, token, domains) {
-    const s = await requireGodaddyAccess(db, token);
-    const list = (Array.isArray(domains) ? domains : []).map(gdCleanDomain).filter(Boolean).slice(0, 8);
-    const accounts = gdAccounts(env);
-    let customers = {}; try { customers = JSON.parse(env.GODADDY_CUSTOMERS || "{}"); } catch (e) {}
-    const results = [];
-    for (const d of list) {
-      const g = await db.prepare("SELECT account FROM gd_domains WHERE domain = ? AND status = 'ACTIVE' LIMIT 1").bind(d).first();
-      const tok = g && accounts[g.account], cid = g && customers[g.account];
-      if (!tok || !cid) { results.push({ domain: d, ok: false, error: "No API access for this domain's account" }); continue; }
-      try {
-        const res = await fetch("https://api.godaddy.com/v2/customers/" + cid + "/domains/forwards/" + encodeURIComponent(d), { method: "DELETE", headers: { Authorization: gdAuthHeader(tok), Accept: "application/json" } });
-        if (!res.ok && res.status !== 404) { results.push({ domain: d, ok: false, error: "GoDaddy HTTP " + res.status }); continue; }
-        await db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'forward_removed', '', '', ?, 'portal')").bind(d, g.account, s.username).run();
-        results.push({ domain: d, ok: true, note: res.status === 404 ? "No forwarding was set" : "Forwarding removed" });
-      } catch (e) { results.push({ domain: d, ok: false, error: String(e && e.message || e).slice(0, 140) }); }
+  // Latest tick of each domain on the checklist: { domain: { done, target, at, by } }.
+  async listGodaddyForwardDone(db, token, domains) {
+    await requireGodaddyAccess(db, token);
+    const list = (Array.isArray(domains) ? domains : []).map(gdCleanDomain).filter(Boolean).slice(0, 300), out = {};
+    for (let i = 0; i < list.length; i += 90) {
+      const part = list.slice(i, i + 90);
+      const { results } = await db.prepare("SELECT domain, type, new_value nv, at, by_user byUser FROM gd_events WHERE type IN ('forward_set', 'forward_removed') AND domain IN (" + part.map(function () { return "?"; }).join(",") + ") ORDER BY id").bind(...part).all();
+      results.forEach(function (r) { out[r.domain] = { done: r.type === "forward_set", target: String(r.nv || "").replace(/^30[12] /, ""), at: r.at, by: r.byUser }; });
     }
-    return { results };
+    return { done: out };
   },
 
   // ---- Bulk redirect ("Redirected To" of the Target Brand domains) ----
@@ -3182,7 +3142,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs", "uploadGodaddyReceipt", "deleteGodaddyReceipt", "moveLapsedFromBrands", "setGodaddyForwarding", "removeGodaddyForwarding"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs", "uploadGodaddyReceipt", "deleteGodaddyReceipt", "moveLapsedFromBrands"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);
