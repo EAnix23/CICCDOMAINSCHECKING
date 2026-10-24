@@ -12,7 +12,7 @@ var GD_LAPSED_LABEL = {
     UPDATED_OWNERSHIP: 'Moved to another owner',
     UPDATE_ACCOUNT_AUCTION: 'Going to auction'
 };
-var GD_EVENT_LABEL = { ns_failed: 'NS change failed', brand_assigned: 'Brand assigned', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
+var GD_EVENT_LABEL = { ns_failed: 'NS change failed', brand_assigned: 'Brand assigned', moved_out: 'Moved out of Target Brands', restored: 'Restored to Target Brands', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
 
 function gdEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function gdN(v) { return Number(v || 0).toLocaleString('en-US'); }
@@ -69,9 +69,10 @@ function gdSync(auto) {
 function gdModel() {
     var d = GD.data, brandMap = {};
     d.brands.forEach(function (b) { brandMap[gdNormDomain(b.domain)] = b.brand; });
+    var arch = {}; (d.removed || []).forEach(function (r) { if (!arch[r.domain]) arch[r.domain] = r; });
     var rows = d.domains.map(function (r) {
         var days = gdDays(r.expires);
-        return { domain: r.domain, account: r.account.replace(/^Godaddy\s+/i, ''), status: r.status, expires: r.expires, days: days, auto: !!r.renewAuto, locked: !!r.locked, ns: r.ns, brand: brandMap[r.domain] || '' };
+        return { domain: r.domain, account: r.account.replace(/^Godaddy\s+/i, ''), status: r.status, expires: r.expires, days: days, auto: !!r.renewAuto, locked: !!r.locked, ns: r.ns, brand: brandMap[r.domain] || (arch[r.domain] ? arch[r.domain].brand : ''), inBrand: !!brandMap[r.domain], movedOut: !brandMap[r.domain] && !!arch[r.domain] };
     });
     var active = rows.filter(function (r) { return r.status === 'ACTIVE'; });
     var renewal = active.filter(function (r) { return r.days != null && r.days >= 0 && r.days <= 60; }).sort(function (a, b) { return a.days - b.days; });
@@ -79,7 +80,7 @@ function gdModel() {
     var cut14 = Date.now() - 14 * 86400000;
     var events = d.events.map(function (e) { e.brand = brandMap[e.domain] || ''; e.accountShort = (e.account || '').replace(/^Godaddy\s+/i, ''); return e; });
     var recent = function (t) { return events.filter(function (e) { return e.type === t && gdTime(e.at) && gdTime(e.at).getTime() >= cut14; }); };
-    return { unassigned: active.filter(function (r) { return !r.brand; }).sort(function (a, b) { return a.domain.localeCompare(b.domain); }), rows: rows, active: active, renewal: renewal, lapsed: lapsed, events: events, renewed14: recent('renewed'), ns14: recent('ns_changed'), lapsedNow: lapsed.filter(function (r) { return r.days >= -90; }) };
+    return { unassigned: active.filter(function (r) { return !r.brand && !r.movedOut; }).sort(function (a, b) { return a.domain.localeCompare(b.domain); }), rows: rows, active: active, renewal: renewal, lapsed: lapsed, events: events, renewed14: recent('renewed'), ns14: recent('ns_changed'), lapsedNow: lapsed.filter(function (r) { return r.days >= -90; }) };
 }
 
 // ---- rendering ----
@@ -127,7 +128,7 @@ function gdTabBtn(id, label, n) { var on = GD.tab === id; return '<button onclic
 
 function gdRenderBody() {
     var el = document.getElementById('gdBody'); if (!el) return; var m = gdModel();
-    var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + gdTabBtn('unassigned', 'No brand yet', m.unassigned.length) + gdTabBtn('removed', 'Removed', (GD.data.removed || []).length) + gdTabBtn('receipts', 'Receipts', GD_RC.rows ? GD_RC.rows.length : null) + '</div>';
+    var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + gdTabBtn('unassigned', 'No brand yet', m.unassigned.length) + gdTabBtn('removed', 'Removed', (GD.data.removed || []).filter(function (r) { return r.source !== 'not_renewed'; }).length) + gdTabBtn('receipts', 'Receipts', GD_RC.rows ? GD_RC.rows.length : null) + '</div>';
     if (GD.tab === 'receipts') { el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + '</div><div id="gdRc"></div></div>'; gdRcRender(); if (typeof lucide !== 'undefined') lucide.createIcons(); return; }
     var accounts = GD.data.accounts.map(function (a) { return a.account.replace(/^Godaddy\s+/i, ''); });
     var tools = '<div class="flex items-center gap-2 flex-wrap">' +
@@ -137,6 +138,10 @@ function gdRenderBody() {
     var sub = '';
     if (GD.tab === 'renewal') sub = '<div class="flex items-center gap-2 mb-3 text-[11px] text-subtle">Show domains expiring within ' + [7, 15, 30, 60].map(function (n) { return '<button onclick="GD.range=' + n + ';gdRenderBody()" class="px-2.5 py-1 rounded-lg border ' + (GD.range === n ? 'bg-indigo-600 text-white border-indigo-600' : 'border-theme text-body hover:bg-app') + ' font-bold">' + n + ' days</button>'; }).join('') + '</div>';
     if (GD.tab === 'changes') sub = '<p class="text-[11px] text-subtle mb-3">Expiry, status and new or removed domains are caught on every sync. Nameserver changes are recorded when made from this portal, and also when anyone changes them directly in GoDaddy: every active domain is re-read in rotation (30 domains every 15 minutes, so each one about every 11 hours).</p><div class="flex items-center gap-2 mb-3 flex-wrap">' + [['all', 'All'], ['ns_changed', 'Nameserver'], ['expired', 'Expired'], ['renewed', 'Renewed'], ['status_changed', 'Status'], ['added', 'New'], ['removed', 'Removed']].map(function (t) { return '<button onclick="GD.evType=\'' + t[0] + '\';gdRenderTable()" class="px-2.5 py-1 rounded-lg border text-[11px] font-bold ' + (GD.evType === t[0] ? 'bg-indigo-600 text-white border-indigo-600' : 'border-theme text-body hover:bg-app') + '">' + t[1] + '</button>'; }).join('') + '</div>';
+    if (GD.tab === 'lapsed') {
+        var stale = gdStaleList();
+        sub = stale.length ? '<div class="flex items-center justify-between gap-3 flex-wrap mb-3 p-4 rounded-xl border border-amber-500/40 bg-amber-500/5"><p class="text-xs text-body"><b class="text-heading">' + stale.length + ' domain' + (stale.length === 1 ? ' is' : 's are') + ' no longer in GoDaddy (not renewed or moved to another owner) but still listed under Target Brands.</b><br><span class="text-subtle">Move them out so the brand lists only show domains you still hold. Their data is kept and they come back by themselves if renewed.</span></p><button onclick="gdMvOpen()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700 shadow-sm whitespace-nowrap">Review and move out</button></div>' : '<p class="text-[11px] text-subtle mb-3">Every domain that was not renewed is already out of the Target Brand list. Their brand and data are kept in the archive.</p>';
+    }
     if (GD.tab === 'renewed') sub = '<div class="text-[11px] text-subtle mb-3 p-3 rounded-xl border border-dashed border-theme">Renewals are detected when a domain\'s expiry date moves forward between syncs, so tracking starts from the first sync. <b class="text-body">Receipts and order numbers are not available</b> from the GoDaddy API with the current tokens (GoDaddy refuses the orders endpoint). Receipts stay in the GoDaddy account or its email.</div>';
     el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + tools + '</div>' + sub + '<div id="gdSelBar"></div><div id="gdTable" class="overflow-x-auto"></div></div>';
     gdRenderTable(); gdRenderSelBar();
@@ -159,7 +164,8 @@ function gdCurrentRows() {
     } else if (t === 'lapsed') {
         rows = m.lapsed.filter(match);
         cols = [['Domain', dom, function (r) { return r.domain; }], ['Brand', function (r) { return gdEsc(r.brand || '-'); }, function (r) { return r.brand; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }], ['Expired on', function (r) { return gdDay(r.expires); }, function (r) { return r.expires; }],
-            ['Days ago', function (r) { return '<b class="text-rose-500">' + Math.abs(r.days) + '</b>'; }, function (r) { return Math.abs(r.days); }], ['What it means', function (r) { return gdEsc(GD_LAPSED_LABEL[r.status] || r.status); }, function (r) { return r.status; }]];
+            ['Days ago', function (r) { return '<b class="text-rose-500">' + Math.abs(r.days) + '</b>'; }, function (r) { return Math.abs(r.days); }], ['What it means', function (r) { return gdEsc(GD_LAPSED_LABEL[r.status] || r.status); }, function (r) { return r.status; }],
+            ['Target Brands', function (r) { return r.inBrand ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-amber-500/15 text-amber-600">Still listed</span>' : (r.movedOut ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-emerald-500/15 text-emerald-500">Moved out</span>' : '<span class="text-subtle">-</span>'); }, function (r) { return r.inBrand ? 'Still listed' : (r.movedOut ? 'Moved out' : ''); }]];
     } else if (t === 'unassigned') {
         var allBrands = gdBrandList();
         rows = m.unassigned.filter(match);
@@ -167,7 +173,7 @@ function gdCurrentRows() {
             ['Suggested brand', function (r) { var s = gdSuggestBrand(r.domain, allBrands); return s ? '<button onclick="gdAsOpen([this.getAttribute(\'data-d\')],this.getAttribute(\'data-b\'))" data-d="' + gdEsc(r.domain) + '" data-b="' + gdEsc(s) + '" class="px-2.5 py-1 rounded-lg bg-indigo-600/10 text-indigo-500 text-[11px] font-bold hover:bg-indigo-600/20">' + gdEsc(s) + '</button>' : '<span class="text-subtle">-</span>'; }, function (r) { return gdSuggestBrand(r.domain, allBrands); }],
             ['', function (r) { return '<button onclick="gdAsOpen([this.getAttribute(\'data-d\')])" data-d="' + gdEsc(r.domain) + '" class="px-2.5 py-1 rounded-lg border border-theme text-[11px] font-bold text-body hover:bg-app hover:border-indigo-400 whitespace-nowrap">Add to brand</button>'; }, function () { return ''; }, true]];
     } else if (t === 'removed') {
-        rows = (GD.data.removed || []).map(function (r) { return { domain: r.domain, brand: r.brand, account: r.account.replace(/^Godaddy\s+/i, ''), removedAt: r.removedAt, lastStatus: r.lastStatus, lastExpires: r.lastExpires, hadRecord: r.hadRecord }; }).filter(match);
+        rows = (GD.data.removed || []).filter(function (r) { return r.source !== 'not_renewed'; }).map(function (r) { return { domain: r.domain, brand: r.brand, account: r.account.replace(/^Godaddy\s+/i, ''), removedAt: r.removedAt, lastStatus: r.lastStatus, lastExpires: r.lastExpires, hadRecord: r.hadRecord }; }).filter(match);
         cols = [['Removed on', function (r) { return gdDay(r.removedAt); }, function (r) { return r.removedAt; }], ['Domain', dom, function (r) { return r.domain; }], ['Brand', function (r) { return gdEsc(r.brand || '-'); }, function (r) { return r.brand; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }],
             ['Last expiry', function (r) { return gdDay(r.lastExpires); }, function (r) { return r.lastExpires; }], ['Last status', function (r) { return gdEsc(String(r.lastStatus || '-').replace(/_/g, ' ').toLowerCase()); }, function (r) { return r.lastStatus; }], ['Brand record', function (r) { return r.hadRecord ? '<span class="text-emerald-500 font-bold">Archived</span>' : '<span class="text-subtle">None</span>'; }, function (r) { return r.hadRecord ? 'Archived' : 'None'; }]];
     } else if (t === 'renewed' || t === 'changes') {
@@ -804,4 +810,80 @@ function gdUnAcceptAll() {
 function gdUnRefresh() {
     var m = document.getElementById('gdUnModal'); if (!m || m.style.display === 'none' || !GD.un) return;
     GD.un.sel = {}; gdUnRenderList();
+}
+
+// ============================================================
+// Move lapsed domains out of Target Brands (review list, then confirm).
+// ============================================================
+function gdStaleList() {
+    var map = {};
+    ((GD.data && GD.data.staleInBrands) || []).forEach(function (r) {
+        var x = map[r.domain] || (map[r.domain] = { domain: r.domain, account: r.account.replace(/^Godaddy\s+/i, ''), status: r.status, expires: r.expires, brands: [] });
+        if (x.brands.indexOf(r.brand) === -1) x.brands.push(r.brand);
+    });
+    return Object.keys(map).map(function (k) { var x = map[k]; x.brand = x.brands.join(', '); x.kind = x.status === 'UPDATED_OWNERSHIP' ? 'Moved to another owner' : (GD_LAPSED_LABEL[x.status] || 'Not renewed'); return x; });
+}
+function gdMvOpen() {
+    gdInjectFont();
+    var m = document.getElementById('gdMvModal');
+    if (!m) {
+        m = document.createElement('div'); m.id = 'gdMvModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(2,6,23,.62);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;padding:3vh 16px;overflow-y:auto';
+        m.onmousedown = function (e) { if (e.target === m) gdMvClose(); };
+        document.body.appendChild(m);
+        document.addEventListener('keydown', function (e) { var mm = document.getElementById('gdMvModal'); if (e.key === 'Escape' && mm && mm.style.display !== 'none') gdMvClose(); });
+    }
+    var all = gdStaleList(), sel = {}; all.forEach(function (r) { sel[r.domain] = true; });
+    GD.mv = { q: '', sort: 'brand', dir: 1, kind: 'all', sel: sel, busy: false, confirm: false, result: null, done: 0, total: 0 };
+    m.style.display = 'flex'; gdMvRender();
+}
+function gdMvClose() { var m = document.getElementById('gdMvModal'); if (!m || !GD.mv || GD.mv.busy) return; m.style.display = 'none'; if (GD.mv.result) gdLoad(false); }
+function gdMvRows() {
+    var v = GD.mv, q = v.q.trim().toLowerCase();
+    var rows = gdStaleList().filter(function (r) { return (v.kind === 'all' || (v.kind === 'moved' ? r.status === 'UPDATED_OWNERSHIP' : r.status !== 'UPDATED_OWNERSHIP')) && (!q || (r.domain + ' ' + r.brand).toLowerCase().indexOf(q) !== -1); });
+    rows.sort(function (a, b) { return gdNsCmp(a[v.sort], b[v.sort], v.dir) || a.domain.localeCompare(b.domain); });
+    return rows;
+}
+function gdMvSortBy(k) { var v = GD.mv; if (v.sort === k) v.dir *= -1; else { v.sort = k; v.dir = 1; } gdMvRenderList(); }
+function gdMvRender() {
+    var m = document.getElementById('gdMvModal'), v = GD.mv; if (!m || !v) return;
+    var disc = v.confirm ? '<div style="position:absolute;inset:0;background:rgba(2,6,23,.55);border-radius:1rem;display:flex;align-items:center;justify-content:center;padding:20px;z-index:5"><div class="panel-card p-6" style="max-width:420px"><h4 class="text-base font-black text-heading">Move ' + gdMvCount() + ' domain' + (gdMvCount() === 1 ? '' : 's') + ' out of Target Brands?</h4><p class="text-xs text-body mt-2">They stop showing under their brands. Each one is saved in the archive with its brand and its ISP statuses, and goes back to its brand by itself if it is renewed later. Nothing is deleted at GoDaddy.</p><div class="flex justify-end gap-2 mt-5"><button onclick="GD.mv.confirm=false;gdMvRender()" class="px-4 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Go back</button><button onclick="gdMvApply()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700">Yes, move them</button></div></div></div>' : '';
+    var body;
+    if (v.result) {
+        body = '<div class="text-center py-6"><div class="text-4xl font-black text-emerald-500">' + v.result.moved + '</div><p class="text-xs text-body mt-1">domain' + (v.result.moved === 1 ? '' : 's') + ' moved out of Target Brands</p></div>' + (v.result.skipped ? '<p class="text-[11px] text-subtle text-center">' + v.result.skipped + ' skipped (already out or not lapsed).</p>' : '') + '<p class="text-[11px] text-subtle text-center mt-3">They are listed under Not renewed (or Removed). The Target Brands sidebar has been refreshed.</p>';
+    } else {
+        body = '<div class="flex gap-2 flex-wrap mb-3"><input id="gdMvQ" oninput="GD.mv.q=this.value;gdMvRenderList()" placeholder="Search domain or brand..." class="flex-1 min-w-[180px] px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none"><select onchange="GD.mv.kind=this.value;gdMvRenderList()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">All reasons</option><option value="lapsed">Not renewed</option><option value="moved">Moved to another owner</option></select></div>' +
+            '<div class="flex items-center gap-2 mb-2"><button onclick="gdMvAll(true)" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Select all shown</button><button onclick="gdMvAll(false)" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Clear</button><span id="gdMvCount" class="text-[11px] text-subtle ml-1"></span></div><div id="gdMvList" class="border border-theme rounded-xl overflow-auto" style="max-height:380px"></div>' + (v.busy ? '<div class="mt-3"><div class="h-2 rounded bg-app overflow-hidden"><div class="h-2 bg-amber-500" style="width:' + Math.round(v.done / Math.max(1, v.total) * 100) + '%"></div></div><p class="text-[11px] text-subtle mt-1">' + v.done + ' of ' + v.total + ' done...</p></div>' : '');
+    }
+    m.innerHTML = '<div class="panel-card" style="position:relative;width:min(900px,100%);padding:0;border-radius:1rem;box-shadow:0 30px 70px rgba(0,0,0,.45)"><div style="padding:20px 24px 14px;border-bottom:1px solid var(--border-theme)" class="flex items-start justify-between gap-3"><div><h3 class="text-lg font-black text-heading">Domains no longer in GoDaddy</h3><p class="text-[11px] text-subtle mt-1">Still listed under Target Brands. Review them, then move them out.</p></div><button onclick="gdMvClose()" aria-label="Close" class="text-subtle hover:text-heading text-2xl leading-none px-2">&times;</button></div><div style="padding:16px 24px">' + body + '</div>' +
+        '<div style="padding:12px 24px;border-top:1px solid var(--border-theme)" class="flex items-center justify-between gap-3">' + (v.result ? '<span></span><button onclick="gdMvClose()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Done</button>' : '<button onclick="gdMvClose()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Cancel</button><button id="gdMvGo" onclick="GD.mv.confirm=true;gdMvRender()" class="px-5 py-2.5 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700 shadow-sm">Move out</button>') + '</div>' + disc + '</div>';
+    if (!v.result) gdMvRenderList();
+}
+function gdMvCount() { return Object.keys(GD.mv.sel).filter(function (k) { return GD.mv.sel[k]; }).length; }
+function gdMvRenderList() {
+    var el = document.getElementById('gdMvList'); if (!el || !GD.mv) return;
+    var v = GD.mv, rows = gdMvRows();
+    var th = function (l, k) { return gdNsSortTh(l, k, v.sort, v.dir, 'gdMvSortBy'); };
+    el.innerHTML = rows.length ? '<table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] text-subtle border-b border-theme"><th class="p-2"></th>' + th('Domain', 'domain') + th('Brand', 'brand') + th('Account', 'account') + th('Expired', 'expires') + th('Why', 'kind') + '</tr></thead><tbody>' +
+        rows.map(function (r) { return '<tr class="border-b border-theme/60"><td class="p-2"><input type="checkbox" ' + (v.sel[r.domain] ? 'checked' : '') + ' data-d="' + gdEsc(r.domain) + '" onchange="gdMvPick(this.getAttribute(\'data-d\'),this.checked)"></td><td class="p-2 font-bold text-heading">' + gdEsc(r.domain) + '</td><td class="p-2">' + gdEsc(r.brand) + '</td><td class="p-2">' + gdEsc(r.account) + '</td><td class="p-2 whitespace-nowrap">' + gdEsc(gdDay(r.expires)) + '</td><td class="p-2 text-subtle">' + gdEsc(r.kind) + '</td></tr>'; }).join('') + '</tbody></table>' : '<p class="text-xs text-subtle p-10 text-center">Nothing to move. Every lapsed domain is already out of Target Brands.</p>';
+    gdMvNav();
+}
+function gdMvNav() {
+    var c = document.getElementById('gdMvCount'), b = document.getElementById('gdMvGo'), n = gdMvCount(), shown = gdMvRows().length;
+    if (c) c.textContent = shown + ' shown / ' + n + ' selected';
+    if (b) { b.textContent = n ? 'Move ' + n + ' out' : 'Move out'; b.style.opacity = n && !GD.mv.busy ? '1' : '.45'; b.style.pointerEvents = n && !GD.mv.busy ? 'auto' : 'none'; }
+}
+function gdMvPick(d, on) { if (on) GD.mv.sel[d] = true; else delete GD.mv.sel[d]; gdMvNav(); }
+function gdMvAll(on) { gdMvRows().forEach(function (r) { if (on) GD.mv.sel[r.domain] = true; else delete GD.mv.sel[r.domain]; }); gdMvRenderList(); }
+function gdMvApply() {
+    var v = GD.mv; if (v.busy) return;
+    var list = Object.keys(v.sel).filter(function (k) { return v.sel[k]; }), chunks = [];
+    for (var i = 0; i < list.length; i += 30) chunks.push(list.slice(i, i + 30));
+    v.confirm = false; v.busy = true; v.done = 0; v.total = list.length; var moved = 0, skipped = 0; gdMvRender();
+    (function next(k) {
+        if (k >= chunks.length) { v.busy = false; v.result = { moved: moved, skipped: skipped }; gdMvRender(); gdLoad(false); if (typeof loadSidebarBrands === 'function') loadSidebarBrands(); return; }
+        google.script.run.withSuccessHandler(function (r) { moved += r.moved; skipped += r.skipped.length; v.done += chunks[k].length; gdMvRender(); next(k + 1); })
+            .withFailureHandler(function () { skipped += chunks[k].length; v.done += chunks[k].length; gdMvRender(); next(k + 1); })
+            .moveLapsedFromBrands(currentSessionToken, chunks[k]);
+    })(0);
 }

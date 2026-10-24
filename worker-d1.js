@@ -202,6 +202,7 @@ async function syncGodaddyAccounts(db, env) {
       const seen = new Set();
       const stmts = [];
       const counts = { added: 0, renewed: 0, expired: 0, ns: 0, status: 0, removed: 0 };
+      const toMove = [], toRestore = [];
       const ev = function (domain, type, oldV, newV) {
         stmts.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, source) VALUES (?, ?, ?, ?, ?, 'sync')").bind(domain, name, type, oldV || "", newV || ""));
       };
@@ -220,8 +221,8 @@ async function syncGodaddyAccounts(db, env) {
           if (old.miss || old.expires !== row.expires || old.status !== row.status || old.name_servers !== row.ns || old.renew_auto !== row.auto || old.renewable !== row.renewable || old.locked !== row.locked || old.renew_deadline !== row.deadline) write = true;
           if (old.expires && row.expires && row.expires > old.expires && (new Date(row.expires.replace(" ", "T") + "Z") - new Date(old.expires.replace(" ", "T") + "Z")) > 30 * 86400000) { ev(domain, "renewed", old.expires, row.expires); counts.renewed++; }
           if (old.status !== row.status) {
-            if (old.status === "ACTIVE") { ev(domain, "expired", old.status, row.status); counts.expired++; }
-            else { ev(domain, "status_changed", old.status, row.status); counts.status++; }
+            if (old.status === "ACTIVE") { ev(domain, "expired", old.status, row.status); counts.expired++; if (gdLeftAccount(row.status)) toMove.push({ domain: domain, account: name, status: row.status, expires: row.expires }); }
+            else { ev(domain, "status_changed", old.status, row.status); counts.status++; if (row.status === "ACTIVE" && gdIsLapsed(old.status)) toRestore.push(domain); }
           }
           if (old.name_servers !== row.ns && (old.name_servers || row.ns)) { ev(domain, "ns_changed", old.name_servers, row.ns); counts.ns++; }
         }
@@ -254,6 +255,9 @@ async function syncGodaddyAccounts(db, env) {
         }
       }
       for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+      // Domains that just lapsed leave the Target Brand list on their own (a big batch at once is left for a person to confirm).
+      if (toMove.length && toMove.length <= 25) counts.moved = await gdMoveLapsedOut(db, toMove, "sync");
+      for (const d of toRestore) { if (await gdRestoreBrand(db, d, name)) counts.restored = (counts.restored || 0) + 1; }
       await db.prepare("INSERT INTO gd_accounts (account, domains, last_sync, ok, error) VALUES (?, ?, datetime('now'), 1, ?) ON CONFLICT(account) DO UPDATE SET domains=excluded.domains, last_sync=excluded.last_sync, ok=1, error=excluded.error").bind(name, fetched.length, warning).run();
       summary.push({ account: name, ok: true, domains: fetched.length, baseline: baseline, written: stmts.length, counts: counts });
     } catch (e) {
@@ -290,6 +294,46 @@ async function rotateGodaddyNs(db, env, limit) {
   }
   for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
   return { checked, changed, failed };
+}
+
+// A domain whose registration was not renewed: expired, cancelled, held in redemption or heading to auction.
+function gdIsLapsed(st) {
+  st = String(st || "").toUpperCase();
+  return st === "EXPIRED" || st.indexOf("CANCELLED") === 0 || st.indexOf("HELD_EXPIRED") === 0 || st.indexOf("REDEMPTION") !== -1 || st.indexOf("AUCTION") !== -1;
+}
+function gdLeftAccount(st) { return gdIsLapsed(st) || String(st || "").toUpperCase() === "UPDATED_OWNERSHIP"; }
+const GD_NORM_SQL = "LOWER(RTRIM(REPLACE(REPLACE(REPLACE(domain,'https://',''),'http://',''),'www.',''),'/'))";
+
+// Takes lapsed domains out of the Target Brand list. The whole BBC row (ISP statuses included) is kept in gd_removed
+// with source 'not_renewed', so the data is not lost and the domain can come back if it is renewed later.
+async function gdMoveLapsedOut(db, items, by) {
+  let moved = 0;
+  for (const it of items) {
+    const { results: bbc } = await db.prepare("SELECT * FROM domains WHERE " + GD_NORM_SQL + " = ?").bind(it.domain).all();
+    if (!bbc.length) continue;
+    const brand = bbc[0].brand;
+    const st = [db.prepare("INSERT INTO gd_removed (domain, account, brand, last_status, last_expires, snapshot, source) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(it.domain, it.account || "", brand, it.status || "", it.expires || "", JSON.stringify(bbc), gdIsLapsed(it.status) ? "not_renewed" : "transferred")];
+    bbc.forEach(function (b) { st.push(db.prepare("DELETE FROM domains WHERE id = ?").bind(b.id)); });
+    st.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'moved_out', ?, ?, ?, ?)").bind(it.domain, it.account || "", brand, gdIsLapsed(it.status) ? "Not renewed" : "Transferred out", by || "", by === "sync" ? "sync" : "portal"));
+    await db.batch(st);
+    moved++;
+  }
+  return moved;
+}
+
+// A lapsed domain that was renewed again (back to ACTIVE): put its brand row back from the archive.
+async function gdRestoreBrand(db, domain, account) {
+  const arch = await db.prepare("SELECT id, brand, snapshot FROM gd_removed WHERE domain = ? AND source = 'not_renewed' AND snapshot != '' ORDER BY id DESC LIMIT 1").bind(domain).first();
+  if (!arch) return false;
+  let rows = []; try { rows = JSON.parse(arch.snapshot); } catch (e) { return false; }
+  const st = rows.map(function (r) {
+    return db.prepare("INSERT OR IGNORE INTO domains (brand, domain, agent, price, expiration, account, notes, redirected, pldt, pldt_remarks, globe, globe_remarks, converge, converge_remarks, dito, dito_remarks) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(r.brand || "", r.domain || "", r.agent || "", r.price || "", r.expiration || "", r.account || "", r.notes || "", r.redirected || "", r.pldt || "", r.pldt_remarks || "", r.globe || "", r.globe_remarks || "", r.converge || "", r.converge_remarks || "", r.dito || "", r.dito_remarks || "");
+  });
+  st.push(db.prepare("DELETE FROM gd_removed WHERE id = ?").bind(arch.id));
+  st.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, source) VALUES (?, ?, 'restored', 'Not renewed', ?, 'sync')").bind(domain, account || "", arch.brand || ""));
+  await db.batch(st);
+  return true;
 }
 
 async function requireGodaddyAccess(db, token) {
@@ -1202,16 +1246,17 @@ const actions = {
   // Everything the dashboard needs. Old CANCELLED domains (expired 120+ days ago) stay out of the lists but still count in totals.
   async getGodaddyDashboard(db, token) {
     await requireGodaddyAccess(db, token);
-    const [{ results: domains }, { results: events }, { results: accounts }, { results: brands }, { results: totals }, { results: removed }] = await Promise.all([
+    const [{ results: domains }, { results: events }, { results: accounts }, { results: brands }, { results: totals }, { results: removed }, { results: staleInBrands }] = await Promise.all([
       db.prepare("SELECT domain, account, status, expires, renew_auto renewAuto, renewable, renew_deadline renewDeadline, locked, name_servers ns, gd_created created FROM gd_domains WHERE NOT (status = 'CANCELLED' AND expires < datetime('now','-120 day'))").all(),
       db.prepare("SELECT id, at, domain, account, type, old_value oldValue, new_value newValue, by_user byUser, source, order_no orderNo, receipt_ref receiptRef FROM gd_events ORDER BY at DESC, id DESC LIMIT 400").all(),
       db.prepare("SELECT account, domains, last_sync lastSync, ok, error FROM gd_accounts ORDER BY account").all(),
       db.prepare("SELECT domain, brand FROM domains").all(),
       db.prepare("SELECT status, COUNT(*) c FROM gd_domains GROUP BY status").all(),
-      db.prepare("SELECT id, domain, account, brand, removed_at removedAt, last_status lastStatus, last_expires lastExpires, source, (CASE WHEN snapshot != '' THEN 1 ELSE 0 END) hadRecord FROM gd_removed ORDER BY removed_at DESC, id DESC LIMIT 1000").all()
+      db.prepare("SELECT id, domain, account, brand, removed_at removedAt, last_status lastStatus, last_expires lastExpires, source, (CASE WHEN snapshot != '' THEN 1 ELSE 0 END) hadRecord FROM gd_removed ORDER BY removed_at DESC, id DESC LIMIT 1000").all(),
+      db.prepare("SELECT g.domain, g.account, g.status, g.expires, d.brand FROM gd_domains g JOIN domains d ON " + GD_NORM_SQL.replace(/\bdomain\b/g, "d.domain") + " = g.domain WHERE g.status <> 'ACTIVE' ORDER BY d.brand, g.domain").all()
     ]);
     const lastSync = accounts.reduce(function (m, a) { return a.lastSync > m ? a.lastSync : m; }, "");
-    return { asOf: new Date().toISOString(), lastSync, domains, events, accounts, brands, totalsByStatus: totals, removed };
+    return { asOf: new Date().toISOString(), lastSync, domains, events, accounts, brands, totalsByStatus: totals, removed, staleInBrands };
   },
 
   // ---- GoDaddy nameserver change (Super Admin and users assigned to a team) ----
@@ -1282,6 +1327,22 @@ const actions = {
       }
     }
     return { results };
+  },
+
+  // Moves lapsed (not renewed) domains out of the Target Brand list into the Not renewed archive. `domains` is the list the
+  // user confirmed; the server re-checks every one against GoDaddy's status and only moves real lapsed domains.
+  async moveLapsedFromBrands(db, token, domains) {
+    const s = await requireGodaddyAccess(db, token);
+    const list = Array.from(new Set((Array.isArray(domains) ? domains : []).map(gdCleanDomain).filter(Boolean))).slice(0, 150);
+    if (!list.length) throw new Error("No domains given.");
+    const items = [], skipped = [];
+    for (const d of list) {
+      const g = await db.prepare("SELECT account, status, expires FROM gd_domains WHERE domain = ? ORDER BY (status = 'ACTIVE') ASC LIMIT 1").bind(d).first();
+      if (!g || !gdLeftAccount(g.status)) { skipped.push({ domain: d, reason: "Not a lapsed GoDaddy domain" }); continue; }
+      items.push({ domain: d, account: g.account, status: g.status, expires: g.expires });
+    }
+    const moved = await gdMoveLapsedOut(db, items, s.username);
+    return { moved, skipped, requested: list.length };
   },
 
   // ---- Target brand link ----
