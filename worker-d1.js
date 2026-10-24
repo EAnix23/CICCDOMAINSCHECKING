@@ -1449,8 +1449,8 @@ const actions = {
         const detJson = await det.json(), ns = gdNs(detJson.nameServers);
         if (ns.indexOf("domaincontrol.com") === -1) { results.push({ domain: d, ok: false, skipped: true, error: "DNS is not at GoDaddy (" + (ns || "unknown") + "). A GoDaddy forward would have no effect." }); continue; }
         const cur = await fetch(base, { headers: { Authorization: auth, Accept: "application/json" } });
-        let oldUrl = "", exists = false;
-        if (cur.ok) { exists = true; try { const j = await cur.json(); oldUrl = j.url || ""; } catch (e) {} }
+        let oldUrl = "", exists = false, curRaw = "";
+        if (cur.ok) { exists = true; try { curRaw = await cur.text(); const j = JSON.parse(curRaw); oldUrl = j.url || (j.forwarding && j.forwarding.url) || ""; } catch (e) {} }
         else if (cur.status !== 404) { results.push({ domain: d, ok: false, error: "Could not read current forwarding (HTTP " + cur.status + ")" }); continue; }
         if (exists && oldUrl.replace(/\/$/, "") === url.replace(/\/$/, "")) { results.push({ domain: d, ok: true, skipped: true, note: "Forwarding already points there" }); continue; }
         const res = await fetch(base, { method: exists ? "PUT" : "POST", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ type: kind, url: url }) });
@@ -1460,7 +1460,7 @@ const actions = {
             const H = { Authorization: auth, Accept: "application/json" }, dj = detJson;
             const [ra, rw] = await Promise.all([fetch(GD_API + "/" + encodeURIComponent(d) + "/records/A/@", { headers: H }), fetch(GD_API + "/" + encodeURIComponent(d) + "/records/CNAME/www", { headers: H })]);
             const A = ra.ok ? (await ra.json()).map(function (x) { return x.data; }).join(",") : "HTTP " + ra.status, W = rw.ok ? (await rw.json()).map(function (x) { return x.data; }).join(",") : "HTTP " + rw.status;
-            m += " | status " + (dj.status || "?") + ", locked " + dj.locked + ", ns " + gdNs(dj.nameServers) + ", A@ " + (A || "none") + ", CNAME www " + (W || "none");
+            m += " | current forward: " + (curRaw ? curRaw.slice(0, 300) : "none") + " | status " + (dj.status || "?") + ", locked " + dj.locked + ", ns " + gdNs(dj.nameServers) + ", A@ " + (A || "none") + ", CNAME www " + (W || "none");
           } catch (x) {}
           results.push({ domain: d, ok: false, error: m }); continue; }
         await db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'forward_set', ?, ?, ?, 'portal')").bind(d, g.account, oldUrl, (kind === "REDIRECT_PERMANENT" ? "301 " : "302 ") + url, s.username).run();
