@@ -614,7 +614,7 @@ function gdAsRefreshNav() {
 function gdAsApply() {
     var a = GD.as; if (a.running || gdAsProblem()) return;
     a.running = true; gdAsRefreshNav();
-    google.script.run.withSuccessHandler(function (r) { a.running = false; a.result = r; gdAsRender(); gdLoad(false); })
+    google.script.run.withSuccessHandler(function (r) { a.running = false; a.result = r; gdAsRender(); gdLoad(false); if (typeof loadSidebarBrands === 'function') loadSidebarBrands(); })
         .withFailureHandler(function (e) { a.running = false; gdAsRefreshNav(); if (typeof showPremiumToast === 'function') showPremiumToast('Could not add', (e && e.message) || 'Try again.', 'error'); })
         .assignGodaddyBrand(currentSessionToken, a.domains, gdAsTarget(), a.mode === 'new' ? 'new' : 'existing');
 }
@@ -789,7 +789,7 @@ function gdUnAcceptAll() {
             if (i >= names.length) {
                 u.busy = false; u.sel = {};
                 if (typeof showPremiumToast === 'function') showPremiumToast('Suggestions accepted', done + ' domain' + (done === 1 ? '' : 's') + ' added' + (fail ? ', ' + fail + ' skipped or failed' : '') + '.', fail ? 'warning' : 'success');
-                gdLoad(false); return;
+                gdLoad(false); if (typeof loadSidebarBrands === 'function') loadSidebarBrands(); return;
             }
             google.script.run.withSuccessHandler(function (r) { done += r.added.length; fail += r.skipped.length; next(i + 1); })
                 .withFailureHandler(function () { fail += groups[names[i]].length; next(i + 1); })
