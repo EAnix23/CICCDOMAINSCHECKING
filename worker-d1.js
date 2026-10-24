@@ -173,7 +173,7 @@ async function fetchGdDomains(token) {
   let marker = null;
   for (let i = 0; i < 20; i++) {
     const url = GD_API + "?limit=1000" + (marker ? "&marker=" + encodeURIComponent(marker) : "");
-    const res = await fetch(url, { headers: { Authorization: "Bearer " + token, Accept: "application/json" } });
+    const res = await fetch(url, { headers: { Authorization: (String(token).indexOf(":") !== -1 ? "sso-key " : "Bearer ") + token, Accept: "application/json" } });
     if (res.status === 401 || res.status === 403) throw new Error("Token rejected by GoDaddy (HTTP " + res.status + "). Create a new API token for this account.");
     if (!res.ok) throw new Error("GoDaddy answered HTTP " + res.status);
     const batch = await res.json();
