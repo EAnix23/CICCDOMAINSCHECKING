@@ -142,7 +142,7 @@ function gdRenderBody() {
         var stale = gdStaleList();
         sub = stale.length ? '<div class="flex items-center justify-between gap-3 flex-wrap mb-3 p-4 rounded-xl border border-amber-500/40 bg-amber-500/5"><p class="text-xs text-body"><b class="text-heading">' + stale.length + ' domain' + (stale.length === 1 ? ' is' : 's are') + ' no longer in GoDaddy (not renewed or moved to another owner) but still listed under Target Brands.</b><br><span class="text-subtle">Move them out so the brand lists only show domains you still hold. Their data is kept and they come back by themselves if renewed.</span></p><button onclick="gdMvOpen()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700 shadow-sm whitespace-nowrap">Review and move out</button></div>' : '<p class="text-[11px] text-subtle mb-3">Every domain that was not renewed is already out of the Target Brand list. Their brand and data are kept in the archive.</p>';
     }
-    if (GD.tab === 'renewed') sub = '<div class="text-[11px] text-subtle mb-3 p-3 rounded-xl border border-dashed border-theme">Renewals are detected when a domain\'s expiry date moves forward between syncs, so tracking starts from the first sync. <b class="text-body">Receipts and order numbers are not available</b> from the GoDaddy API with the current tokens (GoDaddy refuses the orders endpoint). Receipts stay in the GoDaddy account or its email.</div>';
+    if (GD.tab === 'renewed') sub = '<div class="text-[11px] text-subtle mb-3 p-3 rounded-xl border border-dashed border-theme">Renewals are detected when a domain\'s expiry date moves forward between syncs, so tracking starts from the first sync. Each renewal is matched to its GoDaddy order (order number, amount). Open the order in the Receipts tab to attach the receipt file.</div>';
     el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + tools + '</div>' + sub + '<div id="gdSelBar"></div><div id="gdTable" class="overflow-x-auto"></div></div>';
     gdRenderTable(); gdRenderSelBar();
     if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -187,7 +187,7 @@ function gdCurrentRows() {
         };
         cols = [['When', function (e) { return gdDay(e.at); }, function (e) { return e.at; }], ['Domain', function (e) { return '<span class="font-bold text-heading">' + gdEsc(e.domain) + '</span>'; }, function (e) { return e.domain; }], ['Brand', function (e) { return gdEsc(e.brand || '-'); }, function (e) { return e.brand; }], ['Account', function (e) { return gdEsc(e.accountShort); }, function (e) { return e.accountShort; }],
             ['Change', function (e) { return '<span class="font-bold">' + (GD_EVENT_LABEL[e.type] || e.type) + '</span><br>' + change(e); }, function (e) { return (GD_EVENT_LABEL[e.type] || e.type) + ': ' + e.oldValue + ' > ' + e.newValue; }], ['By', function (e) { return gdEsc(e.byUser || (e.source === 'sync' ? 'Detected on sync' : '-')); }, function (e) { return e.byUser || e.source; }]];
-        if (t === 'renewed') cols.push(['Order / receipt', function () { return '<span class="text-subtle">Not available from GoDaddy</span>'; }, function () { return ''; }]);
+        if (t === 'renewed') { if (GD_ORD.rows == null) gdOrdLoad(); cols.push(['Order / receipt', function (e) { var o = gdOrderForEvent(e); return o ? '<button onclick="gdOrdOpen(\'' + o.orderId + '\')" class="text-indigo-500 font-bold hover:underline text-left">#' + gdEsc(o.orderId) + '</button><br><span class="text-subtle text-[10px]">' + gdEsc(o.currency) + ' ' + (o.total != null ? Number(o.total).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-') + (GD_ORD.files[o.orderId] ? ' &middot; file attached' : '') + '</span>' : (GD_ORD.rows == null ? '<span class="text-subtle">Looking up...</span>' : '<span class="text-subtle">No order found</span>'); }, function (e) { var o = gdOrderForEvent(e); return o ? o.orderId : ''; }]); }
     } else {
         rows = m.rows.filter(match).sort(function (a, b) { return a.domain.localeCompare(b.domain); });
         cols = [['Domain', dom, function (r) { return r.domain; }], ['Brand', function (r) { return gdEsc(r.brand || '-'); }, function (r) { return r.brand; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }], ['Status', function (r) { return gdEsc(r.status.replace(/_/g, ' ').toLowerCase()); }, function (r) { return r.status; }],
@@ -629,7 +629,8 @@ function gdAssignRows(domains) { gdAsOpen(domains); }
 // ============================================================
 // Receipts: files from GoDaddy, stored in R2 and listed here.
 // ============================================================
-var GD_RC = { rows: null, q: '', sort: 'paidAt', dir: -1, loading: false };
+var GD_RC = { rows: null, q: '', sort: 'paidAt', dir: -1, loading: false, view: 'orders' };
+var GD_ORD = { rows: null, files: {}, stats: null, loading: false, sort: 'createdAt', dir: -1, kind: 'all', acct: 'all' };
 function gdRcLoad(force) {
     if (GD_RC.loading) return; GD_RC.loading = true;
     google.script.run.withSuccessHandler(function (r) { GD_RC.rows = r.receipts || []; GD_RC.loading = false; if (GD.tab === 'receipts') gdRcRender(); })
@@ -641,12 +642,19 @@ function gdRcSize(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : M
 function gdRcSortBy(k) { if (GD_RC.sort === k) GD_RC.dir *= -1; else { GD_RC.sort = k; GD_RC.dir = k === 'paidAt' ? -1 : 1; } gdRcRender(); }
 function gdRcRender() {
     var el = document.getElementById('gdRc'); if (!el) return;
-    if (GD_RC.rows == null) { el.innerHTML = '<p class="text-sm text-subtle py-8 text-center">Loading receipts...</p>'; gdRcLoad(); return; }
-    el.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-4"><div id="gdRcCount" class="text-xs text-subtle"></div><div class="flex gap-2"><input oninput="GD_RC.q=this.value;gdRcRenderTable()" id="gdRcQ" value="' + gdEsc(GD_RC.q) + '" placeholder="Search order, domain, note..." class="px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none w-56"><button onclick="gdRcOpen()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm">Upload receipt</button></div></div><div id="gdRcTable"></div>';
+    if (GD_RC.rows == null) { gdRcLoad(); }
+    if (GD_ORD.rows == null) { gdOrdLoad(); }
+    if (GD_RC.rows == null || GD_ORD.rows == null) { el.innerHTML = '<p class="text-sm text-subtle py-8 text-center">Loading receipts and GoDaddy orders...</p>'; return; }
+    var v = GD_RC.view;
+    var tg = function (id, label, n) { return '<button onclick="GD_RC.view=\'' + id + '\';GD_RC.q=\'\';gdRcRender()" class="px-3.5 py-1.5 rounded-lg text-xs font-bold ' + (v === id ? 'bg-indigo-600 text-white shadow-sm' : 'text-subtle hover:text-body') + '">' + label + ' <span class="opacity-70">' + n + '</span></button>'; };
+    el.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-4"><div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1">' + tg('orders', 'GoDaddy orders', GD_ORD.rows.length) + tg('files', 'Uploaded receipt files', GD_RC.rows.length) + '</div><div class="flex gap-2 flex-wrap"><input oninput="GD_RC.q=this.value;gdRcRenderTable()" id="gdRcQ" value="' + gdEsc(GD_RC.q) + '" placeholder="' + (v === 'orders' ? 'Search order no., domain, item...' : 'Search order, domain, note...') + '" class="px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none w-60">' +
+        (v === 'orders' ? '<button onclick="gdOrdDownload()" class="px-3 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app shadow-sm">CSV</button>' : '<button onclick="gdRcOpen()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm">Upload receipt</button>') + '</div></div>' +
+        (v === 'orders' ? '<div id="gdOrdStats"></div>' : '<div id="gdRcCount" class="text-xs text-subtle mb-3"></div>') + '<div id="gdRcTable"></div>';
     gdRcRenderTable();
 }
 function gdRcRenderTable() {
     var el = document.getElementById('gdRcTable'); if (!el) return;
+    if (GD_RC.view === 'orders') { gdOrdRenderTable(); return; }
     var q = GD_RC.q.trim().toLowerCase();
     var rows = GD_RC.rows.filter(function (r) { return !q || (r.orderNo + ' ' + r.domains + ' ' + r.account + ' ' + r.note + ' ' + r.filename).toLowerCase().indexOf(q) !== -1; });
     rows.sort(function (a, b) { var x = a[GD_RC.sort], y = b[GD_RC.sort]; return gdNsCmp(x == null ? '' : x, y == null ? '' : y, GD_RC.dir) || (b.id - a.id); });
@@ -669,7 +677,7 @@ function gdRcDelete(id) {
     };
     if (typeof showPremiumConfirm === 'function') showPremiumConfirm('Delete this receipt?', 'The file is removed for everyone. This cannot be undone.', 'Delete', go); else go();
 }
-function gdRcOpen(domains) {
+function gdRcOpen(domains, pre) {
     gdInjectFont();
     var m = document.getElementById('gdRcModal');
     if (!m) {
@@ -680,6 +688,7 @@ function gdRcOpen(domains) {
         document.addEventListener('keydown', function (e) { var mm = document.getElementById('gdRcModal'); if (e.key === 'Escape' && mm && mm.style.display !== 'none') gdRcClose(); });
     }
     GD_RC.form = { file: null, orderNo: '', amount: '', currency: 'USD', paidAt: new Date().toISOString().slice(0, 10), account: '', domains: (domains || []).join('\n'), note: '', busy: false, discard: false };
+    if (pre) { var f0 = GD_RC.form; f0.orderNo = pre.orderNo || ''; f0.amount = pre.amount != null ? String(pre.amount) : ''; f0.currency = pre.currency === 'PHP' ? 'PHP' : 'USD'; f0.paidAt = pre.paidAt || f0.paidAt; f0.account = pre.account || ''; }
     m.style.display = 'flex'; gdRcFormRender();
 }
 function gdRcHide() { var m = document.getElementById('gdRcModal'); if (m) m.style.display = 'none'; }
@@ -714,7 +723,7 @@ function gdRcSubmit() {
     var reader = new FileReader();
     reader.onload = function () {
         var b64 = String(reader.result).split(',')[1] || '';
-        google.script.run.withSuccessHandler(function () { f.busy = false; f.orderNo = f.amount = f.note = ''; f.domains = ''; f.file = null; gdRcHide(); GD_RC.rows = null; gdRcLoad(true); if (typeof showPremiumToast === 'function') showPremiumToast('Receipt saved', 'It is now listed under Receipts.', 'success'); })
+        google.script.run.withSuccessHandler(function () { f.busy = false; f.orderNo = f.amount = f.note = ''; f.domains = ''; f.file = null; gdRcHide(); GD_RC.rows = null; GD_ORD.rows = null; gdRcLoad(true); gdOrdLoad(); if (typeof showPremiumToast === 'function') showPremiumToast('Receipt saved', 'It is now listed under Receipts.', 'success'); })
             .withFailureHandler(function (e) { f.busy = false; gdRcFormRender(); if (typeof showPremiumToast === 'function') showPremiumToast('Could not save', (e && e.message) || 'Try again.', 'error'); })
             .uploadGodaddyReceipt(currentSessionToken, { orderNo: f.orderNo, amount: f.amount, currency: f.currency, paidAt: f.paidAt, account: f.account, domains: f.domains, note: f.note }, b64, f.file.name, f.file.type);
     };
@@ -1099,4 +1108,69 @@ function gdRdDownload() {
     var rows = (GD.rd.results || []), lookup = {}; (GD.rd.lastItems || []).forEach(function (i) { lookup[i.domain] = i.target; });
     var csv = 'Domain,Result,Redirected To,Details\n' + rows.map(function (x) { return [x.domain, x.ok ? (x.skipped ? 'Already set' : 'Updated') : 'Failed', lookup[x.domain] || '', x.error || x.note || ''].map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
     var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'godaddy-bulk-redirect.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ============================================================
+// GoDaddy orders: order number, date, domains and amount of every purchase and renewal (read from the GoDaddy orders API).
+// ============================================================
+function gdOrdLoad() {
+    if (GD_ORD.loading) return; GD_ORD.loading = true;
+    google.script.run.withSuccessHandler(function (r) {
+        GD_ORD.loading = false; GD_ORD.rows = (r.orders || []).map(function (o) { o.domainList = o.domains ? o.domains.split(',') : []; try { o.items = JSON.parse(o.itemsJson || '[]'); } catch (e) { o.items = []; } return o; });
+        GD_ORD.files = {}; (r.files || []).forEach(function (f) { if (!GD_ORD.files[f.orderNo]) GD_ORD.files[f.orderNo] = f.id; }); GD_ORD.stats = r.stats;
+        if (GD.tab === 'receipts') gdRcRender(); else if (GD.tab === 'renewed') gdRenderTable();
+    }).withFailureHandler(function (e) { GD_ORD.loading = false; GD_ORD.rows = GD_ORD.rows || []; if (typeof showPremiumToast === 'function') showPremiumToast('Could not load orders', (e && e.message) || '', 'error'); if (GD.tab === 'receipts') gdRcRender(); }).listGodaddyOrders(currentSessionToken);
+}
+// The renewal order that paid for a detected renewal: the latest renewal or registration order containing the domain, placed before the change was noticed.
+function gdOrderForEvent(e) {
+    if (!GD_ORD.rows) return null;
+    var at0 = gdTime(e.at), at = at0 ? at0.getTime() + 86400000 : Date.now(), best = null;
+    GD_ORD.rows.forEach(function (o) {
+        if (o.domainList.indexOf(e.domain) === -1) return;
+        var t = gdTime(o.createdAt); if (!t || t.getTime() > at || at - t.getTime() > 90 * 86400000) return;
+        if (!best || o.createdAt > best.createdAt) best = o;
+    });
+    return best;
+}
+function gdOrdOpen(orderId) { GD.tab = 'receipts'; GD_RC.view = 'orders'; GD_RC.q = orderId; gdRenderBody(); }
+function gdOrdSortBy(k) { if (GD_ORD.sort === k) GD_ORD.dir *= -1; else { GD_ORD.sort = k; GD_ORD.dir = k === 'createdAt' || k === 'total' ? -1 : 1; } gdOrdRenderTable(); }
+function gdOrdRows() {
+    var q = GD_RC.q.trim().toLowerCase();
+    var rows = (GD_ORD.rows || []).filter(function (o) {
+        return (GD_ORD.kind === 'all' || o.kind === GD_ORD.kind) && (GD_ORD.acct === 'all' || o.account === GD_ORD.acct) && (!q || (o.orderId + ' ' + o.domains + ' ' + o.items.map(function (i) { return i.label; }).join(' ') + ' ' + o.payment).toLowerCase().indexOf(q) !== -1);
+    });
+    rows.sort(function (a, b) { var x = a[GD_ORD.sort], y = b[GD_ORD.sort]; return gdNsCmp(x == null ? '' : x, y == null ? '' : y, GD_ORD.dir) || a.orderId.localeCompare(b.orderId); });
+    return rows;
+}
+function gdOrdRenderTable() {
+    var el = document.getElementById('gdRcTable'); if (!el) return;
+    var rows = gdOrdRows(), shown = rows.slice(0, 300), accts = (GD.data ? GD.data.accounts : []).map(function (a) { return a.account; });
+    var tot = {}; rows.forEach(function (o) { if (o.total != null) tot[o.currency] = (tot[o.currency] || 0) + o.total; });
+    var month = new Date().toISOString().slice(0, 7), monthTot = {}; rows.forEach(function (o) { if (o.total != null && o.createdAt.slice(0, 7) === month) monthTot[o.currency] = (monthTot[o.currency] || 0) + o.total; });
+    var fmt = function (m) { var k = Object.keys(m); return k.length ? k.map(function (c) { return gdEsc(c) + ' ' + Number(m[c]).toLocaleString('en-US', { maximumFractionDigits: 0 }); }).join(' + ') : '-'; };
+    var st = document.getElementById('gdOrdStats');
+    if (st) st.innerHTML = '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">' +
+        [['Orders shown', rows.length], ['Total paid (shown)', fmt(tot)], ['This month', fmt(monthTot)], ['With receipt file', rows.filter(function (o) { return GD_ORD.files[o.orderId]; }).length + ' of ' + rows.length]].map(function (c) { return '<div class="panel-card p-3"><p class="text-[10px] font-bold text-subtle uppercase">' + c[0] + '</p><p class="text-base font-black text-heading mt-0.5">' + c[1] + '</p></div>'; }).join('') + '</div>' +
+        '<div class="flex gap-2 flex-wrap mb-3"><select onchange="GD_ORD.acct=this.value;gdOrdRenderTable()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">All accounts</option>' + accts.map(function (a) { return '<option value="' + gdEsc(a) + '"' + (GD_ORD.acct === a ? ' selected' : '') + '>' + gdEsc(a.replace(/^Godaddy\s+/i, '')) + '</option>'; }).join('') + '</select><select onchange="GD_ORD.kind=this.value;gdOrdRenderTable()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body">' + [['all', 'All types'], ['renewal', 'Renewals'], ['registration', 'New registrations'], ['transfer', 'Transfers'], ['other', 'Other']].map(function (k) { return '<option value="' + k[0] + '"' + (GD_ORD.kind === k[0] ? ' selected' : '') + '>' + k[1] + '</option>'; }).join('') + '</select>' + (GD_ORD.stats && +GD_ORD.stats.waiting ? '<span class="text-[11px] text-subtle self-center">' + GD_ORD.stats.waiting + ' order' + (+GD_ORD.stats.waiting === 1 ? '' : 's') + ' still loading their details (done automatically).</span>' : '') + '</div>';
+    var th = function (l, k) { return gdNsSortTh(l, k, GD_ORD.sort, GD_ORD.dir, 'gdOrdSortBy'); };
+    var kindChip = { renewal: 'bg-emerald-500/15 text-emerald-500', registration: 'bg-indigo-500/15 text-indigo-500', transfer: 'bg-amber-500/15 text-amber-600', other: 'bg-slate-500/15 text-subtle' };
+    el.innerHTML = rows.length ? '<div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] text-subtle border-b border-theme">' + th('Date', 'createdAt') + th('Order no.', 'orderId') + th('Account', 'account') + th('Type', 'kind') + '<th class="p-2">What was bought</th><th class="p-2">Domains</th>' + th('Total', 'total') + '<th class="p-2">Paid with</th><th class="p-2">Receipt file</th></tr></thead><tbody>' +
+        shown.map(function (o) {
+            var items = o.items.map(function (i) { return i.label; }), fileId = GD_ORD.files[o.orderId];
+            return '<tr class="border-b border-theme/60 align-top"><td class="p-2 whitespace-nowrap">' + gdEsc(gdDay(o.createdAt)) + '</td><td class="p-2 font-bold text-heading whitespace-nowrap">' + gdEsc(o.orderId) + '</td><td class="p-2">' + gdEsc(o.account.replace(/^Godaddy\s+/i, '')) + '</td><td class="p-2"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ' + (kindChip[o.kind] || kindChip.other) + '">' + gdEsc(o.kind) + '</span></td>' +
+                '<td class="p-2" style="max-width:240px">' + gdEsc(items[0] || '-') + (items.length > 1 ? ' <span class="text-subtle" title="' + gdEsc(items.join(' | ')) + '">+' + (items.length - 1) + ' more</span>' : '') + '</td>' +
+                '<td class="p-2" title="' + gdEsc(o.domainList.join(', ')) + '">' + (o.domainList.length ? gdEsc(o.domainList.slice(0, 2).join(', ')) + (o.domainList.length > 2 ? ' <span class="text-subtle">+' + (o.domainList.length - 2) + '</span>' : '') : '<span class="text-subtle">' + (+o.detailed === 0 ? 'loading...' : '-') + '</span>') + '</td>' +
+                '<td class="p-2 whitespace-nowrap font-bold">' + gdEsc(o.currency) + ' ' + (o.total != null ? Number(o.total).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-') + (o.taxes ? '<div class="text-[10px] text-subtle font-normal">incl. tax ' + Number(o.taxes).toLocaleString('en-US', { minimumFractionDigits: 2 }) + '</div>' : '') + '</td><td class="p-2 text-subtle">' + gdEsc(String(o.payment || '-').replace('CREDIT_CARD', 'Card').replace('E-wallet E_WALLET', 'E-wallet')) + '</td>' +
+                '<td class="p-2 whitespace-nowrap">' + (fileId ? '<a href="' + gdRcUrl(fileId) + '" target="_blank" class="text-emerald-500 font-bold hover:underline">View file</a>' : '<button onclick="gdOrdAttach(this.getAttribute(\'data-o\'))" data-o="' + gdEsc(o.orderId) + '" class="px-2.5 py-1 rounded-lg border border-theme text-[11px] font-bold text-body hover:bg-app hover:border-indigo-400">Attach file</button>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' + (rows.length > shown.length ? '<p class="text-[10px] text-subtle mt-3">Showing the first ' + shown.length + ' of ' + rows.length + '. Search or filter to narrow down, or download the CSV for all.</p>' : '') :
+        '<div class="text-center py-12"><p class="text-sm font-bold text-heading">No orders match</p><p class="text-xs text-subtle mt-1">Orders are pulled from GoDaddy automatically. New ones appear within a few hours.</p></div>';
+}
+function gdOrdAttach(orderId) {
+    var o = (GD_ORD.rows || []).filter(function (x) { return x.orderId === orderId; })[0]; if (!o) return;
+    gdRcOpen(o.domainList, { orderNo: o.orderId, amount: o.total, currency: o.currency, paidAt: String(o.createdAt || '').slice(0, 10), account: o.account });
+}
+function gdOrdDownload() {
+    var rows = gdOrdRows();
+    var csv = 'Date,Order no.,Account,Type,Items,Domains,Currency,Total,Tax,Paid with,Receipt file\n' + rows.map(function (o) { return [String(o.createdAt).slice(0, 10), o.orderId, o.account.replace(/^Godaddy\s+/i, ''), o.kind, o.items.map(function (i) { return i.label; }).join(' | '), o.domainList.join(' '), o.currency, o.total, o.taxes, o.payment, GD_ORD.files[o.orderId] ? 'yes' : 'no'].map(function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
+    var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'godaddy-orders.csv'; document.body.appendChild(a); a.click(); a.remove();
 }

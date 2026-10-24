@@ -336,6 +336,63 @@ async function gdRestoreBrand(db, domain, account) {
   return true;
 }
 
+// ---- GoDaddy orders (the data behind receipts) ----
+const GD_ORDERS_API = "https://api.godaddy.com/v1/orders";
+function gdAuthHeader(tok) { return (String(tok).indexOf(":") !== -1 ? "sso-key " : "Bearer ") + tok; }
+function gdMoney(v) { return v == null || v === "" ? null : Math.round(Number(v) / 10000) / 100; }   // GoDaddy sends millionths
+function gdOrderKind(labels) {
+  const t = labels.join(" | ").toLowerCase();
+  return t.indexOf("renewal") !== -1 ? "renewal" : (t.indexOf("registration") !== -1 ? "registration" : (t.indexOf("transfer") !== -1 ? "transfer" : "other"));
+}
+
+// Pulls the newest order numbers of each account (list data: date, total, item names). New ones are stored as "list only".
+async function syncGodaddyOrderLists(db, env, pagesPerAccount) {
+  const accounts = gdAccounts(env); let added = 0; const errors = [];
+  for (const name of Object.keys(accounts)) {
+    try {
+      for (let page = 0; page < (pagesPerAccount || 1); page++) {
+        const res = await fetch(GD_ORDERS_API + "?limit=250&offset=" + (page * 250), { headers: { Authorization: gdAuthHeader(accounts[name]), Accept: "application/json" } });
+        if (!res.ok) { errors.push(name + ": HTTP " + res.status); break; }
+        const body = await res.json(), list = body.orders || [];
+        if (!list.length) break;
+        const stmts = list.map(function (o) {
+          const labels = (o.items || []).map(function (i) { return i.label || ""; });
+          return db.prepare("INSERT OR IGNORE INTO gd_orders (order_id, account, created_at, currency, total, kind, items_json, detailed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)")
+            .bind(String(o.orderId), name, String(o.createdAt || "").slice(0, 19).replace("T", " "), o.currency || "", gdMoney(o.pricing && o.pricing.total), gdOrderKind(labels), JSON.stringify(labels.map(function (l) { return { label: l }; })));
+        });
+        for (let i = 0; i < stmts.length; i += 90) { const r = await db.batch(stmts.slice(i, i + 90)); r.forEach(function (x) { added += (x.meta && x.meta.changes) || 0; }); }
+        if (list.length < 250) break;
+      }
+    } catch (e) { errors.push(name + ": " + String(e && e.message || e).slice(0, 80)); }
+  }
+  return { added, errors };
+}
+
+// Reads the full detail of orders that are still "list only": domains, tax, subtotal and how it was paid.
+async function syncGodaddyOrderDetails(db, env, limit) {
+  const accounts = gdAccounts(env);
+  const { results } = await db.prepare("SELECT order_id, account FROM gd_orders WHERE detailed = 0 ORDER BY created_at DESC LIMIT ?").bind(limit).all();
+  let done = 0, failed = 0;
+  for (const r of results) {
+    const tok = accounts[r.account];
+    if (!tok) { await db.prepare("UPDATE gd_orders SET detailed = 2 WHERE order_id = ?").bind(r.order_id).run(); continue; }
+    try {
+      const res = await fetch(GD_ORDERS_API + "/" + encodeURIComponent(r.order_id), { headers: { Authorization: gdAuthHeader(tok), Accept: "application/json" } });
+      if (res.status === 429 || res.status >= 500) { failed++; break; }
+      if (!res.ok) { await db.prepare("UPDATE gd_orders SET detailed = 2 WHERE order_id = ?").bind(r.order_id).run(); failed++; continue; }
+      const o = await res.json();
+      const items = (o.items || []).map(function (i) { return { label: i.label || "", period: i.period ? (i.period + " " + String(i.periodUnit || "").toLowerCase()) : "", domains: (i.domains || []).map(function (d) { return String(d).toLowerCase(); }) }; });
+      const domains = Array.from(new Set(items.reduce(function (a, i) { return a.concat(i.domains); }, [])));
+      const pay = (o.payments || [])[0];
+      const payment = pay ? [pay.category === "E_WALLET" ? "E-wallet" : (pay.category === "CREDIT_CARD" ? "Card" : String(pay.category || "").replace(/_/g, " ")), pay.subcategory || "", pay.endsWith ? "ending " + pay.endsWith : ""].filter(Boolean).join(" ") : "";
+      await db.prepare("UPDATE gd_orders SET detailed = 1, domains = ?, items_json = ?, total = ?, subtotal = ?, taxes = ?, payment = ?, kind = ? WHERE order_id = ?")
+        .bind(domains.join(","), JSON.stringify(items), gdMoney(o.pricing && o.pricing.total), gdMoney(o.pricing && o.pricing.subtotal), gdMoney(o.pricing && o.pricing.taxes), payment, gdOrderKind(items.map(function (i) { return i.label; })), r.order_id).run();
+      done++;
+    } catch (e) { failed++; }
+  }
+  return { done, failed, waiting: results.length - done };
+}
+
 async function requireGodaddyAccess(db, token) {
   const s = await checkSession(db, token);
   if (s.role !== "Super Admin" && !s.team) throw new Error("ACCESS_DENIED: GoDaddy monitor is for Super Admin and users assigned to a team.");
@@ -1513,6 +1570,22 @@ const actions = {
     const { results: domains } = await db.prepare("SELECT brand, domain, agent, expiration, account, notes FROM domains ORDER BY brand, domain").all();
     const { results: removed } = await db.prepare("SELECT domain, brand, account, removed_at removedAt FROM gd_removed WHERE removed_at >= datetime('now','-400 day') ORDER BY removed_at DESC LIMIT 2000").all();
     return { generatedAt: new Date().toISOString(), domains, removed };
+  },
+
+  // Orders for the Receipts tab: everything in gd_orders, plus which orders already have an uploaded receipt file.
+  async listGodaddyOrders(db, token) {
+    await requireGodaddyAccess(db, token);
+    const { results: orders } = await db.prepare("SELECT order_id orderId, account, created_at createdAt, currency, total, subtotal, taxes, payment, kind, domains, items_json itemsJson, detailed FROM gd_orders ORDER BY created_at DESC LIMIT 4000").all();
+    const { results: files } = await db.prepare("SELECT id, order_no orderNo FROM gd_receipts WHERE order_no != ''").all();
+    const { results: st } = await db.prepare("SELECT COUNT(*) total, SUM(CASE WHEN detailed = 0 THEN 1 ELSE 0 END) waiting FROM gd_orders").all();
+    return { orders, files, stats: st[0] };
+  },
+
+  // Backfill / on-demand: pages = list pages per account, limit = order details to read now (max 40 per call).
+  async syncGodaddyOrdersNow(db, params, env) {
+    const lists = await syncGodaddyOrderLists(db, env, Math.min(12, Math.max(1, +(params && params.pages) || 2)));
+    const details = await syncGodaddyOrderDetails(db, env, Math.min(40, Math.max(0, +(params && params.limit) || 30)));
+    return { lists, details };
   },
 
   // Re-reads a batch of nameservers right now (the 15-minute cron does the same). params.limit, default 30.
@@ -3024,7 +3097,7 @@ export default {
 
       // Machine-to-machine actions: gated by a shared secret (env.AUTOMATION_API_KEY), not a user
       // session — the domain-checker script has no human logging in to hand it a token.
-      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow", "syncGodaddyNow", "rotateGodaddyNsNow", "getBrandSheetFeed"];
+      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow", "syncGodaddyNow", "rotateGodaddyNsNow", "getBrandSheetFeed", "syncGodaddyOrdersNow"];
       if (automationActions.indexOf(action) !== -1) {
         const apiKey = args[0];
         const params = args[1] || {};
@@ -3060,8 +3133,8 @@ export default {
   // report finishes sending, since there's no request to hold the invocation open otherwise.
   async scheduled(event, env, ctx) {
     // "0 */6 * * *" (wrangler.toml) keeps the GoDaddy data fresh even when nobody opens the dashboard.
-    if (event.cron === "*/15 * * * *") { ctx.waitUntil(rotateGodaddyNs(env.DB, env, 30)); return; }
-    if (event.cron === "0 */6 * * *") { ctx.waitUntil(syncGodaddyAccounts(env.DB, env)); return; }
+    if (event.cron === "*/15 * * * *") { ctx.waitUntil((async function () { await rotateGodaddyNs(env.DB, env, 25); await syncGodaddyOrderDetails(env.DB, env, 15); })()); return; }
+    if (event.cron === "0 */6 * * *") { ctx.waitUntil((async function () { await syncGodaddyAccounts(env.DB, env); await syncGodaddyOrderLists(env.DB, env, 1); })()); return; }
     ctx.waitUntil(runExpiringDomainsReport(env.DB, env));
   }
 };
