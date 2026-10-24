@@ -2801,6 +2801,8 @@ export default {
   // Cron Triggers) — no HTTP request involved. ctx.waitUntil keeps the Worker alive until the
   // report finishes sending, since there's no request to hold the invocation open otherwise.
   async scheduled(event, env, ctx) {
+    // "0 */6 * * *" (wrangler.toml) keeps the GoDaddy data fresh even when nobody opens the dashboard.
+    if (event.cron === "0 */6 * * *") { ctx.waitUntil(syncGodaddyAccounts(env.DB, env)); return; }
     ctx.waitUntil(runExpiringDomainsReport(env.DB, env));
   }
 };

@@ -13,3 +13,6 @@ bucket_name = "bbc-kpi-leave-attachments"
 
 [observability]
 enabled = true
+
+[triggers]
+crons = ["0 */6 * * *"]
