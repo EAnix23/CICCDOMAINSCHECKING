@@ -1423,9 +1423,52 @@ const actions = {
     return { moved, skipped, requested: list.length };
   },
 
+  // ---- Real forwarding at GoDaddy (v2 API) ----
+  // PUT /v2/customers/{customerId}/domains/forwards/{fqdn} creates or replaces the rule (body needs fqdn, type, url; 204 on success).
+  // Only domains whose DNS is at GoDaddy are touched: with Cloudflare nameservers a GoDaddy forward has no effect, so those are skipped.
+  // 8 domains per call. Whatever GoDaddy refuses is reported so the portal can put it on the manual checklist.
+  async setGodaddyForwarding(db, env, token, items, type) {
+    const s = await requireGodaddyAccess(db, token);
+    const kind = type === "REDIRECT_TEMPORARY" ? "REDIRECT_TEMPORARY" : "REDIRECT_PERMANENT";
+    const list = (Array.isArray(items) ? items : []).slice(0, 8);
+    if (!list.length) throw new Error("No domains given (8 at a time).");
+    const accounts = gdAccounts(env);
+    let customers = {}; try { customers = JSON.parse(env.GODADDY_CUSTOMERS || "{}"); } catch (e) {}
+    const results = [];
+    for (const it of list) {
+      const d = gdCleanDomain(it && it.domain), url = String((it && it.target) || "").trim();
+      if (!d) continue;
+      if (!/^https?:\/\/[^\s]{3,500}$/i.test(url)) { results.push({ domain: d, ok: false, skipped: true, error: "GoDaddy forwarding needs a full link starting with http:// or https://" }); continue; }
+      const g = await db.prepare("SELECT account FROM gd_domains WHERE domain = ? AND status = 'ACTIVE' LIMIT 1").bind(d).first();
+      if (!g) { results.push({ domain: d, ok: false, error: "Not an active GoDaddy domain" }); continue; }
+      const tok = accounts[g.account], cid = customers[g.account];
+      if (!tok || !cid) { results.push({ domain: d, ok: false, error: "No API key and Customer ID for " + g.account.replace(/^Godaddy\s+/i, "") + " yet" }); continue; }
+      const auth = gdAuthHeader(tok), base = "https://api.godaddy.com/v2/customers/" + cid + "/domains/forwards/" + encodeURIComponent(d);
+      try {
+        const det = await fetch(GD_API + "/" + encodeURIComponent(d), { headers: { Authorization: auth, Accept: "application/json" } });
+        if (!det.ok) { results.push({ domain: d, ok: false, error: "Could not read the domain at GoDaddy (HTTP " + det.status + ")" }); continue; }
+        const ns = gdNs((await det.json()).nameServers);
+        if (ns.indexOf("domaincontrol.com") === -1) { results.push({ domain: d, ok: false, skipped: true, error: "DNS is not at GoDaddy (" + (ns || "unknown") + "). A GoDaddy forward would have no effect." }); continue; }
+        const cur = await fetch(base, { headers: { Authorization: auth, Accept: "application/json" } });
+        let oldUrl = "", oldType = "", exists = false;
+        if (cur.ok) { exists = true; try { const j = await cur.json(); oldUrl = j.url || ""; oldType = j.type || ""; } catch (e) {} }
+        else if (cur.status !== 404) { results.push({ domain: d, ok: false, error: "Could not read current forwarding (HTTP " + cur.status + ")" }); continue; }
+        if (exists && oldType === kind && oldUrl.replace(/\/$/, "") === url.replace(/\/$/, "")) { results.push({ domain: d, ok: true, skipped: true, note: "Forwarding already points there" }); continue; }
+        const res = await fetch(base, { method: "PUT", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ fqdn: d, type: kind, url: url }) });
+        if (!res.ok) {
+          let m = "GoDaddy HTTP " + res.status;
+          try { const e = await res.json(); if (e && e.message) m += ": " + String(e.message).slice(0, 160); if (e && e.code) m += " [" + e.code + "]"; if (e && e.fields) m += " " + JSON.stringify(e.fields).slice(0, 200); } catch (x) {}
+          results.push({ domain: d, ok: false, error: m }); continue;
+        }
+        await db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'forward_set', ?, ?, ?, 'portal')").bind(d, g.account, oldUrl ? ((oldType === "REDIRECT_TEMPORARY" ? "302 " : "301 ") + oldUrl) : "", (kind === "REDIRECT_PERMANENT" ? "301 " : "302 ") + url, s.username).run();
+        results.push({ domain: d, ok: true, note: exists ? "Forwarding replaced" + (oldUrl ? " (was " + oldUrl + ")" : "") : "Forwarding created" });
+      } catch (e) { results.push({ domain: d, ok: false, error: String(e && e.message || e).slice(0, 140) }); }
+    }
+    return { results };
+  },
+
   // ---- GoDaddy forwarding checklist ----
-  // GoDaddy asks for an OTP when forwarding is created or changed, which the API cannot do. So the portal keeps a shared checklist:
-  // a person does the change at GoDaddy and ticks it here. Ticks are stored as gd_events (forward_set / forward_removed, source 'manual').
+  // Fallback for what GoDaddy's API refuses: the portal keeps a shared checklist, a person does the change at GoDaddy and ticks it here. Ticks are stored as gd_events (forward_set / forward_removed, source 'manual').
   async markGodaddyForwardDone(db, token, items) {
     const s = await requireGodaddyAccess(db, token);
     const list = (Array.isArray(items) ? items : []).slice(0, 40); let saved = 0;
@@ -3142,7 +3185,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs", "uploadGodaddyReceipt", "deleteGodaddyReceipt", "moveLapsedFromBrands"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs", "uploadGodaddyReceipt", "deleteGodaddyReceipt", "moveLapsedFromBrands", "setGodaddyForwarding"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);
