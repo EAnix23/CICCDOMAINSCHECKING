@@ -25,6 +25,7 @@ function gdNormDomain(d) { return String(d || '').toLowerCase().replace(/^https?
 function renderKpiGodaddyTab() {
     var content = document.getElementById('kpiTabContent');
     if (!content) return;
+    if (GD.tab === 'ns') GD.tab = 'renewal';
     content.innerHTML = '<div id="gdRoot"></div>';
     gdLoad(true);
 }
@@ -117,7 +118,7 @@ function gdTabBtn(id, label, n) { var on = GD.tab === id; return '<button onclic
 
 function gdRenderBody() {
     var el = document.getElementById('gdBody'); if (!el) return; var m = gdModel();
-    var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + gdTabBtn('ns', 'Change nameservers', null) + '</div>';
+    var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + '</div>';
     if (GD.tab === 'ns') { el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + '</div><div id="gdNs"></div></div>'; gdRenderNs(); if (typeof lucide !== 'undefined') lucide.createIcons(); return; }
     var accounts = GD.data.accounts.map(function (a) { return a.account.replace(/^Godaddy\s+/i, ''); });
     var tools = '<div class="flex items-center gap-2 flex-wrap">' +
@@ -280,4 +281,14 @@ function gdNsApply() {
 function gdNsRetry() {
     var failed = GD.ns.results.filter(function (r) { return !r.ok; }).map(function (r) { return r.domain; });
     if (failed.length && !GD.ns.running) gdNsRun(failed);
+}
+
+// Separate KPI section: change nameservers (its own tab next to the GoDaddy monitor).
+function renderKpiGodaddyNsTab() {
+    var content = document.getElementById('kpiTabContent'); if (!content) return;
+    GD.tab = 'ns';
+    content.innerHTML = '<div class="panel-card p-5"><div class="mb-4"><h3 class="text-sm font-black text-heading flex items-center gap-2"><i data-lucide="server-cog" class="h-4 w-4 text-indigo-500"></i> Change Nameservers</h3><p class="text-[10px] text-subtle mt-0.5">Paste the domains, set the new nameservers, check, then confirm. The change goes straight to the GoDaddy account that owns each domain and is saved under your name in GoDaddy &gt; Changes.</p></div><div id="gdNs"></div></div>';
+    gdRenderNs();
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    if (!GD.loaded) gdLoad(false);
 }
