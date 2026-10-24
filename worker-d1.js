@@ -155,6 +155,105 @@ async function loadReportCompetitors() {
 }
 
 // ============================================================
+// GODADDY MONITOR — read-only sync of the GoDaddy accounts into D1 (gd_domains / gd_events / gd_accounts)
+// Tokens live in the GODADDY_ACCOUNTS Worker secret: {"Godaddy Vice":"<token>", ...}. They never reach D1 or the browser.
+// ============================================================
+const GD_API = "https://api.godaddy.com/v1/domains";
+
+function gdAccounts(env) {
+  try { return JSON.parse(env.GODADDY_ACCOUNTS || "{}"); } catch (e) { return {}; }
+}
+function gdNs(list) {
+  return (Array.isArray(list) ? list : []).map(function (x) { return String(x).toLowerCase().replace(/\.$/, ""); }).sort().join(",");
+}
+function gdStamp(s) { return s ? String(s).slice(0, 19).replace("T", " ") : ""; }
+
+async function fetchGdDomains(token) {
+  const out = [];
+  let marker = null;
+  for (let i = 0; i < 20; i++) {
+    const url = GD_API + "?limit=1000" + (marker ? "&marker=" + encodeURIComponent(marker) : "");
+    const res = await fetch(url, { headers: { Authorization: "Bearer " + token, Accept: "application/json" } });
+    if (res.status === 401 || res.status === 403) throw new Error("Token rejected by GoDaddy (HTTP " + res.status + "). Create a new API token for this account.");
+    if (!res.ok) throw new Error("GoDaddy answered HTTP " + res.status);
+    const batch = await res.json();
+    if (!Array.isArray(batch) || !batch.length) break;
+    out.push.apply(out, batch);
+    if (batch.length < 1000) break;
+    marker = batch[batch.length - 1].domain;
+  }
+  return out;
+}
+
+// Pulls every account, compares with what is stored, writes only what changed and logs the differences
+// as events: renewed (expiry moved forward), expired (left ACTIVE), status_changed, ns_changed, added, removed.
+// The first time an account is seen it is stored as a baseline without events.
+async function syncGodaddyAccounts(db, env) {
+  const accounts = gdAccounts(env);
+  const names = Object.keys(accounts);
+  const summary = [];
+  for (const name of names) {
+    try {
+      const fetched = await fetchGdDomains(accounts[name]);
+      const { results: existing } = await db.prepare("SELECT * FROM gd_domains WHERE account = ?").bind(name).all();
+      const baseline = existing.length === 0;
+      const exMap = new Map(existing.map(function (r) { return [r.domain, r]; }));
+      const seen = new Set();
+      const stmts = [];
+      const counts = { added: 0, renewed: 0, expired: 0, ns: 0, status: 0, removed: 0 };
+      const ev = function (domain, type, oldV, newV) {
+        stmts.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, source) VALUES (?, ?, ?, ?, ?, 'sync')").bind(domain, name, type, oldV || "", newV || ""));
+      };
+      for (const d of fetched) {
+        const domain = String(d.domain || "").toLowerCase();
+        if (!domain) continue;
+        seen.add(domain);
+        const row = { status: d.status || "", expires: gdStamp(d.expires), auto: d.renewAuto ? 1 : 0, renewable: d.renewable ? 1 : 0, deadline: gdStamp(d.renewDeadline), locked: d.locked ? 1 : 0, ns: gdNs(d.nameServers), created: gdStamp(d.createdAt), id: String(d.domainId || "") };
+        const old = exMap.get(domain);
+        let write = false;
+        if (!old) {
+          write = true;
+          if (!baseline) { ev(domain, "added", "", row.expires); counts.added++; }
+        } else {
+          if (old.expires !== row.expires || old.status !== row.status || old.name_servers !== row.ns || old.renew_auto !== row.auto || old.renewable !== row.renewable || old.locked !== row.locked || old.renew_deadline !== row.deadline) write = true;
+          if (old.expires && row.expires && row.expires > old.expires && (new Date(row.expires.replace(" ", "T") + "Z") - new Date(old.expires.replace(" ", "T") + "Z")) > 30 * 86400000) { ev(domain, "renewed", old.expires, row.expires); counts.renewed++; }
+          if (old.status !== row.status) {
+            if (old.status === "ACTIVE") { ev(domain, "expired", old.status, row.status); counts.expired++; }
+            else { ev(domain, "status_changed", old.status, row.status); counts.status++; }
+          }
+          if (old.name_servers !== row.ns && (old.name_servers || row.ns)) { ev(domain, "ns_changed", old.name_servers, row.ns); counts.ns++; }
+        }
+        if (write) {
+          stmts.push(db.prepare(
+            "INSERT INTO gd_domains (domain, account, domain_id, status, expires, renew_auto, renewable, renew_deadline, locked, name_servers, gd_created, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?, datetime('now')) " +
+            "ON CONFLICT(domain, account) DO UPDATE SET domain_id=excluded.domain_id, status=excluded.status, expires=excluded.expires, renew_auto=excluded.renew_auto, renewable=excluded.renewable, renew_deadline=excluded.renew_deadline, locked=excluded.locked, name_servers=excluded.name_servers, gd_created=excluded.gd_created, updated_at=datetime('now')"
+          ).bind(domain, name, row.id, row.status, row.expires, row.auto, row.renewable, row.deadline, row.locked, row.ns, row.created));
+        }
+      }
+      if (!baseline) {
+        existing.forEach(function (r) {
+          if (!seen.has(r.domain)) { ev(r.domain, "removed", r.status, ""); counts.removed++; stmts.push(db.prepare("DELETE FROM gd_domains WHERE domain = ? AND account = ?").bind(r.domain, name)); }
+        });
+      }
+      for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+      await db.prepare("INSERT INTO gd_accounts (account, domains, last_sync, ok, error) VALUES (?, ?, datetime('now'), 1, '') ON CONFLICT(account) DO UPDATE SET domains=excluded.domains, last_sync=excluded.last_sync, ok=1, error=''").bind(name, fetched.length).run();
+      summary.push({ account: name, ok: true, domains: fetched.length, baseline: baseline, written: stmts.length, counts: counts });
+    } catch (e) {
+      const msg = String(e && e.message || e).slice(0, 200);
+      await db.prepare("INSERT INTO gd_accounts (account, domains, last_sync, ok, error) VALUES (?, 0, datetime('now'), 0, ?) ON CONFLICT(account) DO UPDATE SET last_sync=excluded.last_sync, ok=0, error=excluded.error").bind(name, msg).run();
+      summary.push({ account: name, ok: false, error: msg });
+    }
+  }
+  return { success: true, syncedAt: new Date().toISOString(), accounts: summary };
+}
+
+async function requireGodaddyAccess(db, token) {
+  const s = await checkSession(db, token);
+  if (s.role !== "Super Admin" && !s.team) throw new Error("ACCESS_DENIED: GoDaddy monitor is for Super Admin and users assigned to a team.");
+  return s;
+}
+
+// ============================================================
 // ACTION HANDLERS — same names/signatures as the old code.gs
 // ============================================================
 const actions = {
@@ -1052,6 +1151,32 @@ const actions = {
       checklist, achievements, members,
       payments: { registry: { totals: pgTot[0], providers: pgProv, byMonth: pgMonth, byUser: pgUser }, submissions: { byMode: bspMode, vendors: bspVendor, banks: bspBank, byUser: bspUser, byMonth: bspMonth } }
     };
+  },
+
+  // ---- GoDaddy monitor ----
+  // Everything the dashboard needs. Old CANCELLED domains (expired 120+ days ago) stay out of the lists but still count in totals.
+  async getGodaddyDashboard(db, token) {
+    await requireGodaddyAccess(db, token);
+    const [{ results: domains }, { results: events }, { results: accounts }, { results: brands }, { results: totals }] = await Promise.all([
+      db.prepare("SELECT domain, account, status, expires, renew_auto renewAuto, renewable, renew_deadline renewDeadline, locked, name_servers ns, gd_created created FROM gd_domains WHERE NOT (status = 'CANCELLED' AND expires < datetime('now','-120 day'))").all(),
+      db.prepare("SELECT id, at, domain, account, type, old_value oldValue, new_value newValue, by_user byUser, source, order_no orderNo, receipt_ref receiptRef FROM gd_events ORDER BY at DESC, id DESC LIMIT 400").all(),
+      db.prepare("SELECT account, domains, last_sync lastSync, ok, error FROM gd_accounts ORDER BY account").all(),
+      db.prepare("SELECT domain, brand FROM domains").all(),
+      db.prepare("SELECT status, COUNT(*) c FROM gd_domains GROUP BY status").all()
+    ]);
+    const lastSync = accounts.reduce(function (m, a) { return a.lastSync > m ? a.lastSync : m; }, "");
+    return { asOf: new Date().toISOString(), lastSync, domains, events, accounts, brands, totalsByStatus: totals };
+  },
+
+  // Pull fresh data from GoDaddy (needs env for the secret, so it is listed in envActions).
+  async syncGodaddy(db, env, token) {
+    await requireGodaddyAccess(db, token);
+    return await syncGodaddyAccounts(db, env);
+  },
+
+  // Same sync for scripts / schedulers that use the shared automation key.
+  async syncGodaddyNow(db, params, env) {
+    return await syncGodaddyAccounts(db, env);
   },
 
   // Which DPV batches have a CICC reference number. A batch is complete when every domain in it has one.
@@ -2547,7 +2672,7 @@ export default {
 
       // Machine-to-machine actions: gated by a shared secret (env.AUTOMATION_API_KEY), not a user
       // session — the domain-checker script has no human logging in to hand it a token.
-      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow"];
+      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow", "syncGodaddyNow"];
       if (automationActions.indexOf(action) !== -1) {
         const apiKey = args[0];
         const params = args[1] || {};
@@ -2563,7 +2688,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);
