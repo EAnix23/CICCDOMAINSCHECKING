@@ -209,8 +209,9 @@ async function syncGodaddyAccounts(db, env) {
         const domain = String(d.domain || "").toLowerCase();
         if (!domain) continue;
         seen.add(domain);
-        const row = { status: d.status || "", expires: gdStamp(d.expires), auto: d.renewAuto ? 1 : 0, renewable: d.renewable ? 1 : 0, deadline: gdStamp(d.renewDeadline), locked: d.locked ? 1 : 0, ns: gdNs(d.nameServers), created: gdStamp(d.createdAt), id: String(d.domainId || "") };
         const old = exMap.get(domain);
+        // GoDaddy's list endpoint leaves nameServers out, so keep the last value read per domain (see rotateGodaddyNs).
+        const row = { status: d.status || "", expires: gdStamp(d.expires), auto: d.renewAuto ? 1 : 0, renewable: d.renewable ? 1 : 0, deadline: gdStamp(d.renewDeadline), locked: d.locked ? 1 : 0, ns: Array.isArray(d.nameServers) ? gdNs(d.nameServers) : (old ? old.name_servers : ""), created: gdStamp(d.createdAt), id: String(d.domainId || "") };
         let write = false;
         if (!old) {
           write = true;
@@ -246,6 +247,33 @@ async function syncGodaddyAccounts(db, env) {
     }
   }
   return { success: true, syncedAt: new Date().toISOString(), accounts: summary };
+}
+
+// Reads the live nameservers of the `limit` active domains that were checked longest ago and logs any difference
+// as an ns_changed event (detected). Runs every 15 minutes from the cron, so every domain is re-read every few hours.
+async function rotateGodaddyNs(db, env, limit) {
+  const accounts = gdAccounts(env);
+  const { results } = await db.prepare("SELECT domain, account, name_servers ns FROM gd_domains WHERE status = 'ACTIVE' ORDER BY ns_checked ASC, domain ASC LIMIT ?").bind(limit).all();
+  const stmts = [];
+  let checked = 0, changed = 0, failed = 0;
+  for (const r of results) {
+    const tok = accounts[r.account];
+    const mark = db.prepare("UPDATE gd_domains SET ns_checked = datetime('now') WHERE domain = ? AND account = ?").bind(r.domain, r.account);
+    if (!tok) { stmts.push(mark); failed++; continue; }
+    try {
+      const res = await fetch(GD_API + "/" + encodeURIComponent(r.domain), { headers: { Authorization: (String(tok).indexOf(":") !== -1 ? "sso-key " : "Bearer ") + tok, Accept: "application/json" } });
+      if (res.status === 429) break;
+      if (!res.ok) { stmts.push(mark); failed++; continue; }
+      const live = gdNs((await res.json()).nameServers);
+      checked++;
+      if (live !== r.ns) {
+        if (r.ns && live) { stmts.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, source) VALUES (?, ?, 'ns_changed', ?, ?, 'sync')").bind(r.domain, r.account, r.ns, live)); changed++; }
+        stmts.push(db.prepare("UPDATE gd_domains SET name_servers = ?, ns_checked = datetime('now') WHERE domain = ? AND account = ?").bind(live, r.domain, r.account));
+      } else stmts.push(mark);
+    } catch (e) { stmts.push(mark); failed++; }
+  }
+  for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+  return { checked, changed, failed };
 }
 
 async function requireGodaddyAccess(db, token) {
@@ -1252,7 +1280,7 @@ const actions = {
         if (!res.ok) { out.push({ domain, ok: false, error: "HTTP " + res.status }); continue; }
         const live = gdNs((await res.json()).nameServers);
         if (live !== row.ns) {
-          const st = [db.prepare("UPDATE gd_domains SET name_servers = ?, updated_at = datetime('now') WHERE domain = ? AND account = ?").bind(live, domain, row.account)];
+          const st = [db.prepare("UPDATE gd_domains SET name_servers = ?, ns_checked = datetime('now'), updated_at = datetime('now') WHERE domain = ? AND account = ?").bind(live, domain, row.account)];
           if (row.ns && live) st.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, source) VALUES (?, ?, 'ns_changed', ?, ?, 'sync')").bind(domain, row.account, row.ns, live));
           await db.batch(st);
         }
@@ -1271,6 +1299,11 @@ const actions = {
   // Same sync for scripts / schedulers that use the shared automation key.
   async syncGodaddyNow(db, params, env) {
     return await syncGodaddyAccounts(db, env);
+  },
+
+  // Re-reads a batch of nameservers right now (the 15-minute cron does the same). params.limit, default 30.
+  async rotateGodaddyNsNow(db, params, env) {
+    return await rotateGodaddyNs(db, env, Math.min(40, Math.max(1, +(params && params.limit) || 30)));
   },
 
   // Which DPV batches have a CICC reference number. A batch is complete when every domain in it has one.
@@ -2766,7 +2799,7 @@ export default {
 
       // Machine-to-machine actions: gated by a shared secret (env.AUTOMATION_API_KEY), not a user
       // session — the domain-checker script has no human logging in to hand it a token.
-      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow", "syncGodaddyNow"];
+      const automationActions = ["submitDomainCheckResult", "getDomainsToCheck", "resolveKpiOperator", "syncCompetitorPromoCheck", "runExpiringDomainsReportNow", "debugCheckSecrets", "runTodayUploadsReportNow", "runUserKpiReportNow", "runFollowupReportNow", "syncGodaddyNow", "rotateGodaddyNsNow"];
       if (automationActions.indexOf(action) !== -1) {
         const apiKey = args[0];
         const params = args[1] || {};
@@ -2802,6 +2835,7 @@ export default {
   // report finishes sending, since there's no request to hold the invocation open otherwise.
   async scheduled(event, env, ctx) {
     // "0 */6 * * *" (wrangler.toml) keeps the GoDaddy data fresh even when nobody opens the dashboard.
+    if (event.cron === "*/15 * * * *") { ctx.waitUntil(rotateGodaddyNs(env.DB, env, 30)); return; }
     if (event.cron === "0 */6 * * *") { ctx.waitUntil(syncGodaddyAccounts(env.DB, env)); return; }
     ctx.waitUntil(runExpiringDomainsReport(env.DB, env));
   }
