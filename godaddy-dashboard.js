@@ -40,6 +40,7 @@ function renderKpiGodaddyTab() {
 function gdLoad(allowAutoSync) {
     google.script.run.withSuccessHandler(function (d) {
         GD.data = d; GD.loaded = true;
+        if (typeof gdUnRefresh === 'function') gdUnRefresh();
         var stale = !d.lastSync || (Date.now() - gdTime(d.lastSync).getTime()) > 6 * 3600000;
         gdRender();
         if (allowAutoSync && stale) gdSync(true);
@@ -99,16 +100,17 @@ function gdRenderHead() {
 
 function gdRenderStats() {
     var el = document.getElementById('gdStats'); if (!el) return; var m = gdModel();
-    function stat(label, val, sub, color, tab) { return '<button onclick="gdSetTab(\'' + tab + '\')" class="panel-card p-4 text-left hover:border-indigo-400 transition-colors"><p class="text-[10px] font-bold text-subtle uppercase">' + label + '</p><p class="text-2xl font-black mt-1 ' + color + '">' + val + '</p><p class="text-[10px] text-subtle mt-0.5">' + sub + '</p></button>'; }
+    function stat(label, val, sub, color, tab) { return '<button onclick="' + (tab.indexOf('(') !== -1 ? tab : 'gdSetTab(\'' + tab + '\')') + '" class="panel-card p-4 text-left hover:border-indigo-400 transition-colors"><p class="text-[10px] font-bold text-subtle uppercase">' + label + '</p><p class="text-2xl font-black mt-1 ' + color + '">' + val + '</p><p class="text-[10px] text-subtle mt-0.5">' + sub + '</p></button>'; }
     var d7 = m.renewal.filter(function (r) { return r.days <= 7; }).length, d30 = m.renewal.filter(function (r) { return r.days <= 30; }).length;
     var autoOff30 = m.renewal.filter(function (r) { return r.days <= 30 && !r.auto; }).length;
-    el.innerHTML = '<div class="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-5">' +
+    el.innerHTML = '<div class="grid grid-cols-2 lg:grid-cols-7 gap-4 mb-5">' +
         stat('Active domains', gdN(m.active.length), 'in ' + GD.data.accounts.filter(function (a) { return a.ok; }).length + ' working accounts', 'text-heading', 'all') +
         stat('Expiring in 7 days', gdN(d7), 'renew now', 'text-rose-500', 'renewal') +
         stat('Expiring in 30 days', gdN(d30), autoOff30 + ' have auto-renew OFF', 'text-amber-500', 'renewal') +
         stat('Not renewed', gdN(m.lapsedNow.length), 'expired in the last 90 days', 'text-rose-500', 'lapsed') +
         stat('Just renewed', gdN(m.renewed14.length), 'last 14 days', 'text-emerald-500', 'renewed') +
-        stat('NS changes', gdN(m.ns14.length), 'last 14 days', 'text-indigo-500', 'changes') + '</div>';
+        stat('NS changes', gdN(m.ns14.length), 'last 14 days', 'text-indigo-500', 'changes') +
+        stat('No brand yet', gdN(m.unassigned.length), m.unassigned.length ? 'click to assign a brand' : 'all domains have a brand', m.unassigned.length ? 'text-amber-500' : 'text-emerald-500', 'gdUnOpen()') + '</div>';
 }
 
 function gdRenderAccounts() {
@@ -532,7 +534,7 @@ function gdAsOpen(domains, brand) {
     var m = document.getElementById('gdAsModal');
     if (!m) {
         m = document.createElement('div'); m.id = 'gdAsModal';
-        m.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(2,6,23,.62);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;padding:5vh 16px;overflow-y:auto';
+        m.style.cssText = 'position:fixed;inset:0;z-index:420;background:rgba(2,6,23,.62);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;padding:5vh 16px;overflow-y:auto';
         m.onmousedown = function (e) { if (e.target === m) gdAsClose(); };
         document.body.appendChild(m);
         document.addEventListener('keydown', function (e) { var mm = document.getElementById('gdAsModal'); if (e.key === 'Escape' && mm && mm.style.display !== 'none') gdAsClose(); });
@@ -712,4 +714,94 @@ function gdRcSubmit() {
     };
     reader.onerror = function () { f.busy = false; gdRcFormRender(); };
     reader.readAsDataURL(f.file);
+}
+
+// ============================================================
+// Card: "No brand yet" opens a list of every GoDaddy domain without a brand, with the way to assign one.
+// ============================================================
+function gdUnOpen() {
+    gdInjectFont();
+    var m = document.getElementById('gdUnModal');
+    if (!m) {
+        m = document.createElement('div'); m.id = 'gdUnModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(2,6,23,.62);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;padding:3vh 16px;overflow-y:auto';
+        m.onmousedown = function (e) { if (e.target === m) gdUnClose(); };
+        document.body.appendChild(m);
+        document.addEventListener('keydown', function (e) { var mm = document.getElementById('gdUnModal'); var as = document.getElementById('gdAsModal'); if (e.key === 'Escape' && mm && mm.style.display !== 'none' && (!as || as.style.display === 'none')) gdUnClose(); });
+    }
+    GD.un = { q: '', acct: 'all', sort: 'domain', dir: 1, sel: {}, busy: false };
+    m.style.display = 'flex'; gdUnRender();
+}
+function gdUnClose() { var m = document.getElementById('gdUnModal'); if (m && !(GD.un && GD.un.busy)) m.style.display = 'none'; }
+function gdUnRows() {
+    var u = GD.un, q = u.q.trim().toLowerCase(), brands = gdBrandList();
+    var rows = gdModel().unassigned.map(function (r) { return { domain: r.domain, account: r.account, expires: r.expires, days: r.days, sug: gdSuggestBrand(r.domain, brands) }; }).filter(function (r) {
+        return (u.acct === 'all' || r.account === u.acct) && (!q || r.domain.indexOf(q) !== -1);
+    });
+    rows.sort(function (a, b) { return gdNsCmp(a[u.sort], b[u.sort], u.dir) || a.domain.localeCompare(b.domain); });
+    return rows;
+}
+function gdUnRender() {
+    var m = document.getElementById('gdUnModal'); if (!m || !GD.un) return;
+    var accts = GD.data.accounts.map(function (a) { return a.account.replace(/^Godaddy\s+/i, ''); });
+    m.innerHTML = '<div class="panel-card" style="position:relative;width:min(900px,100%);padding:0;border-radius:1rem;box-shadow:0 30px 70px rgba(0,0,0,.45)">' +
+        '<div style="padding:20px 24px 14px;border-bottom:1px solid var(--border-theme)" class="flex items-start justify-between gap-3"><div><h3 class="text-lg font-black text-heading flex items-center gap-2"><i data-lucide="tag" class="h-5 w-5 text-amber-500"></i> Domains without a brand</h3><p class="text-[11px] text-subtle mt-1">These GoDaddy domains are not under any Target Brand yet. Pick them, then choose an existing brand or create a new one.</p></div><button onclick="gdUnClose()" aria-label="Close" class="text-subtle hover:text-heading text-2xl leading-none px-2">&times;</button></div>' +
+        '<div style="padding:16px 24px"><div class="flex gap-2 flex-wrap mb-3"><input id="gdUnQ" oninput="GD.un.q=this.value;gdUnRenderList()" placeholder="Search domain..." class="flex-1 min-w-[180px] px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none">' +
+        '<select onchange="GD.un.acct=this.value;gdUnRenderList()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">All accounts</option>' + accts.map(function (a) { return '<option value="' + gdEsc(a) + '">' + gdEsc(a) + '</option>'; }).join('') + '</select>' +
+        '<select onchange="var v=this.value.split(\':\');GD.un.sort=v[0];GD.un.dir=+v[1];gdUnRenderList()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="domain:1">Name A-Z</option><option value="domain:-1">Name Z-A</option><option value="expires:1">Expires soonest</option><option value="expires:-1">Expires latest</option><option value="account:1">Account</option><option value="sug:-1">Has suggestion first</option></select></div>' +
+        '<div class="flex items-center gap-2 mb-2 flex-wrap"><button onclick="gdUnSelectShown()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Select all shown</button><button onclick="GD.un.sel={};gdUnRenderList()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Clear</button><span id="gdUnCount" class="text-[11px] text-subtle ml-1"></span></div>' +
+        '<div id="gdUnList" class="border border-theme rounded-xl overflow-y-auto" style="max-height:380px"></div></div>' +
+        '<div style="padding:12px 24px;border-top:1px solid var(--border-theme)" class="flex items-center justify-between gap-3 flex-wrap"><button onclick="gdUnClose()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Close</button><div class="flex items-center gap-2"><button id="gdUnAccept" onclick="gdUnAcceptAll()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app"></button><button id="gdUnAssign" onclick="gdUnAssign()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm">Assign brand</button></div></div></div>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    gdUnRenderList();
+}
+function gdUnRenderList() {
+    var el = document.getElementById('gdUnList'); if (!el || !GD.un) return;
+    var u = GD.un, rows = gdUnRows(), shown = rows.slice(0, 300);
+    var allRows = gdModel().unassigned.length;
+    el.innerHTML = shown.length ? shown.map(function (r) {
+        var d = r.days;
+        return '<div class="flex items-center gap-3 px-3 py-2 border-b border-theme/60 hover:bg-app text-xs"><input type="checkbox" ' + (u.sel[r.domain] ? 'checked' : '') + ' data-d="' + gdEsc(r.domain) + '" onchange="gdUnPick(this.getAttribute(\'data-d\'),this.checked)" aria-label="Select ' + gdEsc(r.domain) + '"><span class="font-bold text-heading flex-1 truncate">' + gdEsc(r.domain) + '</span><span class="text-subtle w-16 text-right">' + gdEsc(r.account) + '</span><span class="text-subtle w-24 text-right">' + gdEsc(gdDay(r.expires)) + '</span>' +
+            (r.sug ? '<button onclick="gdAsOpen([this.getAttribute(\'data-d\')],this.getAttribute(\'data-b\'))" data-d="' + gdEsc(r.domain) + '" data-b="' + gdEsc(r.sug) + '" class="px-2.5 py-1 rounded-lg bg-indigo-600/10 text-indigo-500 text-[10px] font-bold hover:bg-indigo-600/20 whitespace-nowrap" title="Suggested brand">' + gdEsc(r.sug) + '</button>' : '<span class="w-24"></span>') +
+            '<button onclick="gdAsOpen([this.getAttribute(\'data-d\')])" data-d="' + gdEsc(r.domain) + '" class="px-2.5 py-1 rounded-lg border border-theme text-[10px] font-bold text-body hover:bg-app whitespace-nowrap">Choose brand</button></div>';
+    }).join('') + (rows.length > shown.length ? '<p class="text-[10px] text-subtle p-3">Showing the first ' + shown.length + '. Search to narrow down.</p>' : '') :
+        '<div class="text-center py-12"><p class="text-sm font-bold ' + (allRows ? 'text-heading' : 'text-emerald-500') + '">' + (allRows ? 'No domain matches this search.' : 'Every GoDaddy domain has a brand.') + '</p></div>';
+    gdUnNav();
+}
+function gdUnNav() {
+    var u = GD.un; if (!u) return;
+    var n = Object.keys(u.sel).filter(function (k) { return u.sel[k]; }).length, rows = gdUnRows(), withSug = rows.filter(function (r) { return r.sug; }).length;
+    var c = document.getElementById('gdUnCount'); if (c) c.textContent = rows.length + ' shown' + (n ? ' / ' + n + ' selected' : '');
+    var a = document.getElementById('gdUnAssign'); if (a) { a.textContent = n ? 'Assign brand to ' + n : 'Assign brand'; a.style.opacity = n ? '1' : '.45'; a.style.pointerEvents = n ? 'auto' : 'none'; }
+    var b = document.getElementById('gdUnAccept'); if (b) { b.style.display = withSug ? '' : 'none'; b.textContent = 'Accept ' + withSug + ' suggestion' + (withSug === 1 ? '' : 's'); }
+}
+function gdUnPick(d, on) { if (on) GD.un.sel[d] = true; else delete GD.un.sel[d]; gdUnNav(); }
+function gdUnSelectShown() { gdUnRows().slice(0, 300).forEach(function (r) { GD.un.sel[r.domain] = true; }); gdUnRenderList(); }
+function gdUnAssign() { var d = Object.keys(GD.un.sel).filter(function (k) { return GD.un.sel[k]; }); if (d.length) gdAsOpen(d); }
+// Adds every domain that has a suggested brand to that brand, one brand at a time.
+function gdUnAcceptAll() {
+    var u = GD.un; if (!u || u.busy) return;
+    var groups = {}; gdUnRows().forEach(function (r) { if (r.sug) (groups[r.sug] = groups[r.sug] || []).push(r.domain); });
+    var names = Object.keys(groups); if (!names.length) return;
+    var go = function () {
+        u.busy = true; var done = 0, fail = 0;
+        (function next(i) {
+            if (i >= names.length) {
+                u.busy = false; u.sel = {};
+                if (typeof showPremiumToast === 'function') showPremiumToast('Suggestions accepted', done + ' domain' + (done === 1 ? '' : 's') + ' added' + (fail ? ', ' + fail + ' skipped or failed' : '') + '.', fail ? 'warning' : 'success');
+                gdLoad(false); return;
+            }
+            google.script.run.withSuccessHandler(function (r) { done += r.added.length; fail += r.skipped.length; next(i + 1); })
+                .withFailureHandler(function () { fail += groups[names[i]].length; next(i + 1); })
+                .assignGodaddyBrand(currentSessionToken, groups[names[i]], names[i], 'existing');
+        })(0);
+    };
+    var total = names.reduce(function (s, k) { return s + groups[k].length; }, 0);
+    var msg = total + ' domain' + (total === 1 ? '' : 's') + ' will be added to ' + names.length + ' existing brand' + (names.length === 1 ? '' : 's') + ' based on their names.';
+    if (typeof showPremiumConfirm === 'function') showPremiumConfirm('Accept all suggestions?', msg, 'Add them', go); else go();
+}
+// Re-draws the list after data was reloaded (for example right after an assignment).
+function gdUnRefresh() {
+    var m = document.getElementById('gdUnModal'); if (!m || m.style.display === 'none' || !GD.un) return;
+    GD.un.sel = {}; gdUnRenderList();
 }
