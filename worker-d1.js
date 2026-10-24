@@ -1329,17 +1329,38 @@ const actions = {
     return { results };
   },
 
-  // Moves lapsed (not renewed) domains out of the Target Brand list into the Not renewed archive. `domains` is the list the
-  // user confirmed; the server re-checks every one against GoDaddy's status and only moves real lapsed domains.
-  async moveLapsedFromBrands(db, token, domains) {
+  // Moves lapsed (not renewed) domains out of the Target Brand list into the Not renewed archive.
+  // Each domain is checked LIVE at GoDaddy first, so nothing is moved on stale data:
+  //  - active under any of the accounts (renewed since the last sync, or moved between accounts): kept, and the stored data is refreshed
+  //  - GoDaddy does not list it at all: kept and reported, to be checked by a person
+  //  - still lapsed or transferred away: moved out, with its brand and ISP data kept in the archive
+  async moveLapsedFromBrands(db, env, token, domains) {
     const s = await requireGodaddyAccess(db, token);
-    const list = Array.from(new Set((Array.isArray(domains) ? domains : []).map(gdCleanDomain).filter(Boolean))).slice(0, 150);
-    if (!list.length) throw new Error("No domains given.");
+    const accounts = gdAccounts(env);
+    const list = Array.from(new Set((Array.isArray(domains) ? domains : []).map(gdCleanDomain).filter(Boolean))).slice(0, 10);
+    if (!list.length) throw new Error("No domains given (10 at a time).");
     const items = [], skipped = [];
     for (const d of list) {
-      const g = await db.prepare("SELECT account, status, expires FROM gd_domains WHERE domain = ? ORDER BY (status = 'ACTIVE') ASC LIMIT 1").bind(d).first();
-      if (!g || !gdLeftAccount(g.status)) { skipped.push({ domain: d, reason: "Not a lapsed GoDaddy domain" }); continue; }
-      items.push({ domain: d, account: g.account, status: g.status, expires: g.expires });
+      const { results: rows } = await db.prepare("SELECT account, status, expires FROM gd_domains WHERE domain = ?").bind(d).all();
+      if (!rows.length) { skipped.push({ domain: d, reason: "Not in the synced GoDaddy list" }); continue; }
+      const act = rows.filter(function (r) { return r.status === "ACTIVE"; })[0];
+      if (act) { skipped.push({ domain: d, reason: "Active in GoDaddy (" + act.account.replace(/^Godaddy\s+/i, "") + "), kept in its brand" }); continue; }
+      const row = rows.filter(function (r) { return gdLeftAccount(r.status); })[0];
+      if (!row) { skipped.push({ domain: d, reason: "Not a lapsed GoDaddy domain" }); continue; }
+      const tok = accounts[row.account];
+      if (!tok) { skipped.push({ domain: d, reason: "No token for " + row.account }); continue; }
+      try {
+        const res = await fetch(GD_API + "/" + encodeURIComponent(d), { headers: { Authorization: (String(tok).indexOf(":") !== -1 ? "sso-key " : "Bearer ") + tok, Accept: "application/json" } });
+        if (res.status === 404) { skipped.push({ domain: d, reason: "GoDaddy no longer lists it under " + row.account.replace(/^Godaddy\s+/i, "") + ". Check it by hand." }); continue; }
+        if (!res.ok) { skipped.push({ domain: d, reason: "GoDaddy check failed (HTTP " + res.status + ")" }); continue; }
+        const live = await res.json();
+        if (live.status === "ACTIVE") {
+          await db.prepare("UPDATE gd_domains SET status = 'ACTIVE', expires = ?, updated_at = datetime('now') WHERE domain = ? AND account = ?").bind(gdStamp(live.expires), d, row.account).run();
+          skipped.push({ domain: d, reason: "Active again at GoDaddy (renewed), kept in its brand" }); continue;
+        }
+        if (live.status !== row.status) await db.prepare("UPDATE gd_domains SET status = ?, expires = ?, updated_at = datetime('now') WHERE domain = ? AND account = ?").bind(live.status || row.status, gdStamp(live.expires) || row.expires, d, row.account).run();
+        items.push({ domain: d, account: row.account, status: live.status || row.status, expires: gdStamp(live.expires) || row.expires });
+      } catch (e) { skipped.push({ domain: d, reason: "GoDaddy check failed" }); }
     }
     const moved = await gdMoveLapsedOut(db, items, s.username);
     return { moved, skipped, requested: list.length };
@@ -2978,7 +2999,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs", "uploadGodaddyReceipt", "deleteGodaddyReceipt"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs", "uploadGodaddyReceipt", "deleteGodaddyReceipt", "moveLapsedFromBrands"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);
