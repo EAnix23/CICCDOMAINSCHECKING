@@ -127,8 +127,8 @@ function gdRenderBody() {
     if (GD.tab === 'renewal') sub = '<div class="flex items-center gap-2 mb-3 text-[11px] text-subtle">Show domains expiring within ' + [7, 15, 30, 60].map(function (n) { return '<button onclick="GD.range=' + n + ';gdRenderBody()" class="px-2.5 py-1 rounded-lg border ' + (GD.range === n ? 'bg-indigo-600 text-white border-indigo-600' : 'border-theme text-body hover:bg-app') + ' font-bold">' + n + ' days</button>'; }).join('') + '</div>';
     if (GD.tab === 'changes') sub = '<p class="text-[11px] text-subtle mb-3">Expiry, status and new or removed domains are caught on every sync. Nameserver changes are recorded when made from this portal, and also when anyone changes them directly in GoDaddy: every active domain is re-read in rotation (30 domains every 15 minutes, so each one about every 11 hours).</p><div class="flex items-center gap-2 mb-3 flex-wrap">' + [['all', 'All'], ['ns_changed', 'Nameserver'], ['expired', 'Expired'], ['renewed', 'Renewed'], ['status_changed', 'Status'], ['added', 'New'], ['removed', 'Removed']].map(function (t) { return '<button onclick="GD.evType=\'' + t[0] + '\';gdRenderTable()" class="px-2.5 py-1 rounded-lg border text-[11px] font-bold ' + (GD.evType === t[0] ? 'bg-indigo-600 text-white border-indigo-600' : 'border-theme text-body hover:bg-app') + '">' + t[1] + '</button>'; }).join('') + '</div>';
     if (GD.tab === 'renewed') sub = '<div class="text-[11px] text-subtle mb-3 p-3 rounded-xl border border-dashed border-theme">Renewals are detected when a domain\'s expiry date moves forward between syncs, so tracking starts from the first sync. <b class="text-body">Receipts and order numbers are not available</b> from the GoDaddy API with the current tokens (GoDaddy refuses the orders endpoint). Receipts stay in the GoDaddy account or its email.</div>';
-    el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + tools + '</div>' + sub + '<div id="gdTable" class="overflow-x-auto"></div></div>';
-    gdRenderTable();
+    el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + tools + '</div>' + sub + '<div id="gdSelBar"></div><div id="gdTable" class="overflow-x-auto"></div></div>';
+    gdRenderTable(); gdRenderSelBar();
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
@@ -137,10 +137,14 @@ function gdCurrentRows() {
     function match(r) { return (GD.account === 'all' || (r.account || r.accountShort) === GD.account) && (!q || (r.domain + ' ' + (r.brand || '')).toLowerCase().indexOf(q) !== -1); }
     var auto = function (r) { return r.auto ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-emerald-500/15 text-emerald-500">Auto-renew ON</span>' : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-rose-500/15 text-rose-500">Auto-renew OFF</span>'; };
     var dom = function (r) { return '<span class="font-bold text-heading">' + gdEsc(r.domain) + '</span>'; };
+    GD.sel = GD.sel || {};
+    var selCol = ['<input type="checkbox" onchange="gdToggleAll(this.checked)" title="Select all shown" aria-label="Select all shown">', function (r) { return r.status === 'ACTIVE' ? '<input type="checkbox" ' + (GD.sel[r.domain] ? 'checked' : '') + ' data-d="' + gdEsc(r.domain) + '" onchange="gdToggleSel(this.getAttribute(\'data-d\'),this.checked)" aria-label="Select ' + gdEsc(r.domain) + '">' : ''; }, function () { return ''; }, true];
+    var editCol = ['', function (r) { return r.status === 'ACTIVE' ? '<button onclick="gdEditNs([this.getAttribute(\'data-d\')])" data-d="' + gdEsc(r.domain) + '" class="px-2.5 py-1 rounded-lg border border-theme text-[11px] font-bold text-body hover:bg-app hover:border-indigo-400 whitespace-nowrap">Edit NS</button>' : ''; }, function () { return ''; }, true];
     if (t === 'renewal') {
         rows = m.renewal.filter(function (r) { return r.days <= GD.range && match(r); });
         cols = [['Domain', dom, function (r) { return r.domain; }], ['Brand', function (r) { return gdEsc(r.brand || '-'); }, function (r) { return r.brand; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }], ['Expires', function (r) { return gdDay(r.expires); }, function (r) { return r.expires; }],
             ['Days left', function (r) { return '<b class="' + (r.days <= 7 ? 'text-rose-500' : r.days <= 15 ? 'text-amber-500' : 'text-body') + '">' + r.days + '</b>'; }, function (r) { return r.days; }], ['Auto-renew', auto, function (r) { return r.auto ? 'ON' : 'OFF'; }]];
+        cols = [selCol].concat(cols, [editCol]);
     } else if (t === 'lapsed') {
         rows = m.lapsed.filter(match);
         cols = [['Domain', dom, function (r) { return r.domain; }], ['Brand', function (r) { return gdEsc(r.brand || '-'); }, function (r) { return r.brand; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }], ['Expired on', function (r) { return gdDay(r.expires); }, function (r) { return r.expires; }],
@@ -161,6 +165,7 @@ function gdCurrentRows() {
         rows = m.rows.filter(match).sort(function (a, b) { return a.domain.localeCompare(b.domain); });
         cols = [['Domain', dom, function (r) { return r.domain; }], ['Brand', function (r) { return gdEsc(r.brand || '-'); }, function (r) { return r.brand; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }], ['Status', function (r) { return gdEsc(r.status.replace(/_/g, ' ').toLowerCase()); }, function (r) { return r.status; }],
             ['Expires', function (r) { return gdDay(r.expires); }, function (r) { return r.expires; }], ['Auto-renew', function (r) { return r.status === 'ACTIVE' ? auto(r) : '-'; }, function (r) { return r.auto ? 'ON' : 'OFF'; }], ['Nameservers', function (r) { return '<span class="font-mono text-[10px] text-subtle">' + gdEsc(r.ns || '-').replace(/,/g, '<br>') + '</span>'; }, function (r) { return r.ns; }]];
+        cols = [selCol].concat(cols, [editCol]);
     }
     return { rows: rows, cols: cols };
 }
@@ -176,7 +181,8 @@ function gdRenderTable() {
 
 function gdDownload() {
     var c = gdCurrentRows();
-    var csv = c.cols.map(function (x) { return '"' + x[0] + '"'; }).join(',') + '\n' + c.rows.map(function (r) { return c.cols.map(function (x) { return '"' + String(x[2](r) == null ? '' : x[2](r)).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
+    var cc = c.cols.filter(function (x) { return !x[3]; });
+    var csv = cc.map(function (x) { return '"' + x[0] + '"'; }).join(',') + '\n' + c.rows.map(function (r) { return cc.map(function (x) { return '"' + String(x[2](r) == null ? '' : x[2](r)).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'godaddy-' + GD.tab + '.csv';
@@ -209,7 +215,7 @@ function gdNsSortTh(label, key, cur, dir, fn) {
 function gdNsCmp(a, b, dir) { a = a == null ? '' : a; b = b == null ? '' : b; return (typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b))) * dir; }
 
 // ----- modal shell -----
-function gdOpenNs() {
+function gdOpenNs(keep) {
     var m = document.getElementById('gdNsModal');
     if (!m) {
         m = document.createElement('div'); m.id = 'gdNsModal';
@@ -218,7 +224,7 @@ function gdOpenNs() {
         document.body.appendChild(m);
         document.addEventListener('keydown', function (e) { var mm = document.getElementById('gdNsModal'); if (e.key === 'Escape' && mm && mm.style.display !== 'none') gdNsRequestClose(); });
     }
-    if (!GD.ns.running) GD.ns = gdNsFresh();
+    if (!keep && !GD.ns.running) GD.ns = gdNsFresh();
     m.style.display = 'flex';
     gdNsRender();
 }
@@ -463,4 +469,20 @@ function gdNsDownload() {
     var n = GD.ns, key = gdNsNewKey();
     var csv = 'Domain,Account,Result,Details,New nameservers\n' + (n.results || []).map(function (r) { return [r.domain, r.account || '', r.ok ? (r.skipped ? 'Already set' : 'Changed') : 'Failed', r.error || r.note || '', key].map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
     var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'godaddy-ns-change.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ---- row actions: select domains and edit their nameservers ----
+function gdSelCount() { GD.sel = GD.sel || {}; return Object.keys(GD.sel).filter(function (k) { return GD.sel[k]; }).length; }
+function gdRenderSelBar() {
+    var el = document.getElementById('gdSelBar'); if (!el) return;
+    var n = gdSelCount();
+    el.innerHTML = n ? '<div class="flex items-center gap-3 flex-wrap mb-3 px-4 py-2.5 rounded-xl bg-indigo-600/10 border border-indigo-500/30"><b class="text-xs text-heading">' + n + ' domain' + (n === 1 ? '' : 's') + ' selected</b><button onclick="gdEditNs(Object.keys(GD.sel).filter(function (k) { return GD.sel[k]; }))" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Edit nameservers</button><button onclick="GD.sel={};gdRenderTable();gdRenderSelBar()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Clear</button></div>' : '';
+}
+function gdToggleSel(d, on) { GD.sel = GD.sel || {}; if (on) GD.sel[d] = true; else delete GD.sel[d]; gdRenderSelBar(); }
+function gdToggleAll(on) { var rows = gdCurrentRows().rows.slice(0, 300); GD.sel = GD.sel || {}; rows.forEach(function (r) { if (r.status === 'ACTIVE') { if (on) GD.sel[r.domain] = true; else delete GD.sel[r.domain]; } }); gdRenderTable(); gdRenderSelBar(); }
+// Opens the nameserver wizard with these domains already picked, straight at the nameservers step.
+function gdEditNs(domains) {
+    if (GD.ns && GD.ns.running) return;
+    GD.ns = gdNsFresh(); GD.ns.selected = (domains || []).filter(Boolean).slice(0, GD_NS_MAX); GD.ns.step = GD.ns.selected.length ? 2 : 1;
+    gdOpenNs(true);
 }
