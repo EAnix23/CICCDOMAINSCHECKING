@@ -1446,7 +1446,7 @@ const actions = {
       try {
         const det = await fetch(GD_API + "/" + encodeURIComponent(d), { headers: { Authorization: auth, Accept: "application/json" } });
         if (!det.ok) { results.push({ domain: d, ok: false, error: "Could not read the domain at GoDaddy (HTTP " + det.status + ")" }); continue; }
-        const ns = gdNs((await det.json()).nameServers);
+        const detJson = await det.json(), ns = gdNs(detJson.nameServers);
         if (ns.indexOf("domaincontrol.com") === -1) { results.push({ domain: d, ok: false, skipped: true, error: "DNS is not at GoDaddy (" + (ns || "unknown") + "). A GoDaddy forward would have no effect." }); continue; }
         const cur = await fetch(base, { headers: { Authorization: auth, Accept: "application/json" } });
         let oldUrl = "", exists = false;
@@ -1454,7 +1454,15 @@ const actions = {
         else if (cur.status !== 404) { results.push({ domain: d, ok: false, error: "Could not read current forwarding (HTTP " + cur.status + ")" }); continue; }
         if (exists && oldUrl.replace(/\/$/, "") === url.replace(/\/$/, "")) { results.push({ domain: d, ok: true, skipped: true, note: "Forwarding already points there" }); continue; }
         const res = await fetch(base, { method: exists ? "PUT" : "POST", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ type: kind, url: url }) });
-        if (!res.ok) { let m = "GoDaddy HTTP " + res.status + " (" + (exists ? "PUT" : "POST") + (exists ? ", existing: " + oldUrl : "") + ")"; try { const e = await res.json(); if (e && e.message) m += ": " + String(e.message).slice(0, 160); if (e && e.code) m += " [" + e.code + "]"; if (e && e.fields) m += " " + JSON.stringify(e.fields).slice(0, 200); } catch (x) {} results.push({ domain: d, ok: false, error: m }); continue; }
+        if (!res.ok) { let m = "GoDaddy HTTP " + res.status + " (" + (exists ? "PUT" : "POST") + (exists ? ", existing: " + oldUrl : "") + ")"; try { const e = await res.json(); if (e && e.message) m += ": " + String(e.message).slice(0, 160); if (e && e.code) m += " [" + e.code + "]"; if (e && e.fields) m += " " + JSON.stringify(e.fields).slice(0, 200); } catch (x) {}
+          // Read-only diagnosis so the real cause is visible: domain status/lock and the A / CNAME records that GoDaddy forwarding conflicts with.
+          try {
+            const H = { Authorization: auth, Accept: "application/json" }, dj = detJson;
+            const [ra, rw] = await Promise.all([fetch(GD_API + "/" + encodeURIComponent(d) + "/records/A/@", { headers: H }), fetch(GD_API + "/" + encodeURIComponent(d) + "/records/CNAME/www", { headers: H })]);
+            const A = ra.ok ? (await ra.json()).map(function (x) { return x.data; }).join(",") : "HTTP " + ra.status, W = rw.ok ? (await rw.json()).map(function (x) { return x.data; }).join(",") : "HTTP " + rw.status;
+            m += " | status " + (dj.status || "?") + ", locked " + dj.locked + ", ns " + gdNs(dj.nameServers) + ", A@ " + (A || "none") + ", CNAME www " + (W || "none");
+          } catch (x) {}
+          results.push({ domain: d, ok: false, error: m }); continue; }
         await db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'forward_set', ?, ?, ?, 'portal')").bind(d, g.account, oldUrl, (kind === "REDIRECT_PERMANENT" ? "301 " : "302 ") + url, s.username).run();
         results.push({ domain: d, ok: true, note: exists ? "Forwarding updated" : "Forwarding created" });
       } catch (e) { results.push({ domain: d, ok: false, error: String(e && e.message || e).slice(0, 140) }); }
