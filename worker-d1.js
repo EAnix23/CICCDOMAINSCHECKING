@@ -166,6 +166,7 @@ function gdAccounts(env) {
 function gdNs(list) {
   return (Array.isArray(list) ? list : []).map(function (x) { return String(x).toLowerCase().replace(/\.$/, ""); }).sort().join(",");
 }
+function gdCleanDomain(d) { return String(d || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[\/?#]/)[0].replace(/\.$/, ""); }
 function gdStamp(s) { return s ? String(s).slice(0, 19).replace("T", " ") : ""; }
 
 async function fetchGdDomains(token) {
@@ -1166,6 +1167,73 @@ const actions = {
     ]);
     const lastSync = accounts.reduce(function (m, a) { return a.lastSync > m ? a.lastSync : m; }, "");
     return { asOf: new Date().toISOString(), lastSync, domains, events, accounts, brands, totalsByStatus: totals };
+  },
+
+  // ---- GoDaddy nameserver change (Super Admin and users assigned to a team) ----
+  // Step 1: look the pasted domains up in the synced list so the user sees the current nameservers before anything changes.
+  async previewGodaddyNs(db, token, domainsText) {
+    await requireGodaddyAccess(db, token);
+    const seen = new Set();
+    const wanted = String(domainsText || "").split(/[\s,;]+/).map(gdCleanDomain).filter(function (d) { if (!d || seen.has(d)) return false; seen.add(d); return true; }).slice(0, 300);
+    if (!wanted.length) return { items: [], recentSets: [] };
+    const found = {};
+    for (let i = 0; i < wanted.length; i += 80) {
+      const part = wanted.slice(i, i + 80);
+      const { results } = await db.prepare("SELECT domain, account, status, expires, name_servers ns FROM gd_domains WHERE domain IN (" + part.map(function () { return "?"; }).join(",") + ")").bind(...part).all();
+      results.forEach(function (r) { (found[r.domain] = found[r.domain] || []).push(r); });
+    }
+    const items = wanted.map(function (d) {
+      const rows = found[d] || [];
+      const act = rows.filter(function (r) { return r.status === "ACTIVE"; })[0];
+      if (act) return { domain: d, ok: true, account: act.account, currentNs: act.ns, expires: act.expires };
+      if (rows.length) return { domain: d, ok: false, reason: "Not active in GoDaddy (status " + rows[0].status + "). Nameservers cannot be changed." };
+      return { domain: d, ok: false, reason: "Not found in the synced GoDaddy accounts. Check the spelling, or sync first." };
+    });
+    const { results: sets } = await db.prepare("SELECT new_value ns, MAX(at) at, COUNT(*) c FROM gd_events WHERE type = 'ns_changed' AND new_value != '' GROUP BY new_value ORDER BY at DESC LIMIT 6").all();
+    return { items, recentSets: sets };
+  },
+
+  // Step 2: apply. The client sends small chunks (8 domains) so each call stays inside the Worker limits.
+  // The account is looked up on the server; the client cannot choose which GoDaddy account to use.
+  async changeGodaddyNs(db, env, token, domains, nameservers) {
+    const s = await requireGodaddyAccess(db, token);
+    const ns = (Array.isArray(nameservers) ? nameservers : []).map(function (n) { return String(n).trim().toLowerCase().replace(/\.$/, ""); }).filter(Boolean);
+    if (ns.length < 2 || ns.length > 13) throw new Error("Give between 2 and 13 nameservers.");
+    const bad = ns.filter(function (n) { return !/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/.test(n); });
+    if (bad.length) throw new Error("Not a valid hostname: " + bad.join(", "));
+    const list = (Array.isArray(domains) ? domains : []).map(gdCleanDomain).filter(Boolean);
+    if (!list.length) throw new Error("No domains given.");
+    if (list.length > 8) throw new Error("Send at most 8 domains per call.");
+    const accounts = gdAccounts(env);
+    const newSorted = ns.slice().sort().join(",");
+    const results = [];
+    for (const domain of list) {
+      const row = await db.prepare("SELECT account, name_servers ns FROM gd_domains WHERE domain = ? AND status = 'ACTIVE' LIMIT 1").bind(domain).first();
+      if (!row || !accounts[row.account]) { results.push({ domain, ok: false, error: "Domain not found in an active GoDaddy account." }); continue; }
+      const tok = accounts[row.account], auth = (String(tok).indexOf(":") !== -1 ? "sso-key " : "Bearer ") + tok;
+      try {
+        const getRes = await fetch(GD_API + "/" + encodeURIComponent(domain), { headers: { Authorization: auth, Accept: "application/json" } });
+        let oldNs = row.ns;
+        if (getRes.ok) { const det = await getRes.json(); oldNs = gdNs(det.nameServers); }
+        if (oldNs === newSorted) { results.push({ domain, ok: true, skipped: true, account: row.account, note: "Already using these nameservers." }); continue; }
+        const res = await fetch(GD_API + "/" + encodeURIComponent(domain), { method: "PATCH", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ nameServers: ns }) });
+        if (!res.ok) {
+          let msg = "GoDaddy HTTP " + res.status;
+          try { const e = await res.json(); if (e && e.message) msg += ": " + String(e.message).slice(0, 160); } catch (x) {}
+          await db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'ns_failed', ?, ?, ?, 'portal')").bind(domain, row.account, oldNs || "", msg, s.username).run();
+          results.push({ domain, ok: false, error: msg, account: row.account });
+          continue;
+        }
+        await db.batch([
+          db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'ns_changed', ?, ?, ?, 'portal')").bind(domain, row.account, oldNs || "", newSorted, s.username),
+          db.prepare("UPDATE gd_domains SET name_servers = ?, updated_at = datetime('now') WHERE domain = ? AND account = ?").bind(newSorted, domain, row.account)
+        ]);
+        results.push({ domain, ok: true, account: row.account, oldNs: oldNs || "" });
+      } catch (e) {
+        results.push({ domain, ok: false, error: String(e && e.message || e).slice(0, 160), account: row.account });
+      }
+    }
+    return { results };
   },
 
   // Pull fresh data from GoDaddy (needs env for the secret, so it is listed in envActions).
@@ -2688,7 +2756,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);

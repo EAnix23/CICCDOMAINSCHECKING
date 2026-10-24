@@ -3,7 +3,7 @@
 // Data: Worker actions getGodaddyDashboard (reads D1) and syncGodaddy (pulls fresh data from the GoDaddy API).
 // The dashboard syncs by itself when the last sync is older than 6 hours.
 // ============================================================
-var GD = { data: null, tab: 'renewal', range: 30, account: 'all', q: '', evType: 'all', syncing: false, loaded: false };
+var GD = { ns: { domains: '', servers: '', preview: null, recent: [], running: false, confirmed: false, done: 0, total: 0, results: null }, data: null, tab: 'renewal', range: 30, account: 'all', q: '', evType: 'all', syncing: false, loaded: false };
 var GD_LAPSED_LABEL = {
     ACTIVE: 'Past due (still in grace period)',
     CANCELLED_REDEEMABLE: 'In redemption (can still be recovered)',
@@ -12,7 +12,7 @@ var GD_LAPSED_LABEL = {
     UPDATED_OWNERSHIP: 'Moved to another owner',
     UPDATE_ACCOUNT_AUCTION: 'Going to auction'
 };
-var GD_EVENT_LABEL = { renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
+var GD_EVENT_LABEL = { ns_failed: 'NS change failed', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
 
 function gdEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function gdN(v) { return Number(v || 0).toLocaleString('en-US'); }
@@ -117,7 +117,8 @@ function gdTabBtn(id, label, n) { var on = GD.tab === id; return '<button onclic
 
 function gdRenderBody() {
     var el = document.getElementById('gdBody'); if (!el) return; var m = gdModel();
-    var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + '</div>';
+    var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + gdTabBtn('ns', 'Change nameservers', null) + '</div>';
+    if (GD.tab === 'ns') { el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + '</div><div id="gdNs"></div></div>'; gdRenderNs(); if (typeof lucide !== 'undefined') lucide.createIcons(); return; }
     var accounts = GD.data.accounts.map(function (a) { return a.account.replace(/^Godaddy\s+/i, ''); });
     var tools = '<div class="flex items-center gap-2 flex-wrap">' +
         '<select onchange="GD.account=this.value;gdRenderTable()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">All accounts</option>' + accounts.map(function (a) { return '<option value="' + gdEsc(a) + '"' + (GD.account === a ? ' selected' : '') + '>' + gdEsc(a) + '</option>'; }).join('') + '</select>' +
@@ -181,4 +182,86 @@ function gdDownload() {
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'godaddy-' + GD.tab + '.csv';
     document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ---- Change nameservers ----
+var GD_NS_RE = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
+function gdNsLines(t) { return String(t || '').split(/[\n,;]+/).map(function (x) { return x.trim().toLowerCase().replace(/\.$/, ''); }).filter(Boolean); }
+function gdNsProblem() {
+    var ns = gdNsLines(GD.ns.servers);
+    if (ns.length < 2 || ns.length > 13) return 'Add 2 to 13 nameservers, one per line.';
+    var bad = ns.filter(function (n) { return !GD_NS_RE.test(n); });
+    return bad.length ? 'Not a valid hostname: ' + bad.join(', ') : '';
+}
+function gdRenderNs() {
+    var el = document.getElementById('gdNs'); if (!el) return;
+    var n = GD.ns, pv = n.preview, ok = pv ? pv.filter(function (i) { return i.ok; }) : [], bad = pv ? pv.filter(function (i) { return !i.ok; }) : [];
+    var newNs = gdNsLines(n.servers).slice().sort().join(',');
+    var chips = (n.recent || []).map(function (r, idx) { return '<button onclick="gdNsUseSet(' + idx + ')" class="px-2.5 py-1 rounded-lg border border-theme text-[10px] font-mono text-body hover:bg-app text-left" title="Used ' + r.c + ' time(s), last ' + gdEsc(gdDay(r.at)) + '">' + gdEsc(r.ns).replace(/,/g, ' &middot; ') + '</button>'; }).join('');
+    var html = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">' +
+        '<div><label class="text-[11px] font-bold text-heading">1. Domains <span class="text-subtle font-normal">one per line, up to 300</span></label><textarea id="gdNsDomains" oninput="GD.ns.domains=this.value;GD.ns.preview=null;GD.ns.results=null;GD.ns.confirmed=false" rows="8" class="mt-1.5 w-full px-3 py-2 bg-app border border-theme rounded-xl text-xs font-mono text-body focus:outline-none" placeholder="example1.com&#10;example2.net">' + gdEsc(n.domains) + '</textarea></div>' +
+        '<div><label class="text-[11px] font-bold text-heading">2. New nameservers <span class="text-subtle font-normal">one per line, 2 to 13</span></label><textarea id="gdNsServers" oninput="GD.ns.servers=this.value;GD.ns.confirmed=false;gdNsRefreshApply()" rows="4" class="mt-1.5 w-full px-3 py-2 bg-app border border-theme rounded-xl text-xs font-mono text-body focus:outline-none" placeholder="ns1.example.net&#10;ns2.example.net">' + gdEsc(n.servers) + '</textarea>' +
+        (chips ? '<p class="text-[10px] text-subtle mt-2 mb-1.5">Used before. Click to fill in:</p><div class="flex flex-wrap gap-1.5">' + chips + '</div>' : '') + '</div></div>' +
+        '<div class="mt-4 flex items-center gap-3 flex-wrap"><button onclick="gdNsPreview()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm ' + (n.running ? 'opacity-50 pointer-events-none' : '') + '">3. Check the domains</button><span class="text-[11px] text-subtle">Nothing changes yet. You see the current nameservers first.</span></div>';
+    if (pv) {
+        html += '<div class="mt-5"><div class="flex items-center gap-4 mb-2 text-xs"><b class="text-emerald-500">' + ok.length + ' ready</b>' + (bad.length ? '<b class="text-rose-500">' + bad.length + ' cannot be changed</b>' : '') + '</div>' +
+            '<div class="overflow-x-auto max-h-80 overflow-y-auto border border-theme rounded-xl"><table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] uppercase text-subtle border-b border-theme"><th class="p-2">Domain</th><th class="p-2">Account</th><th class="p-2">Current nameservers</th><th class="p-2">Result</th></tr></thead><tbody>' +
+            pv.map(function (i) {
+                var r = n.results && n.results.filter(function (x) { return x.domain === i.domain; })[0];
+                var res = r ? (r.ok ? '<span class="text-emerald-500 font-bold">' + (r.skipped ? 'Already set' : 'Changed') + '</span>' : '<span class="text-rose-500 font-bold">Failed: ' + gdEsc(r.error) + '</span>') : (i.ok ? '<span class="text-subtle">Waiting</span>' : '<span class="text-rose-500">' + gdEsc(i.reason) + '</span>');
+                return '<tr class="border-b border-theme/60 align-top"><td class="p-2 font-bold text-heading">' + gdEsc(i.domain) + '</td><td class="p-2">' + gdEsc((i.account || '-').replace(/^Godaddy\s+/i, '')) + '</td><td class="p-2 font-mono text-[10px] text-subtle">' + gdEsc(i.currentNs || '-').replace(/,/g, '<br>') + '</td><td class="p-2">' + res + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
+        if (ok.length && !n.results) {
+            html += '<div class="mt-4 p-4 rounded-xl border border-amber-500/40 bg-amber-500/5"><p class="text-xs text-body mb-3">Change <b>' + ok.length + ' domain' + (ok.length === 1 ? '' : 's') + '</b> to:<br><span class="font-mono text-[11px] text-heading">' + (newNs ? gdEsc(newNs).replace(/,/g, ' &middot; ') : '(fill in the new nameservers above)') + '</span></p>' +
+                '<label class="flex items-start gap-2 text-xs text-body mb-3 cursor-pointer"><input type="checkbox" id="gdNsConfirm" ' + (n.confirmed ? 'checked' : '') + ' onchange="GD.ns.confirmed=this.checked;gdNsRefreshApply()" class="mt-0.5"> <span>I understand this changes the live DNS at GoDaddy right away and is recorded under my name.</span></label>' +
+                '<button id="gdNsApply" onclick="gdNsApply()" class="px-4 py-2 bg-rose-600 text-white rounded-lg text-xs font-bold hover:bg-rose-700 shadow-sm">4. Change nameservers</button> <span id="gdNsProblem" class="text-[11px] text-rose-500 ml-2"></span></div>';
+        } else if (n.results) {
+            var good = n.results.filter(function (r) { return r.ok; }).length, fail = n.results.length - good;
+            if (n.running) html += '<div class="mt-4"><div class="h-2 rounded bg-app overflow-hidden"><div class="h-2 bg-indigo-600" style="width:' + Math.round(n.done / Math.max(1, n.total) * 100) + '%"></div></div><p class="text-[10px] text-subtle mt-1">' + n.done + ' of ' + n.total + ' done...</p></div>';
+            else html += '<p class="mt-4 text-xs"><b class="text-emerald-500">' + good + ' done</b>' + (fail ? ' &middot; <b class="text-rose-500">' + fail + ' failed</b>' : '') + '. Every change is saved under Changes with your name.</p>' +
+                '<div class="mt-2 flex gap-2"><button onclick="GD.ns.preview=null;GD.ns.results=null;GD.ns.confirmed=false;GD.ns.domains=\'\';gdRenderNs()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Start another</button>' + (fail ? '<button onclick="gdNsRetry()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Retry the failed ones</button>' : '') + '</div>';
+        }
+        html += '</div>';
+    }
+    el.innerHTML = html;
+    gdNsRefreshApply();
+}
+function gdNsRefreshApply() {
+    var b = document.getElementById('gdNsApply'), p = document.getElementById('gdNsProblem'); if (!b) return;
+    var problem = gdNsProblem(), can = GD.ns.confirmed && !problem && !GD.ns.running;
+    b.style.opacity = can ? '1' : '.45'; b.style.pointerEvents = can ? 'auto' : 'none';
+    if (p) p.textContent = problem && GD.ns.servers.trim() ? problem : '';
+}
+function gdNsUseSet(idx) { var r = GD.ns.recent[idx]; if (!r) return; GD.ns.servers = r.ns.split(',').join('\n'); GD.ns.confirmed = false; gdRenderNs(); }
+function gdNsPreview() {
+    var text = document.getElementById('gdNsDomains').value; GD.ns.domains = text; GD.ns.servers = document.getElementById('gdNsServers').value;
+    if (!text.trim()) { if (typeof showPremiumToast === 'function') showPremiumToast('Add domains', 'Paste at least one domain first.', 'warning'); return; }
+    google.script.run.withSuccessHandler(function (r) { GD.ns.preview = r.items; GD.ns.recent = r.recentSets || []; GD.ns.results = null; GD.ns.confirmed = false; gdRenderNs(); })
+        .withFailureHandler(function (e) { if (typeof showPremiumToast === 'function') showPremiumToast('Could not check', (e && e.message) || 'Try again.', 'error'); })
+        .previewGodaddyNs(currentSessionToken, text);
+}
+function gdNsRun(domains) {
+    var ns = gdNsLines(GD.ns.servers), chunks = [];
+    for (var i = 0; i < domains.length; i += 8) chunks.push(domains.slice(i, i + 8));
+    GD.ns.running = true; GD.ns.done = 0; GD.ns.total = domains.length; GD.ns.results = (GD.ns.results || []).filter(function (r) { return domains.indexOf(r.domain) === -1; });
+    gdRenderNs();
+    (function next(k) {
+        if (k >= chunks.length) {
+            GD.ns.running = false; gdRenderNs();
+            if (typeof showPremiumToast === 'function') showPremiumToast('Nameserver change finished', GD.ns.results.filter(function (r) { return r.ok; }).length + ' of ' + GD.ns.results.length + ' done.', 'success');
+            gdLoad(false); return;
+        }
+        google.script.run.withSuccessHandler(function (r) { GD.ns.results = GD.ns.results.concat(r.results); GD.ns.done += chunks[k].length; gdRenderNs(); next(k + 1); })
+            .withFailureHandler(function (e) { chunks[k].forEach(function (d) { GD.ns.results.push({ domain: d, ok: false, error: (e && e.message) || 'Request failed' }); }); GD.ns.done += chunks[k].length; gdRenderNs(); next(k + 1); })
+            .changeGodaddyNs(currentSessionToken, chunks[k], ns);
+    })(0);
+}
+function gdNsApply() {
+    if (GD.ns.running || !GD.ns.confirmed || gdNsProblem() || !GD.ns.preview) return;
+    var domains = GD.ns.preview.filter(function (i) { return i.ok; }).map(function (i) { return i.domain; });
+    if (domains.length) gdNsRun(domains);
+}
+function gdNsRetry() {
+    var failed = GD.ns.results.filter(function (r) { return !r.ok; }).map(function (r) { return r.domain; });
+    if (failed.length && !GD.ns.running) gdNsRun(failed);
 }
