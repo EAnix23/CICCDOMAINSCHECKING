@@ -1453,7 +1453,7 @@ const actions = {
         let oldUrl = "", oldType = "", exists = false;
         if (cur.ok) { exists = true; try { const j = await cur.json(); oldUrl = j.url || ""; oldType = j.type || ""; } catch (e) {} }
         else if (cur.status !== 404) { results.push({ domain: d, ok: false, error: "Could not read current forwarding (HTTP " + cur.status + ")" }); continue; }
-        if (exists && oldType === kind && oldUrl.replace(/\/$/, "") === url.replace(/\/$/, "")) { results.push({ domain: d, ok: true, skipped: true, note: "Forwarding already points there" }); continue; }
+        if (!(it && it.force) && exists && oldType === kind && oldUrl.replace(/\/$/, "") === url.replace(/\/$/, "")) { results.push({ domain: d, ok: true, skipped: true, note: "Forwarding already points there" }); continue; }
         const res = await fetch(base, { method: "PUT", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ fqdn: d, type: kind, url: url }) });
         if (!res.ok) {
           let m = "GoDaddy HTTP " + res.status;
