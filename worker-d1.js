@@ -1236,6 +1236,32 @@ const actions = {
     return { results };
   },
 
+  // GoDaddy's domain list does not include nameservers, so they are read per domain on demand (10 at a time).
+  // If the live value differs from what we stored, the change is logged as detected.
+  async liveGodaddyNs(db, env, token, domains) {
+    await requireGodaddyAccess(db, token);
+    const accounts = gdAccounts(env);
+    const list = (Array.isArray(domains) ? domains : []).map(gdCleanDomain).filter(Boolean).slice(0, 10);
+    const out = [];
+    for (const domain of list) {
+      try {
+        const row = await db.prepare("SELECT account, name_servers ns FROM gd_domains WHERE domain = ? AND status = 'ACTIVE' LIMIT 1").bind(domain).first();
+        if (!row || !accounts[row.account]) { out.push({ domain, ok: false }); continue; }
+        const tok = accounts[row.account], auth = (String(tok).indexOf(":") !== -1 ? "sso-key " : "Bearer ") + tok;
+        const res = await fetch(GD_API + "/" + encodeURIComponent(domain), { headers: { Authorization: auth, Accept: "application/json" } });
+        if (!res.ok) { out.push({ domain, ok: false, error: "HTTP " + res.status }); continue; }
+        const live = gdNs((await res.json()).nameServers);
+        if (live !== row.ns) {
+          const st = [db.prepare("UPDATE gd_domains SET name_servers = ?, updated_at = datetime('now') WHERE domain = ? AND account = ?").bind(live, domain, row.account)];
+          if (row.ns && live) st.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, source) VALUES (?, ?, 'ns_changed', ?, ?, 'sync')").bind(domain, row.account, row.ns, live));
+          await db.batch(st);
+        }
+        out.push({ domain, ok: true, ns: live });
+      } catch (e) { out.push({ domain, ok: false, error: String(e && e.message || e).slice(0, 100) }); }
+    }
+    return { results: out };
+  },
+
   // Pull fresh data from GoDaddy (needs env for the secret, so it is listed in envActions).
   async syncGodaddy(db, env, token) {
     await requireGodaddyAccess(db, token);
@@ -2756,7 +2782,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);

@@ -126,7 +126,7 @@ function gdRenderBody() {
         '<button onclick="gdDownload()" class="px-3 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app shadow-sm flex items-center gap-1.5"><i data-lucide="download" class="h-3.5 w-3.5"></i> CSV</button></div>';
     var sub = '';
     if (GD.tab === 'renewal') sub = '<div class="flex items-center gap-2 mb-3 text-[11px] text-subtle">Show domains expiring within ' + [7, 15, 30, 60].map(function (n) { return '<button onclick="GD.range=' + n + ';gdRenderBody()" class="px-2.5 py-1 rounded-lg border ' + (GD.range === n ? 'bg-indigo-600 text-white border-indigo-600' : 'border-theme text-body hover:bg-app') + ' font-bold">' + n + ' days</button>'; }).join('') + '</div>';
-    if (GD.tab === 'changes') sub = '<div class="flex items-center gap-2 mb-3 flex-wrap">' + [['all', 'All'], ['ns_changed', 'Nameserver'], ['expired', 'Expired'], ['renewed', 'Renewed'], ['status_changed', 'Status'], ['added', 'New'], ['removed', 'Removed']].map(function (t) { return '<button onclick="GD.evType=\'' + t[0] + '\';gdRenderTable()" class="px-2.5 py-1 rounded-lg border text-[11px] font-bold ' + (GD.evType === t[0] ? 'bg-indigo-600 text-white border-indigo-600' : 'border-theme text-body hover:bg-app') + '">' + t[1] + '</button>'; }).join('') + '</div>';
+    if (GD.tab === 'changes') sub = '<p class="text-[11px] text-subtle mb-3">Expiry, status and new or removed domains are caught on every sync. Nameserver changes are recorded when made from this portal, and when a domain's nameservers are read here and differ from the last known value. GoDaddy does not list nameservers in bulk.</p><div class="flex items-center gap-2 mb-3 flex-wrap">' + [['all', 'All'], ['ns_changed', 'Nameserver'], ['expired', 'Expired'], ['renewed', 'Renewed'], ['status_changed', 'Status'], ['added', 'New'], ['removed', 'Removed']].map(function (t) { return '<button onclick="GD.evType=\'' + t[0] + '\';gdRenderTable()" class="px-2.5 py-1 rounded-lg border text-[11px] font-bold ' + (GD.evType === t[0] ? 'bg-indigo-600 text-white border-indigo-600' : 'border-theme text-body hover:bg-app') + '">' + t[1] + '</button>'; }).join('') + '</div>';
     if (GD.tab === 'renewed') sub = '<div class="text-[11px] text-subtle mb-3 p-3 rounded-xl border border-dashed border-theme">Renewals are detected when a domain\'s expiry date moves forward between syncs, so tracking starts from the first sync. <b class="text-body">Receipts and order numbers are not available</b> from the GoDaddy API with the current tokens (GoDaddy refuses the orders endpoint). Receipts stay in the GoDaddy account or its email.</div>';
     el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + tools + '</div>' + sub + '<div id="gdTable" class="overflow-x-auto"></div></div>';
     gdRenderTable();
@@ -205,11 +205,11 @@ function gdRenderNs() {
         '<div class="mt-4 flex items-center gap-3 flex-wrap"><button onclick="gdNsPreview()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm ' + (n.running ? 'opacity-50 pointer-events-none' : '') + '">3. Check the domains</button><span class="text-[11px] text-subtle">Nothing changes yet. You see the current nameservers first.</span></div>';
     if (pv) {
         html += '<div class="mt-5"><div class="flex items-center gap-4 mb-2 text-xs"><b class="text-emerald-500">' + ok.length + ' ready</b>' + (bad.length ? '<b class="text-rose-500">' + bad.length + ' cannot be changed</b>' : '') + '</div>' +
-            '<div class="overflow-x-auto max-h-80 overflow-y-auto border border-theme rounded-xl"><table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] uppercase text-subtle border-b border-theme"><th class="p-2">Domain</th><th class="p-2">Account</th><th class="p-2">Current nameservers</th><th class="p-2">Result</th></tr></thead><tbody>' +
+            '<div class="overflow-x-auto max-h-80 overflow-y-auto border border-theme rounded-xl"><table class="w-full text-xs"><thead class="sticky top-0 bg-panel"><tr class="text-left text-[10px] uppercase text-subtle border-b border-theme"><th class="p-2">Domain</th><th class="p-2">Account</th><th class="p-2">Current nameservers' + (n.loadingCurrent ? ' <span class="normal-case text-indigo-500">(reading from GoDaddy...)</span>' : '') + '</th><th class="p-2">Result</th></tr></thead><tbody>' +
             pv.map(function (i) {
                 var r = n.results && n.results.filter(function (x) { return x.domain === i.domain; })[0];
                 var res = r ? (r.ok ? '<span class="text-emerald-500 font-bold">' + (r.skipped ? 'Already set' : 'Changed') + '</span>' : '<span class="text-rose-500 font-bold">Failed: ' + gdEsc(r.error) + '</span>') : (i.ok ? '<span class="text-subtle">Waiting</span>' : '<span class="text-rose-500">' + gdEsc(i.reason) + '</span>');
-                return '<tr class="border-b border-theme/60 align-top"><td class="p-2 font-bold text-heading">' + gdEsc(i.domain) + '</td><td class="p-2">' + gdEsc((i.account || '-').replace(/^Godaddy\s+/i, '')) + '</td><td class="p-2 font-mono text-[10px] text-subtle">' + gdEsc(i.currentNs || '-').replace(/,/g, '<br>') + '</td><td class="p-2">' + res + '</td></tr>';
+                return '<tr class="border-b border-theme/60 align-top"><td class="p-2 font-bold text-heading">' + gdEsc(i.domain) + '</td><td class="p-2">' + gdEsc((i.account || '-').replace(/^Godaddy\s+/i, '')) + '</td><td class="p-2 font-mono text-[10px] text-subtle">' + gdEsc(i.currentNs || (n.loadingCurrent ? '...' : '-')).replace(/,/g, '<br>') + '</td><td class="p-2">' + res + '</td></tr>';
             }).join('') + '</tbody></table></div>';
         if (ok.length && !n.results) {
             html += '<div class="mt-4 p-4 rounded-xl border border-amber-500/40 bg-amber-500/5"><p class="text-xs text-body mb-3">Change <b>' + ok.length + ' domain' + (ok.length === 1 ? '' : 's') + '</b> to:<br><span class="font-mono text-[11px] text-heading">' + (newNs ? gdEsc(newNs).replace(/,/g, ' &middot; ') : '(fill in the new nameservers above)') + '</span></p>' +
@@ -236,9 +236,25 @@ function gdNsUseSet(idx) { var r = GD.ns.recent[idx]; if (!r) return; GD.ns.serv
 function gdNsPreview() {
     var text = document.getElementById('gdNsDomains').value; GD.ns.domains = text; GD.ns.servers = document.getElementById('gdNsServers').value;
     if (!text.trim()) { if (typeof showPremiumToast === 'function') showPremiumToast('Add domains', 'Paste at least one domain first.', 'warning'); return; }
-    google.script.run.withSuccessHandler(function (r) { GD.ns.preview = r.items; GD.ns.recent = r.recentSets || []; GD.ns.results = null; GD.ns.confirmed = false; gdRenderNs(); })
+    google.script.run.withSuccessHandler(function (r) { GD.ns.preview = r.items; GD.ns.recent = r.recentSets || []; GD.ns.results = null; GD.ns.confirmed = false; gdRenderNs(); gdNsLoadCurrent(); })
         .withFailureHandler(function (e) { if (typeof showPremiumToast === 'function') showPremiumToast('Could not check', (e && e.message) || 'Try again.', 'error'); })
         .previewGodaddyNs(currentSessionToken, text);
+}
+// Fills in the current nameservers from GoDaddy (the synced list does not carry them), 10 domains per request.
+function gdNsLoadCurrent() {
+    var pv = GD.ns.preview; if (!pv) return;
+    var todo = pv.filter(function (i) { return i.ok; }).map(function (i) { return i.domain; }), chunks = [];
+    for (var i = 0; i < todo.length; i += 10) chunks.push(todo.slice(i, i + 10));
+    GD.ns.loadingCurrent = true; var stamp = pv;
+    (function next(k) {
+        if (GD.ns.preview !== stamp) return;
+        if (k >= chunks.length) { GD.ns.loadingCurrent = false; gdRenderNs(); return; }
+        google.script.run.withSuccessHandler(function (r) {
+            if (GD.ns.preview !== stamp) return;
+            r.results.forEach(function (x) { var it = pv.filter(function (p) { return p.domain === x.domain; })[0]; if (it && x.ok) it.currentNs = x.ns; });
+            gdRenderNs(); next(k + 1);
+        }).withFailureHandler(function () { next(k + 1); }).liveGodaddyNs(currentSessionToken, chunks[k]);
+    })(0);
 }
 function gdNsRun(domains) {
     var ns = gdNsLines(GD.ns.servers), chunks = [];
