@@ -1203,7 +1203,10 @@ const actions = {
     await requireGodaddyAccess(db, token);
     const seen = new Set();
     const wanted = String(domainsText || "").split(/[\s,;]+/).map(gdCleanDomain).filter(function (d) { if (!d || seen.has(d)) return false; seen.add(d); return true; }).slice(0, 300);
-    if (!wanted.length) return { items: [], recentSets: [] };
+    if (!wanted.length) {
+      const { results: sets0 } = await db.prepare("SELECT new_value ns, MAX(at) at, COUNT(*) c FROM gd_events WHERE type = 'ns_changed' AND new_value != '' GROUP BY new_value ORDER BY at DESC LIMIT 6").all();
+      return { items: [], recentSets: sets0 };
+    }
     const found = {};
     for (let i = 0; i < wanted.length; i += 80) {
       const part = wanted.slice(i, i + 80);
