@@ -12,7 +12,7 @@ var GD_LAPSED_LABEL = {
     UPDATED_OWNERSHIP: 'Moved to another owner',
     UPDATE_ACCOUNT_AUCTION: 'Going to auction'
 };
-var GD_EVENT_LABEL = { ns_failed: 'NS change failed', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
+var GD_EVENT_LABEL = { ns_failed: 'NS change failed', brand_assigned: 'Brand assigned', renewed: 'Renewed', expired: 'Expired', status_changed: 'Status changed', ns_changed: 'Nameserver changed', added: 'New domain', removed: 'Removed' };
 
 function gdEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function gdN(v) { return Number(v || 0).toLocaleString('en-US'); }
@@ -78,7 +78,7 @@ function gdModel() {
     var cut14 = Date.now() - 14 * 86400000;
     var events = d.events.map(function (e) { e.brand = brandMap[e.domain] || ''; e.accountShort = (e.account || '').replace(/^Godaddy\s+/i, ''); return e; });
     var recent = function (t) { return events.filter(function (e) { return e.type === t && gdTime(e.at) && gdTime(e.at).getTime() >= cut14; }); };
-    return { rows: rows, active: active, renewal: renewal, lapsed: lapsed, events: events, renewed14: recent('renewed'), ns14: recent('ns_changed'), lapsedNow: lapsed.filter(function (r) { return r.days >= -90; }) };
+    return { unassigned: active.filter(function (r) { return !r.brand; }).sort(function (a, b) { return a.domain.localeCompare(b.domain); }), rows: rows, active: active, renewal: renewal, lapsed: lapsed, events: events, renewed14: recent('renewed'), ns14: recent('ns_changed'), lapsedNow: lapsed.filter(function (r) { return r.days >= -90; }) };
 }
 
 // ---- rendering ----
@@ -115,9 +115,9 @@ function gdRenderAccounts() {
     var el = document.getElementById('gdAccounts'); if (!el) return;
     el.innerHTML = '<div class="flex flex-wrap gap-2 mb-5">' + GD.data.accounts.map(function (a) {
         var short = a.account.replace(/^Godaddy\s+/i, '');
-        return a.ok ? '<span class="px-3 py-1.5 rounded-lg border border-theme text-[11px] bg-panel text-body"><b class="text-heading">' + gdEsc(short) + '</b> &middot; ' + gdN(a.domains) + ' domains <span class="text-emerald-500 font-bold">OK</span></span>'
+        return a.ok && a.error ? '<span class="px-3 py-1.5 rounded-lg border border-amber-500/40 text-[11px] bg-amber-500/10 text-amber-600" title="' + gdEsc(a.error) + '"><b>' + gdEsc(short) + '</b> &middot; ' + gdN(a.domains) + ' domains &middot; check: ' + gdEsc(a.error) + '</span>' : a.ok ? '<span class="px-3 py-1.5 rounded-lg border border-theme text-[11px] bg-panel text-body"><b class="text-heading">' + gdEsc(short) + '</b> &middot; ' + gdN(a.domains) + ' domains <span class="text-emerald-500 font-bold">OK</span></span>'
             : '<span class="px-3 py-1.5 rounded-lg border border-rose-500/40 text-[11px] bg-rose-500/10 text-rose-500" title="' + gdEsc(a.error) + '"><b>' + gdEsc(short) + '</b> &middot; token problem: ' + gdEsc(a.error) + '</span>';
-    }).join('') + '</div>';
+    }).join('') + (function () { var u = gdModel().unassigned.length; return u ? '<button onclick="gdSetTab(\'unassigned\')" class="px-3 py-1.5 rounded-lg border border-indigo-500/40 text-[11px] font-bold bg-indigo-600/10 text-indigo-500 hover:bg-indigo-600/20">' + u + ' domain' + (u === 1 ? '' : 's') + ' have no brand yet. Assign them</button>' : ''; })() + '</div>';
 }
 
 function gdSetTab(t) { GD.tab = t; GD.q = ''; GD.account = 'all'; gdRenderBody(); }
@@ -125,7 +125,8 @@ function gdTabBtn(id, label, n) { var on = GD.tab === id; return '<button onclic
 
 function gdRenderBody() {
     var el = document.getElementById('gdBody'); if (!el) return; var m = gdModel();
-    var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + '</div>';
+    var tabs = '<div class="flex items-center gap-0.5 bg-app border border-theme rounded-xl p-1 shadow-sm flex-wrap">' + gdTabBtn('renewal', 'For renewal', m.renewal.length) + gdTabBtn('lapsed', 'Not renewed', m.lapsed.length) + gdTabBtn('renewed', 'Renewed', m.events.filter(function (e) { return e.type === 'renewed'; }).length) + gdTabBtn('changes', 'Changes', m.events.length) + gdTabBtn('all', 'All domains', m.rows.length) + gdTabBtn('unassigned', 'No brand yet', m.unassigned.length) + gdTabBtn('removed', 'Removed', (GD.data.removed || []).length) + gdTabBtn('receipts', 'Receipts', GD_RC.rows ? GD_RC.rows.length : null) + '</div>';
+    if (GD.tab === 'receipts') { el.innerHTML = '<div class="panel-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' + tabs + '</div><div id="gdRc"></div></div>'; gdRcRender(); if (typeof lucide !== 'undefined') lucide.createIcons(); return; }
     var accounts = GD.data.accounts.map(function (a) { return a.account.replace(/^Godaddy\s+/i, ''); });
     var tools = '<div class="flex items-center gap-2 flex-wrap">' +
         '<select onchange="GD.account=this.value;gdRenderTable()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="all">All accounts</option>' + accounts.map(function (a) { return '<option value="' + gdEsc(a) + '"' + (GD.account === a ? ' selected' : '') + '>' + gdEsc(a) + '</option>'; }).join('') + '</select>' +
@@ -157,6 +158,16 @@ function gdCurrentRows() {
         rows = m.lapsed.filter(match);
         cols = [['Domain', dom, function (r) { return r.domain; }], ['Brand', function (r) { return gdEsc(r.brand || '-'); }, function (r) { return r.brand; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }], ['Expired on', function (r) { return gdDay(r.expires); }, function (r) { return r.expires; }],
             ['Days ago', function (r) { return '<b class="text-rose-500">' + Math.abs(r.days) + '</b>'; }, function (r) { return Math.abs(r.days); }], ['What it means', function (r) { return gdEsc(GD_LAPSED_LABEL[r.status] || r.status); }, function (r) { return r.status; }]];
+    } else if (t === 'unassigned') {
+        var allBrands = gdBrandList();
+        rows = m.unassigned.filter(match);
+        cols = [selCol, ['Domain', dom, function (r) { return r.domain; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }], ['Expires', function (r) { return gdDay(r.expires); }, function (r) { return r.expires; }],
+            ['Suggested brand', function (r) { var s = gdSuggestBrand(r.domain, allBrands); return s ? '<button onclick="gdAsOpen([this.getAttribute(\'data-d\')],this.getAttribute(\'data-b\'))" data-d="' + gdEsc(r.domain) + '" data-b="' + gdEsc(s) + '" class="px-2.5 py-1 rounded-lg bg-indigo-600/10 text-indigo-500 text-[11px] font-bold hover:bg-indigo-600/20">' + gdEsc(s) + '</button>' : '<span class="text-subtle">-</span>'; }, function (r) { return gdSuggestBrand(r.domain, allBrands); }],
+            ['', function (r) { return '<button onclick="gdAsOpen([this.getAttribute(\'data-d\')])" data-d="' + gdEsc(r.domain) + '" class="px-2.5 py-1 rounded-lg border border-theme text-[11px] font-bold text-body hover:bg-app hover:border-indigo-400 whitespace-nowrap">Add to brand</button>'; }, function () { return ''; }, true]];
+    } else if (t === 'removed') {
+        rows = (GD.data.removed || []).map(function (r) { return { domain: r.domain, brand: r.brand, account: r.account.replace(/^Godaddy\s+/i, ''), removedAt: r.removedAt, lastStatus: r.lastStatus, lastExpires: r.lastExpires, hadRecord: r.hadRecord }; }).filter(match);
+        cols = [['Removed on', function (r) { return gdDay(r.removedAt); }, function (r) { return r.removedAt; }], ['Domain', dom, function (r) { return r.domain; }], ['Brand', function (r) { return gdEsc(r.brand || '-'); }, function (r) { return r.brand; }], ['Account', function (r) { return gdEsc(r.account); }, function (r) { return r.account; }],
+            ['Last expiry', function (r) { return gdDay(r.lastExpires); }, function (r) { return r.lastExpires; }], ['Last status', function (r) { return gdEsc(String(r.lastStatus || '-').replace(/_/g, ' ').toLowerCase()); }, function (r) { return r.lastStatus; }], ['Brand record', function (r) { return r.hadRecord ? '<span class="text-emerald-500 font-bold">Archived</span>' : '<span class="text-subtle">None</span>'; }, function (r) { return r.hadRecord ? 'Archived' : 'None'; }]];
     } else if (t === 'renewed' || t === 'changes') {
         var types = t === 'renewed' ? ['renewed'] : (GD.evType === 'all' ? null : [GD.evType]);
         rows = m.events.filter(function (e) { return (!types || types.indexOf(e.type) !== -1) && match(Object.assign({}, e, { account: e.accountShort })); });
@@ -485,7 +496,8 @@ function gdSelCount() { GD.sel = GD.sel || {}; return Object.keys(GD.sel).filter
 function gdRenderSelBar() {
     var el = document.getElementById('gdSelBar'); if (!el) return;
     var n = gdSelCount();
-    el.innerHTML = n ? '<div class="flex items-center gap-3 flex-wrap mb-3 px-4 py-2.5 rounded-xl bg-indigo-600/10 border border-indigo-500/30"><b class="text-xs text-heading">' + n + ' domain' + (n === 1 ? '' : 's') + ' selected</b><button onclick="gdEditNs(Object.keys(GD.sel).filter(function (k) { return GD.sel[k]; }))" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Edit nameservers</button><button onclick="GD.sel={};gdRenderTable();gdRenderSelBar()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Clear</button></div>' : '';
+    var pickedFn = 'Object.keys(GD.sel).filter(function (k) { return GD.sel[k]; })';
+    el.innerHTML = n ? '<div class="flex items-center gap-3 flex-wrap mb-3 px-4 py-2.5 rounded-xl bg-indigo-600/10 border border-indigo-500/30"><b class="text-xs text-heading">' + n + ' domain' + (n === 1 ? '' : 's') + ' selected</b>' + (GD.tab === 'unassigned' ? '<button onclick="gdAsOpen(' + pickedFn + ')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Add to brand</button>' : '<button onclick="gdEditNs(' + pickedFn + ')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold hover:bg-indigo-700">Edit nameservers</button>') + '<button onclick="GD.sel={};gdRenderTable();gdRenderSelBar()" class="px-3 py-1.5 bg-panel border border-theme rounded-lg text-[11px] font-bold text-body hover:bg-app">Clear</button></div>' : '';
 }
 function gdToggleSel(d, on) { GD.sel = GD.sel || {}; if (on) GD.sel[d] = true; else delete GD.sel[d]; gdRenderSelBar(); }
 function gdToggleAll(on) { var rows = gdCurrentRows().rows.slice(0, 300); GD.sel = GD.sel || {}; rows.forEach(function (r) { if (r.status === 'ACTIVE') { if (on) GD.sel[r.domain] = true; else delete GD.sel[r.domain]; } }); gdRenderTable(); gdRenderSelBar(); }
@@ -494,4 +506,210 @@ function gdEditNs(domains) {
     if (GD.ns && GD.ns.running) return;
     GD.ns = gdNsFresh(); GD.ns.selected = (domains || []).filter(Boolean).slice(0, GD_NS_MAX); GD.ns.step = GD.ns.selected.length ? 2 : 1;
     gdOpenNs(true);
+}
+
+
+// ============================================================
+// Target brand link: GoDaddy domains that have no brand yet, assigned to an existing or a new brand.
+// ============================================================
+function gdBrandList() {
+    var c = {};
+    (GD.data ? GD.data.brands : []).forEach(function (b) { var k = String(b.brand || '').trim(); if (k) c[k] = (c[k] || 0) + 1; });
+    return Object.keys(c).map(function (k) { return { name: k, count: c[k] }; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+}
+function gdSuggestBrand(domain, brands) {
+    var label = String(domain || '').toLowerCase().replace(/^[a-z0-9]{1,3}\./, '').split('.')[0].replace(/[^a-z0-9]/g, ''), best = '';
+    brands.forEach(function (b) {
+        var n = b.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (n.length >= 4 && (label.indexOf(n) !== -1 || (label.length >= 5 && n.indexOf(label) === 0)) && n.length > best.length) best = b.name;
+    });
+    return best;
+}
+function gdNormBrand(s) { return String(s || '').toUpperCase().replace(/\s+/g, '').replace(/[^A-Z0-9_-]/g, ''); }
+
+function gdAsOpen(domains, brand) {
+    gdInjectFont();
+    var m = document.getElementById('gdAsModal');
+    if (!m) {
+        m = document.createElement('div'); m.id = 'gdAsModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(2,6,23,.62);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;padding:5vh 16px;overflow-y:auto';
+        m.onmousedown = function (e) { if (e.target === m) gdAsClose(); };
+        document.body.appendChild(m);
+        document.addEventListener('keydown', function (e) { var mm = document.getElementById('gdAsModal'); if (e.key === 'Escape' && mm && mm.style.display !== 'none') gdAsClose(); });
+    }
+    GD.as = { domains: (domains || []).slice(0, 300), mode: brand ? 'existing' : 'existing', q: '', pick: brand || '', newName: '', sort: 'name', running: false, result: null, discard: false };
+    m.style.display = 'flex';
+    gdAsRender();
+}
+function gdAsHide() { var m = document.getElementById('gdAsModal'); if (m) m.style.display = 'none'; }
+function gdAsClose() {
+    var a = GD.as; if (!a) return gdAsHide();
+    if (a.running) return;
+    if (!a.result && (a.pick || a.newName)) { a.discard = true; gdAsRender(); return; }
+    gdAsHide(); if (a.result) { GD.sel = {}; gdLoad(false); }
+}
+function gdAsTarget() { var a = GD.as; return a.mode === 'new' ? gdNormBrand(a.newName) : a.pick; }
+function gdAsProblem() {
+    var a = GD.as, t = gdAsTarget(); if (a.mode === 'existing') return t ? '' : 'Pick a brand from the list.';
+    if (!a.newName.trim()) return 'Type the new brand name.';
+    if (t.length < 2) return 'Use at least 2 letters or numbers.';
+    if (gdBrandList().some(function (b) { return b.name.toUpperCase() === t; })) return t + ' already exists. Switch to Existing brand.';
+    return '';
+}
+function gdAsRender() {
+    var m = document.getElementById('gdAsModal'), a = GD.as; if (!m || !a) return;
+    var n = a.domains.length;
+    var chips = a.domains.slice(0, 8).map(function (d) { return '<span class="px-2 py-1 rounded-lg bg-app border border-theme text-[10px] font-semibold text-body">' + gdEsc(d) + '</span>'; }).join('') + (n > 8 ? '<span class="text-[10px] text-subtle self-center">and ' + (n - 8) + ' more</span>' : '');
+    var body;
+    if (a.result) {
+        var r = a.result;
+        body = '<div class="text-center py-4"><div class="text-4xl font-black text-emerald-500">' + r.added.length + '</div><p class="text-xs text-body mt-1">domain' + (r.added.length === 1 ? '' : 's') + ' added to <b class="text-heading">' + gdEsc(r.brand) + '</b></p></div>' +
+            (r.skipped.length ? '<div class="mt-2 p-3 rounded-xl border border-amber-500/40 bg-amber-500/5 text-[11px] text-body"><b>' + r.skipped.length + ' skipped</b><br>' + r.skipped.slice(0, 20).map(function (s) { return gdEsc(s.domain) + ' - ' + gdEsc(s.reason); }).join('<br>') + '</div>' : '') +
+            '<p class="text-[11px] text-subtle mt-3">They now show under this brand in the Target Brands list. Add them to your Google Sheet if you still keep one.</p>';
+    } else {
+        var seg = '<div class="inline-flex gap-0.5 bg-app border border-theme rounded-xl p-1 mb-3">' + [['existing', 'Existing brand'], ['new', 'New brand']].map(function (x) { return '<button onclick="GD.as.mode=\'' + x[0] + '\';gdAsRender()" class="px-4 py-1.5 rounded-lg text-xs font-bold ' + (a.mode === x[0] ? 'bg-indigo-600 text-white shadow-sm' : 'text-subtle hover:text-body') + '">' + x[1] + '</button>'; }).join('') + '</div>';
+        var inner;
+        if (a.mode === 'existing') {
+            inner = '<div class="flex gap-2 mb-2"><input id="gdAsQ" oninput="GD.as.q=this.value;gdAsRenderList()" value="' + gdEsc(a.q) + '" placeholder="Search brand..." class="flex-1 px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none"><select onchange="GD.as.sort=this.value;gdAsRenderList()" class="px-2.5 py-2 bg-app border border-theme rounded-xl text-xs text-body"><option value="name"' + (a.sort === 'name' ? ' selected' : '') + '>Name A-Z</option><option value="count"' + (a.sort === 'count' ? ' selected' : '') + '>Most domains</option></select></div><div id="gdAsList" class="border border-theme rounded-xl overflow-y-auto" style="max-height:260px"></div>';
+        } else {
+            inner = '<label class="text-[11px] font-bold text-heading">New brand name</label><input id="gdAsNew" oninput="GD.as.newName=this.value;gdAsRefreshNew()" value="' + gdEsc(a.newName) + '" placeholder="e.g. LUCKYWIN88" class="mt-1.5 w-full px-3 py-2.5 bg-app border border-theme rounded-xl text-sm font-bold text-body focus:outline-none"><p id="gdAsNewHint" class="text-[11px] mt-2"></p>';
+        }
+        body = '<div class="flex flex-wrap gap-1.5 mb-4">' + chips + '</div>' + seg + inner;
+    }
+    var disc = a.discard ? '<div style="position:absolute;inset:0;background:rgba(2,6,23,.55);border-radius:1rem;display:flex;align-items:center;justify-content:center;padding:20px;z-index:5"><div class="panel-card p-6" style="max-width:380px"><h4 class="text-base font-black text-heading">Discard this?</h4><p class="text-xs text-body mt-2">Your brand choice is not saved yet. Nothing has been added.</p><div class="flex justify-end gap-2 mt-5"><button onclick="GD.as.discard=false;gdAsRender()" class="px-4 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Keep editing</button><button onclick="gdAsHide()" class="px-4 py-2 bg-rose-600 text-white rounded-lg text-xs font-bold">Yes, discard</button></div></div></div>' : '';
+    m.innerHTML = '<div class="panel-card" style="position:relative;width:min(560px,100%);padding:0;border-radius:1rem;box-shadow:0 30px 70px rgba(0,0,0,.45)">' +
+        '<div style="padding:20px 24px 14px;border-bottom:1px solid var(--border-theme)" class="flex items-start justify-between gap-3"><div><h3 class="text-base font-black text-heading">Add ' + n + ' domain' + (n === 1 ? '' : 's') + ' to a brand</h3><p class="text-[11px] text-subtle mt-1">Links the GoDaddy domains to a Target Brand.</p></div><button onclick="gdAsClose()" aria-label="Close" class="text-subtle hover:text-heading text-2xl leading-none px-2">&times;</button></div>' +
+        '<div style="padding:18px 24px">' + body + '</div>' +
+        '<div style="padding:12px 24px;border-top:1px solid var(--border-theme)" class="flex items-center justify-between gap-3 flex-wrap">' + (a.result ? '<span></span><button onclick="gdAsClose()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Done</button>' : '<button onclick="gdAsClose()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Cancel</button><div class="flex items-center gap-3"><span id="gdAsHint" class="text-[11px] text-subtle"></span><button id="gdAsGo" onclick="gdAsApply()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm">Add to brand</button></div>') + '</div>' + disc + '</div>';
+    if (!a.result) { if (a.mode === 'existing') gdAsRenderList(); else gdAsRefreshNew(); }
+    gdAsRefreshNav();
+}
+function gdAsRenderList() {
+    var el = document.getElementById('gdAsList'); if (!el) return;
+    var a = GD.as, q = a.q.trim().toLowerCase();
+    var list = gdBrandList().filter(function (b) { return !q || b.name.toLowerCase().indexOf(q) !== -1; });
+    list.sort(function (x, y) { return a.sort === 'count' ? (y.count - x.count) || x.name.localeCompare(y.name) : x.name.localeCompare(y.name); });
+    var sug = a.domains.length === 1 ? gdSuggestBrand(a.domains[0], gdBrandList()) : '';
+    el.innerHTML = list.length ? list.map(function (b) {
+        return '<label class="flex items-center gap-3 px-3 py-2 border-b border-theme/60 hover:bg-app cursor-pointer text-xs"><input type="radio" name="gdAsBrand" ' + (a.pick === b.name ? 'checked' : '') + ' onchange="GD.as.pick=this.value;gdAsRefreshNav()" value="' + gdEsc(b.name) + '"><span class="font-bold text-heading flex-1">' + gdEsc(b.name) + (sug === b.name ? ' <span class="ml-1 px-1.5 py-0.5 rounded bg-indigo-600/15 text-indigo-500 text-[9px] font-bold">SUGGESTED</span>' : '') + '</span><span class="text-subtle">' + b.count + ' domain' + (b.count === 1 ? '' : 's') + '</span></label>';
+    }).join('') : '<p class="text-xs text-subtle p-6 text-center">No brand matches. Use New brand to create it.</p>';
+    gdAsRefreshNav();
+}
+function gdAsRefreshNew() {
+    var h = document.getElementById('gdAsNewHint'); if (!h) return;
+    var a = GD.as, t = gdNormBrand(a.newName), p = a.newName.trim() ? gdAsProblem() : '';
+    h.className = 'text-[11px] mt-2 ' + (p ? 'text-rose-500' : 'text-subtle');
+    h.textContent = p || (t ? 'Will be created as ' + t : 'Letters and numbers only. It is saved in capitals, no spaces.');
+    gdAsRefreshNav();
+}
+function gdAsRefreshNav() {
+    var b = document.getElementById('gdAsGo'), h = document.getElementById('gdAsHint'); if (!b) return;
+    var a = GD.as, p = gdAsProblem(), can = !p && !a.running && a.domains.length > 0;
+    b.style.opacity = can ? '1' : '.45'; b.style.pointerEvents = can ? 'auto' : 'none';
+    b.textContent = a.running ? 'Adding...' : (gdAsTarget() ? 'Add to ' + gdAsTarget() : 'Add to brand');
+    if (h) h.textContent = a.mode === 'existing' ? '' : '';
+}
+function gdAsApply() {
+    var a = GD.as; if (a.running || gdAsProblem()) return;
+    a.running = true; gdAsRefreshNav();
+    google.script.run.withSuccessHandler(function (r) { a.running = false; a.result = r; gdAsRender(); gdLoad(false); })
+        .withFailureHandler(function (e) { a.running = false; gdAsRefreshNav(); if (typeof showPremiumToast === 'function') showPremiumToast('Could not add', (e && e.message) || 'Try again.', 'error'); })
+        .assignGodaddyBrand(currentSessionToken, a.domains, gdAsTarget(), a.mode === 'new' ? 'new' : 'existing');
+}
+function gdAssignRows(domains) { gdAsOpen(domains); }
+
+// ============================================================
+// Receipts: files from GoDaddy, stored in R2 and listed here.
+// ============================================================
+var GD_RC = { rows: null, q: '', sort: 'paidAt', dir: -1, loading: false };
+function gdRcLoad(force) {
+    if (GD_RC.loading) return; GD_RC.loading = true;
+    google.script.run.withSuccessHandler(function (r) { GD_RC.rows = r.receipts || []; GD_RC.loading = false; if (GD.tab === 'receipts') gdRcRender(); })
+        .withFailureHandler(function (e) { GD_RC.loading = false; GD_RC.rows = GD_RC.rows || []; if (typeof showPremiumToast === 'function') showPremiumToast('Could not load receipts', (e && e.message) || '', 'error'); if (GD.tab === 'receipts') gdRcRender(); })
+        .listGodaddyReceipts(currentSessionToken);
+}
+function gdRcUrl(id) { return 'https://bbc-api-gateway.ea-nix.workers.dev/?action=downloadGodaddyReceipt&id=' + id + '&token=' + encodeURIComponent(currentSessionToken); }
+function gdRcSize(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
+function gdRcSortBy(k) { if (GD_RC.sort === k) GD_RC.dir *= -1; else { GD_RC.sort = k; GD_RC.dir = k === 'paidAt' ? -1 : 1; } gdRcRender(); }
+function gdRcRender() {
+    var el = document.getElementById('gdRc'); if (!el) return;
+    if (GD_RC.rows == null) { el.innerHTML = '<p class="text-sm text-subtle py-8 text-center">Loading receipts...</p>'; gdRcLoad(); return; }
+    el.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-4"><div id="gdRcCount" class="text-xs text-subtle"></div><div class="flex gap-2"><input oninput="GD_RC.q=this.value;gdRcRenderTable()" id="gdRcQ" value="' + gdEsc(GD_RC.q) + '" placeholder="Search order, domain, note..." class="px-3 py-2 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none w-56"><button onclick="gdRcOpen()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm">Upload receipt</button></div></div><div id="gdRcTable"></div>';
+    gdRcRenderTable();
+}
+function gdRcRenderTable() {
+    var el = document.getElementById('gdRcTable'); if (!el) return;
+    var q = GD_RC.q.trim().toLowerCase();
+    var rows = GD_RC.rows.filter(function (r) { return !q || (r.orderNo + ' ' + r.domains + ' ' + r.account + ' ' + r.note + ' ' + r.filename).toLowerCase().indexOf(q) !== -1; });
+    rows.sort(function (a, b) { var x = a[GD_RC.sort], y = b[GD_RC.sort]; return gdNsCmp(x == null ? '' : x, y == null ? '' : y, GD_RC.dir) || (b.id - a.id); });
+    var total = rows.reduce(function (s, r) { return s + (r.currency === 'USD' && r.amount ? +r.amount : 0); }, 0);
+    var th = function (l, k) { return gdNsSortTh(l, k, GD_RC.sort, GD_RC.dir, 'gdRcSortBy'); };
+    var cEl = document.getElementById('gdRcCount'); if (cEl) cEl.innerHTML = '<b class="text-heading">' + rows.length + '</b> receipt' + (rows.length === 1 ? '' : 's') + (total ? ' &middot; USD ' + total.toFixed(2) + ' in total' : '');
+    el.innerHTML = (rows.length ? '<div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] text-subtle border-b border-theme">' + th('Paid on', 'paidAt') + th('Order no.', 'orderNo') + th('Amount', 'amount') + th('Account', 'account') + '<th class="p-2">Domains</th>' + th('Uploaded', 'uploadedAt') + '<th class="p-2">File</th><th class="p-2"></th></tr></thead><tbody>' +
+            rows.map(function (r) {
+                var doms = r.domains ? r.domains.split(',') : [];
+                return '<tr class="border-b border-theme/60 align-top"><td class="p-2 whitespace-nowrap">' + (r.paidAt ? gdEsc(gdDay(r.paidAt + ' 00:00:00')) : '-') + '</td><td class="p-2 font-bold text-heading">' + gdEsc(r.orderNo || '-') + '</td><td class="p-2 whitespace-nowrap">' + (r.amount != null ? gdEsc(r.currency) + ' ' + Number(r.amount).toFixed(2) : '-') + '</td><td class="p-2">' + gdEsc((r.account || '-').replace(/^Godaddy\s+/i, '')) + '</td>' +
+                    '<td class="p-2" title="' + gdEsc(doms.join(', ')) + '">' + (doms.length ? gdEsc(doms.slice(0, 2).join(', ')) + (doms.length > 2 ? ' <span class="text-subtle">+' + (doms.length - 2) + ' more</span>' : '') : '<span class="text-subtle">-</span>') + (r.note ? '<div class="text-subtle text-[10px] mt-0.5">' + gdEsc(r.note) + '</div>' : '') + '</td>' +
+                    '<td class="p-2 text-subtle whitespace-nowrap">' + gdEsc(gdDay(r.uploadedAt)) + '<br><span class="text-[10px]">' + gdEsc(r.uploaderName || r.uploadedBy) + '</span></td><td class="p-2 whitespace-nowrap"><a href="' + gdRcUrl(r.id) + '" target="_blank" class="text-indigo-500 font-bold hover:underline">View</a> <span class="text-subtle text-[10px]">' + gdRcSize(r.size) + '</span></td>' +
+                    '<td class="p-2 text-right"><button onclick="gdRcDelete(' + r.id + ')" class="text-subtle hover:text-rose-500 text-[11px] font-bold">Delete</button></td></tr>';
+            }).join('') + '</tbody></table></div>' : '<div class="text-center py-12"><p class="text-sm font-bold text-heading">No receipts yet</p><p class="text-xs text-subtle mt-1">Upload the receipt PDF or screenshot from GoDaddy, with its order number, so renewals have proof.</p></div>');
+}
+function gdRcDelete(id) {
+    var go = function () {
+        google.script.run.withSuccessHandler(function () { GD_RC.rows = (GD_RC.rows || []).filter(function (r) { return r.id !== id; }); gdRcRender(); if (typeof showPremiumToast === 'function') showPremiumToast('Receipt deleted', '', 'success'); })
+            .withFailureHandler(function (e) { if (typeof showPremiumToast === 'function') showPremiumToast('Could not delete', (e && e.message) || '', 'error'); }).deleteGodaddyReceipt(currentSessionToken, id);
+    };
+    if (typeof showPremiumConfirm === 'function') showPremiumConfirm('Delete this receipt?', 'The file is removed for everyone. This cannot be undone.', 'Delete', go); else go();
+}
+function gdRcOpen(domains) {
+    gdInjectFont();
+    var m = document.getElementById('gdRcModal');
+    if (!m) {
+        m = document.createElement('div'); m.id = 'gdRcModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(2,6,23,.62);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;padding:4vh 16px;overflow-y:auto';
+        m.onmousedown = function (e) { if (e.target === m) gdRcClose(); };
+        document.body.appendChild(m);
+        document.addEventListener('keydown', function (e) { var mm = document.getElementById('gdRcModal'); if (e.key === 'Escape' && mm && mm.style.display !== 'none') gdRcClose(); });
+    }
+    GD_RC.form = { file: null, orderNo: '', amount: '', currency: 'USD', paidAt: new Date().toISOString().slice(0, 10), account: '', domains: (domains || []).join('\n'), note: '', busy: false, discard: false };
+    m.style.display = 'flex'; gdRcFormRender();
+}
+function gdRcHide() { var m = document.getElementById('gdRcModal'); if (m) m.style.display = 'none'; }
+function gdRcDirty() { var f = GD_RC.form; return f && (f.file || f.orderNo || f.amount || f.domains.trim() || f.note); }
+function gdRcClose() { var f = GD_RC.form; if (f && f.busy) return; if (gdRcDirty()) { f.discard = true; gdRcFormRender(); return; } gdRcHide(); }
+function gdRcFormRender() {
+    var m = document.getElementById('gdRcModal'), f = GD_RC.form; if (!m || !f) return;
+    var accts = (GD.data ? GD.data.accounts : []).map(function (a) { return a.account; });
+    var inp = 'w-full px-3 py-2.5 bg-app border border-theme rounded-xl text-xs text-body focus:outline-none';
+    var disc = f.discard ? '<div style="position:absolute;inset:0;background:rgba(2,6,23,.55);border-radius:1rem;display:flex;align-items:center;justify-content:center;padding:20px;z-index:5"><div class="panel-card p-6" style="max-width:380px"><h4 class="text-base font-black text-heading">Discard this receipt?</h4><p class="text-xs text-body mt-2">The file and details you entered are not saved yet.</p><div class="flex justify-end gap-2 mt-5"><button onclick="GD_RC.form.discard=false;gdRcFormRender()" class="px-4 py-2 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Keep editing</button><button onclick="gdRcHide()" class="px-4 py-2 bg-rose-600 text-white rounded-lg text-xs font-bold">Yes, discard</button></div></div></div>' : '';
+    m.innerHTML = '<div class="panel-card" style="position:relative;width:min(640px,100%);padding:0;border-radius:1rem;box-shadow:0 30px 70px rgba(0,0,0,.45)">' +
+        '<div style="padding:20px 24px 14px;border-bottom:1px solid var(--border-theme)" class="flex items-start justify-between gap-3"><div><h3 class="text-base font-black text-heading">Upload a GoDaddy receipt</h3><p class="text-[11px] text-subtle mt-1">PDF, PNG, JPG or WEBP, up to 8 MB.</p></div><button onclick="gdRcClose()" aria-label="Close" class="text-subtle hover:text-heading text-2xl leading-none px-2">&times;</button></div>' +
+        '<div style="padding:18px 24px" class="grid grid-cols-2 gap-4"><div class="col-span-2"><div id="gdRcDrop" ondragover="event.preventDefault()" ondrop="event.preventDefault();gdRcPick(event.dataTransfer.files[0])" onclick="document.getElementById(\'gdRcFile\').click()" class="border-2 border-dashed border-theme rounded-xl p-6 text-center cursor-pointer hover:border-indigo-400 ' + (f.file ? 'bg-emerald-500/5' : '') + '">' +
+        (f.file ? '<p class="text-sm font-bold text-heading">' + gdEsc(f.file.name) + '</p><p class="text-[11px] text-subtle mt-1">' + gdRcSize(f.file.size) + ' &middot; click to change</p>' : '<p class="text-sm font-bold text-heading">Drop the receipt here</p><p class="text-[11px] text-subtle mt-1">or click to choose a file</p>') + '</div><input id="gdRcFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" class="hidden" onchange="gdRcPick(this.files[0])"></div>' +
+        '<div><label class="text-[11px] font-bold text-heading">Order number</label><input id="gdRcOrder" oninput="GD_RC.form.orderNo=this.value" value="' + gdEsc(f.orderNo) + '" placeholder="e.g. 3456789012" class="mt-1.5 ' + inp + '"></div>' +
+        '<div><label class="text-[11px] font-bold text-heading">Paid on</label><input type="date" oninput="GD_RC.form.paidAt=this.value" value="' + gdEsc(f.paidAt) + '" class="mt-1.5 ' + inp + '"></div>' +
+        '<div><label class="text-[11px] font-bold text-heading">Amount</label><div class="flex gap-2 mt-1.5"><select onchange="GD_RC.form.currency=this.value" class="px-2 py-2.5 bg-app border border-theme rounded-xl text-xs text-body"><option' + (f.currency === 'USD' ? ' selected' : '') + '>USD</option><option' + (f.currency === 'PHP' ? ' selected' : '') + '>PHP</option></select><input oninput="GD_RC.form.amount=this.value" value="' + gdEsc(f.amount) + '" inputmode="decimal" placeholder="0.00" class="' + inp + '"></div></div>' +
+        '<div><label class="text-[11px] font-bold text-heading">GoDaddy account</label><select onchange="GD_RC.form.account=this.value" class="mt-1.5 ' + inp + '"><option value="">Not sure</option>' + accts.map(function (a) { return '<option value="' + gdEsc(a) + '"' + (f.account === a ? ' selected' : '') + '>' + gdEsc(a.replace(/^Godaddy\s+/i, '')) + '</option>'; }).join('') + '</select></div>' +
+        '<div class="col-span-2"><label class="text-[11px] font-bold text-heading">Domains on this receipt <span class="text-subtle font-normal">optional, one per line</span></label><textarea oninput="GD_RC.form.domains=this.value" rows="3" class="mt-1.5 ' + inp + ' font-semibold">' + gdEsc(f.domains) + '</textarea></div>' +
+        '<div class="col-span-2"><label class="text-[11px] font-bold text-heading">Note <span class="text-subtle font-normal">optional</span></label><input oninput="GD_RC.form.note=this.value" value="' + gdEsc(f.note) + '" maxlength="300" class="mt-1.5 ' + inp + '"></div></div>' +
+        '<div style="padding:12px 24px;border-top:1px solid var(--border-theme)" class="flex items-center justify-between gap-3"><button onclick="gdRcClose()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Cancel</button><div class="flex items-center gap-3"><span id="gdRcHint" class="text-[11px] text-subtle"></span><button id="gdRcGo" onclick="gdRcSubmit()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm" ' + (f.file && !f.busy ? '' : 'style="opacity:.45;pointer-events:none"') + '>' + (f.busy ? 'Uploading...' : 'Save receipt') + '</button></div></div>' + disc + '</div>';
+}
+function gdRcPick(file) {
+    if (!file) return; var f = GD_RC.form;
+    if (!/\.(pdf|png|jpe?g|webp)$/i.test(file.name)) { if (typeof showPremiumToast === 'function') showPremiumToast('Wrong file type', 'Use a PDF, PNG, JPG or WEBP file.', 'warning'); return; }
+    if (file.size > 8 * 1024 * 1024) { if (typeof showPremiumToast === 'function') showPremiumToast('File too large', 'The limit is 8 MB.', 'warning'); return; }
+    f.file = file; gdRcFormRender();
+}
+function gdRcSubmit() {
+    var f = GD_RC.form; if (!f || !f.file || f.busy) return;
+    f.busy = true; gdRcFormRender();
+    var reader = new FileReader();
+    reader.onload = function () {
+        var b64 = String(reader.result).split(',')[1] || '';
+        google.script.run.withSuccessHandler(function () { f.busy = false; f.orderNo = f.amount = f.note = ''; f.domains = ''; f.file = null; gdRcHide(); GD_RC.rows = null; gdRcLoad(true); if (typeof showPremiumToast === 'function') showPremiumToast('Receipt saved', 'It is now listed under Receipts.', 'success'); })
+            .withFailureHandler(function (e) { f.busy = false; gdRcFormRender(); if (typeof showPremiumToast === 'function') showPremiumToast('Could not save', (e && e.message) || 'Try again.', 'error'); })
+            .uploadGodaddyReceipt(currentSessionToken, { orderNo: f.orderNo, amount: f.amount, currency: f.currency, paidAt: f.paidAt, account: f.account, domains: f.domains, note: f.note }, b64, f.file.name, f.file.type);
+    };
+    reader.onerror = function () { f.busy = false; gdRcFormRender(); };
+    reader.readAsDataURL(f.file);
 }

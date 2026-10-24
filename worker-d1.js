@@ -217,7 +217,7 @@ async function syncGodaddyAccounts(db, env) {
           write = true;
           if (!baseline) { ev(domain, "added", "", row.expires); counts.added++; }
         } else {
-          if (old.expires !== row.expires || old.status !== row.status || old.name_servers !== row.ns || old.renew_auto !== row.auto || old.renewable !== row.renewable || old.locked !== row.locked || old.renew_deadline !== row.deadline) write = true;
+          if (old.miss || old.expires !== row.expires || old.status !== row.status || old.name_servers !== row.ns || old.renew_auto !== row.auto || old.renewable !== row.renewable || old.locked !== row.locked || old.renew_deadline !== row.deadline) write = true;
           if (old.expires && row.expires && row.expires > old.expires && (new Date(row.expires.replace(" ", "T") + "Z") - new Date(old.expires.replace(" ", "T") + "Z")) > 30 * 86400000) { ev(domain, "renewed", old.expires, row.expires); counts.renewed++; }
           if (old.status !== row.status) {
             if (old.status === "ACTIVE") { ev(domain, "expired", old.status, row.status); counts.expired++; }
@@ -228,17 +228,33 @@ async function syncGodaddyAccounts(db, env) {
         if (write) {
           stmts.push(db.prepare(
             "INSERT INTO gd_domains (domain, account, domain_id, status, expires, renew_auto, renewable, renew_deadline, locked, name_servers, gd_created, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?, datetime('now')) " +
-            "ON CONFLICT(domain, account) DO UPDATE SET domain_id=excluded.domain_id, status=excluded.status, expires=excluded.expires, renew_auto=excluded.renew_auto, renewable=excluded.renewable, renew_deadline=excluded.renew_deadline, locked=excluded.locked, name_servers=excluded.name_servers, gd_created=excluded.gd_created, updated_at=datetime('now')"
+            "ON CONFLICT(domain, account) DO UPDATE SET miss=0, domain_id=excluded.domain_id, status=excluded.status, expires=excluded.expires, renew_auto=excluded.renew_auto, renewable=excluded.renewable, renew_deadline=excluded.renew_deadline, locked=excluded.locked, name_servers=excluded.name_servers, gd_created=excluded.gd_created, updated_at=datetime('now')"
           ).bind(domain, name, row.id, row.status, row.expires, row.auto, row.renewable, row.deadline, row.locked, row.ns, row.created));
         }
       }
+      let warning = "";
       if (!baseline) {
-        existing.forEach(function (r) {
-          if (!seen.has(r.domain)) { ev(r.domain, "removed", r.status, ""); counts.removed++; stmts.push(db.prepare("DELETE FROM gd_domains WHERE domain = ? AND account = ?").bind(r.domain, name)); }
-        });
+        // A domain is treated as removed only after it is missing from two successful syncs in a row, and never
+        // when a big share of the account vanishes at once (that points to a token or API problem, not removals).
+        const gone = existing.filter(function (r) { return !seen.has(r.domain); });
+        if (gone.length > Math.max(25, Math.round(existing.length * 0.2))) {
+          warning = gone.length + " domains are missing from this account. Nothing was removed automatically. Check the token, then sync again.";
+        } else {
+          for (const r of gone) {
+            const miss = (r.miss || 0) + 1;
+            if (miss < 2) { stmts.push(db.prepare("UPDATE gd_domains SET miss = ? WHERE domain = ? AND account = ?").bind(miss, r.domain, name)); continue; }
+            const { results: bbc } = await db.prepare("SELECT * FROM domains WHERE LOWER(RTRIM(REPLACE(REPLACE(REPLACE(domain,'https://',''),'http://',''),'www.',''),'/')) = ?").bind(r.domain).all();
+            const brand = bbc.length ? bbc[0].brand : "";
+            stmts.push(db.prepare("INSERT INTO gd_removed (domain, account, brand, last_status, last_expires, snapshot, source) VALUES (?, ?, ?, ?, ?, ?, 'sync')").bind(r.domain, name, brand, r.status, r.expires, bbc.length ? JSON.stringify(bbc) : ""));
+            bbc.forEach(function (b) { stmts.push(db.prepare("DELETE FROM domains WHERE id = ?").bind(b.id)); });
+            stmts.push(db.prepare("DELETE FROM gd_domains WHERE domain = ? AND account = ?").bind(r.domain, name));
+            ev(r.domain, "removed", brand || r.status, "");
+            counts.removed++;
+          }
+        }
       }
       for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
-      await db.prepare("INSERT INTO gd_accounts (account, domains, last_sync, ok, error) VALUES (?, ?, datetime('now'), 1, '') ON CONFLICT(account) DO UPDATE SET domains=excluded.domains, last_sync=excluded.last_sync, ok=1, error=''").bind(name, fetched.length).run();
+      await db.prepare("INSERT INTO gd_accounts (account, domains, last_sync, ok, error) VALUES (?, ?, datetime('now'), 1, ?) ON CONFLICT(account) DO UPDATE SET domains=excluded.domains, last_sync=excluded.last_sync, ok=1, error=excluded.error").bind(name, fetched.length, warning).run();
       summary.push({ account: name, ok: true, domains: fetched.length, baseline: baseline, written: stmts.length, counts: counts });
     } catch (e) {
       const msg = String(e && e.message || e).slice(0, 200);
@@ -1186,15 +1202,16 @@ const actions = {
   // Everything the dashboard needs. Old CANCELLED domains (expired 120+ days ago) stay out of the lists but still count in totals.
   async getGodaddyDashboard(db, token) {
     await requireGodaddyAccess(db, token);
-    const [{ results: domains }, { results: events }, { results: accounts }, { results: brands }, { results: totals }] = await Promise.all([
+    const [{ results: domains }, { results: events }, { results: accounts }, { results: brands }, { results: totals }, { results: removed }] = await Promise.all([
       db.prepare("SELECT domain, account, status, expires, renew_auto renewAuto, renewable, renew_deadline renewDeadline, locked, name_servers ns, gd_created created FROM gd_domains WHERE NOT (status = 'CANCELLED' AND expires < datetime('now','-120 day'))").all(),
       db.prepare("SELECT id, at, domain, account, type, old_value oldValue, new_value newValue, by_user byUser, source, order_no orderNo, receipt_ref receiptRef FROM gd_events ORDER BY at DESC, id DESC LIMIT 400").all(),
       db.prepare("SELECT account, domains, last_sync lastSync, ok, error FROM gd_accounts ORDER BY account").all(),
       db.prepare("SELECT domain, brand FROM domains").all(),
-      db.prepare("SELECT status, COUNT(*) c FROM gd_domains GROUP BY status").all()
+      db.prepare("SELECT status, COUNT(*) c FROM gd_domains GROUP BY status").all(),
+      db.prepare("SELECT id, domain, account, brand, removed_at removedAt, last_status lastStatus, last_expires lastExpires, source, (CASE WHEN snapshot != '' THEN 1 ELSE 0 END) hadRecord FROM gd_removed ORDER BY removed_at DESC, id DESC LIMIT 1000").all()
     ]);
     const lastSync = accounts.reduce(function (m, a) { return a.lastSync > m ? a.lastSync : m; }, "");
-    return { asOf: new Date().toISOString(), lastSync, domains, events, accounts, brands, totalsByStatus: totals };
+    return { asOf: new Date().toISOString(), lastSync, domains, events, accounts, brands, totalsByStatus: totals, removed };
   },
 
   // ---- GoDaddy nameserver change (Super Admin and users assigned to a team) ----
@@ -1265,6 +1282,69 @@ const actions = {
       }
     }
     return { results };
+  },
+
+  // ---- Target brand link ----
+  // Adds GoDaddy domains that have no brand yet to the BBC domain list under an existing or a new brand.
+  async assignGodaddyBrand(db, token, domains, brand, mode) {
+    const s = await requireGodaddyAccess(db, token);
+    const list = Array.from(new Set((Array.isArray(domains) ? domains : []).map(gdCleanDomain).filter(Boolean))).slice(0, 300);
+    if (!list.length) throw new Error("Pick at least one domain.");
+    const name = String(brand || "").toUpperCase().replace(/\s+/g, "").replace(/[^A-Z0-9_-]/g, "");
+    if (name.length < 2 || name.length > 40) throw new Error("Brand name must be 2 to 40 letters or numbers.");
+    const { results: known } = await db.prepare("SELECT DISTINCT brand FROM domains").all();
+    const exists = known.some(function (b) { return String(b.brand).toUpperCase() === name; });
+    if (mode === "new" && exists) throw new Error("The brand " + name + " already exists. Use Existing brand instead.");
+    if (mode !== "new" && !exists) throw new Error("The brand " + name + " does not exist yet. Use New brand to create it.");
+    const added = [], skipped = [];
+    const stmts = [];
+    for (const d of list) {
+      const g = await db.prepare("SELECT account, expires FROM gd_domains WHERE domain = ? AND status = 'ACTIVE' LIMIT 1").bind(d).first();
+      if (!g) { skipped.push({ domain: d, reason: "Not an active GoDaddy domain" }); continue; }
+      const dup = await db.prepare("SELECT brand FROM domains WHERE LOWER(RTRIM(REPLACE(REPLACE(REPLACE(domain,'https://',''),'http://',''),'www.',''),'/')) = ? LIMIT 1").bind(d).first();
+      if (dup) { skipped.push({ domain: d, reason: "Already under " + dup.brand }); continue; }
+      stmts.push(db.prepare("INSERT OR IGNORE INTO domains (brand, domain, account, expiration, notes) VALUES (?, ?, ?, ?, ?)").bind(name, d, g.account, String(g.expires || "").slice(0, 10), "Added from the GoDaddy monitor by " + s.username));
+      stmts.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'brand_assigned', '', ?, ?, 'portal')").bind(d, g.account, name, s.username));
+      added.push(d);
+    }
+    for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+    return { brand: name, added, skipped };
+  },
+
+  // ---- Receipts (files from GoDaddy, stored in R2) ----
+  async uploadGodaddyReceipt(db, env, token, meta, fileBase64, filename, mime) {
+    const s = await requireGodaddyAccess(db, token);
+    if (!fileBase64 || !filename) throw new Error("Choose the receipt file first.");
+    if (!/\.(pdf|png|jpe?g|webp)$/i.test(filename)) throw new Error("Only PDF, PNG, JPG or WEBP files are allowed.");
+    let bytes; try { bytes = base64ToBytes(fileBase64); } catch (e) { throw new Error("Could not read the file."); }
+    if (bytes.length > 8 * 1024 * 1024) throw new Error("File is too large (max 8MB).");
+    if (!env.LEAVE_ATTACHMENTS) throw new Error("File storage is not configured on the Worker.");
+    meta = meta || {};
+    const paid = /^\d{4}-\d{2}-\d{2}$/.test(String(meta.paidAt || "")) ? meta.paidAt : "";
+    const amount = meta.amount === "" || meta.amount == null ? null : Number(meta.amount);
+    if (amount != null && !isFinite(amount)) throw new Error("Amount must be a number.");
+    const domains = Array.from(new Set(String(meta.domains || "").split(/[\s,;]+/).map(gdCleanDomain).filter(Boolean))).slice(0, 200).join(",");
+    const key = "godaddy-receipts/" + new Date().toISOString().slice(0, 7) + "/" + Date.now() + "_" + filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+    await env.LEAVE_ATTACHMENTS.put(key, bytes, { httpMetadata: { contentType: mime || "application/octet-stream" } });
+    const res = await db.prepare("INSERT INTO gd_receipts (uploaded_by, account, order_no, amount, currency, paid_at, domains, note, r2_key, filename, mime, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(s.username, String(meta.account || "").slice(0, 60), String(meta.orderNo || "").trim().slice(0, 60), amount, String(meta.currency || "USD").slice(0, 6), paid, domains, String(meta.note || "").slice(0, 300), key, filename.slice(0, 150), mime || "", bytes.length).run();
+    return { success: true, id: res.meta.last_row_id };
+  },
+
+  async listGodaddyReceipts(db, token) {
+    await requireGodaddyAccess(db, token);
+    const { results } = await db.prepare("SELECT r.id, r.uploaded_at uploadedAt, r.uploaded_by uploadedBy, u.full_name uploaderName, r.account, r.order_no orderNo, r.amount, r.currency, r.paid_at paidAt, r.domains, r.note, r.filename, r.mime, r.size FROM gd_receipts r LEFT JOIN users u ON u.username = r.uploaded_by ORDER BY COALESCE(NULLIF(r.paid_at,''), r.uploaded_at) DESC, r.id DESC LIMIT 1000").all();
+    return { receipts: results };
+  },
+
+  async deleteGodaddyReceipt(db, env, token, id) {
+    const s = await requireGodaddyAccess(db, token);
+    const row = await db.prepare("SELECT uploaded_by, r2_key FROM gd_receipts WHERE id = ?").bind(id).first();
+    if (!row) throw new Error("Receipt not found.");
+    if (s.role !== "Super Admin" && s.username !== row.uploaded_by) throw new Error("ACCESS_DENIED: only the uploader or a Super Admin can delete a receipt.");
+    if (env.LEAVE_ATTACHMENTS && row.r2_key) await env.LEAVE_ATTACHMENTS.delete(row.r2_key);
+    await db.prepare("DELETE FROM gd_receipts WHERE id = ?").bind(id).run();
+    return { success: true };
   },
 
   // GoDaddy's domain list does not include nameservers, so they are read per domain on demand (10 at a time).
@@ -2759,6 +2839,17 @@ export default {
         // Same streaming pattern, for one of a checklist item's proof photos — the owning agent can
         // view their own proof, not just Super Admin (unlike leave attachments, which are admin-only).
         // `id` here is a kpi_checklist_photos row id, not a completion id (an item can have several).
+        if (action === "downloadGodaddyReceipt") {
+          const token = url.searchParams.get("token");
+          const id = url.searchParams.get("id");
+          await requireGodaddyAccess(env.DB, token);
+          const row = await env.DB.prepare("SELECT r2_key, filename, mime FROM gd_receipts WHERE id = ?").bind(id).first();
+          if (!row || !row.r2_key) return new Response("Not found", { status: 404 });
+          const obj = await env.LEAVE_ATTACHMENTS.get(row.r2_key);
+          if (!obj) return new Response("Not found", { status: 404 });
+          return new Response(obj.body, { headers: { ...corsHeaders(), "Content-Type": row.mime || (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream", "Content-Disposition": "inline; filename=\"" + String(row.filename || "receipt").replace(/"/g, "") + "\"" } });
+        }
+
         if (action === "downloadKpiChecklistAttachment") {
           const token = url.searchParams.get("token");
           const id = url.searchParams.get("id");
@@ -2818,7 +2909,7 @@ export default {
       // Session-authenticated actions that also need R2 access (leave attachment upload), not just
       // the D1 binding — kept as a short explicit list rather than passing full env everywhere, so
       // every other action keeps its existing (db, ...args) signature unchanged.
-      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs"];
+      const envActions = ["fileKpiLeave", "completeKpiChecklistItem", "submitBspSubmission", "syncGodaddy", "changeGodaddyNs", "liveGodaddyNs", "uploadGodaddyReceipt", "deleteGodaddyReceipt"];
       if (envActions.indexOf(action) !== -1) {
         const result = await actions[action](env.DB, env, ...args);
         return json(result);
