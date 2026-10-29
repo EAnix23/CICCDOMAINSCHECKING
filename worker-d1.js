@@ -65,6 +65,40 @@ async function validateSession(db, token) {
   try { permissions = JSON.parse(row.permissions || "[]"); } catch (e) {}
   return { username: row.username, role: row.role, permissions, team: row.team || "" };
 }
+// ---- ISP Check: PCs (agents) that run the domain checker, and the job queue ----
+const ISP_LIST = ["pldt", "globe", "converge", "dito"];
+async function sha256Hex(t) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(t)));
+  return Array.from(new Uint8Array(d)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+}
+// Portal side: Super Admin, or anyone who belongs to a team (same rule as the GoDaddy tab).
+async function requireIspAccess(db, token) {
+  const s = await checkSession(db, token);
+  if (s.role !== "Super Admin" && !s.team) throw new Error("ACCESS_DENIED: This tab is for Super Admin or team members.");
+  return s;
+}
+// Runner side: the agent token is the credential. A revoked or unknown token never gets through.
+async function ispJobFor(db, id) {
+  const j = await db.prepare("SELECT id, target, batch, isp, mode, total, done FROM isp_jobs WHERE id = ?").bind(id).first();
+  return j;
+}
+async function requireIspAgent(db, token) {
+  if (!token || String(token).length < 20) throw new Error("AGENT_INVALID: This PC is not linked. Run the link step again.");
+  const a = await db.prepare("SELECT * FROM isp_agents WHERE token_hash = ? AND revoked = 0").bind(await sha256Hex(token)).first();
+  if (!a) throw new Error("AGENT_INVALID: This PC is not linked or was removed. Link it again from the portal.");
+  return a;
+}
+// A line only counts as evidence when it is a real ISP connection: the ISP is one of the four, no VPN or hosting range,
+// and the PC uses the ISP's own DNS (public resolvers hide DNS-based blocks).
+function ispJudge(info) {
+  info = info || {};
+  const isp = String(info.isp || "").toLowerCase();
+  if (ISP_LIST.indexOf(isp) === -1) return { safe: 0, isp: "", reason: "The ISP of this connection is not one of PLDT, Globe, Converge or DITO" + (info.ispText ? " (" + String(info.ispText).slice(0, 60) + ")" : "") + "." };
+  if (info.proxy || info.hosting) return { safe: 0, isp: isp, reason: "A VPN, proxy or hosting network was detected. Turn it off." };
+  if (info.dnsPublic) return { safe: 0, isp: isp, reason: "This PC uses a public DNS (" + String(info.dns || "").slice(0, 80) + "). Switch to the ISP's DNS so blocks show." };
+  return { safe: 1, isp: isp, reason: "" };
+}
+
 async function checkSession(db, token, requireSuperAdmin) {
   const session = await validateSession(db, token);
   if (!session) throw new Error("SESSION_INVALID: Session expired or invalid. Please log in again.");
@@ -1528,6 +1562,154 @@ const actions = {
       } catch (e) { results.push({ domain: d, ok: false, error: String(e && e.message || e).slice(0, 140) }); }
     }
     return { results };
+  },
+
+  // ============================================================
+  // ISP CHECK — portal side (session)
+  // ============================================================
+
+  // Everything the ISP Check tab needs: PCs, jobs, and what still needs checking per brand / DPV batch and ISP.
+  async listIspCheck(db, token) {
+    await requireIspAccess(db, token);
+    const { results: agents } = await db.prepare("SELECT id, username, label, isp, ip, net_type netType, dns, safe, unsafe_reason unsafeReason, status, current_job currentJob, version, last_seen lastSeen, created_at createdAt, CASE WHEN last_seen != '' AND last_seen >= datetime('now', '-3 minutes') THEN 1 ELSE 0 END online FROM isp_agents WHERE revoked = 0 ORDER BY isp, username").all();
+    const { results: jobs } = await db.prepare("SELECT id, created_by createdBy, created_at createdAt, target, batch, isp, mode, status, total, done, failed, agent_user agentUser, claimed_at claimedAt, heartbeat, finished_at finishedAt, note, net_info netInfo FROM isp_jobs ORDER BY id DESC LIMIT 80").all();
+    const need = function (col) { return "SUM(CASE WHEN COALESCE(" + col + "_remarks,'') = '' OR " + col + "_remarks LIKE '%NO_IMAGE%' THEN 1 ELSE 0 END) " + col; };
+    const { results: brands } = await db.prepare("SELECT brand name, COUNT(*) total, " + ISP_LIST.map(need).join(", ") + " FROM domains WHERE brand != '' GROUP BY brand ORDER BY brand").all();
+    const { results: batches } = await db.prepare("SELECT batch_id name, COUNT(*) total, " + ISP_LIST.map(need).join(", ") + " FROM dpv_records WHERE batch_id != '' GROUP BY batch_id ORDER BY batch_id").all();
+    return { agents, jobs, brands, batches, serverTime: new Date().toISOString() };
+  },
+
+  // Queues the jobs. spec = { target: 'brand' | 'dpv', batches: [names], isps: [..], mode: 'all' | 'retry' }.
+  // One job per batch and ISP; an identical job that is still waiting or running is not duplicated.
+  async createIspJobs(db, token, spec) {
+    const s = await requireIspAccess(db, token);
+    spec = spec || {};
+    const target = spec.target === "brand" ? "brand" : "dpv", mode = spec.mode === "retry" ? "retry" : "all";
+    const isps = Array.from(new Set((spec.isps || []).map(function (x) { return String(x).toLowerCase(); }))).filter(function (x) { return ISP_LIST.indexOf(x) !== -1; });
+    const batches = Array.from(new Set((spec.batches || []).map(function (x) { return String(x).trim(); }).filter(Boolean))).slice(0, 60);
+    if (!isps.length) throw new Error("Pick at least one ISP.");
+    if (!batches.length) throw new Error("Pick at least one " + (target === "brand" ? "brand" : "batch") + ".");
+    const created = [], skipped = [];
+    for (const b of batches) {
+      for (const isp of isps) {
+        const dup = await db.prepare("SELECT id FROM isp_jobs WHERE target = ? AND batch = ? COLLATE NOCASE AND isp = ? AND mode = ? AND status IN ('pending','running') LIMIT 1").bind(target, b, isp, mode).first();
+        if (dup) { skipped.push({ batch: b, isp: isp, reason: "Already queued (job " + dup.id + ")" }); continue; }
+        const r = await actions.getDomainsToCheck(db, { target: target, batch: b, isp: isp, retryOnly: mode === "retry" });
+        const n = r && r.success ? r.domains.length : 0;
+        if (!n) { skipped.push({ batch: b, isp: isp, reason: mode === "retry" ? "Nothing to retry" : "No domains found" }); continue; }
+        const res = await db.prepare("INSERT INTO isp_jobs (created_by, target, batch, isp, mode, total) VALUES (?, ?, ?, ?, ?, ?)").bind(s.username, target, b, isp, mode, n).run();
+        created.push({ id: res.meta.last_row_id, batch: b, isp: isp, total: n });
+      }
+    }
+    return { created, skipped };
+  },
+
+  async cancelIspJob(db, token, id) {
+    await requireIspAccess(db, token);
+    const r = await db.prepare("UPDATE isp_jobs SET status = 'cancelled', finished_at = datetime('now') WHERE id = ? AND status IN ('pending','running')").bind(+id || 0).run();
+    return { success: true, cancelled: (r.meta && r.meta.changes) || 0 };
+  },
+
+  // One-time code (10 minutes) that links a PC to the account of the person who is logged in.
+  async createIspLinkCode(db, token) {
+    const s = await requireIspAccess(db, token);
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", bytes = crypto.getRandomValues(new Uint8Array(8));
+    const code = Array.from(bytes).map(function (b) { return alphabet[b % alphabet.length]; }).join("");
+    await db.prepare("DELETE FROM isp_link_codes WHERE expires_at < datetime('now') OR username = ?").bind(s.username).run();
+    await db.prepare("INSERT INTO isp_link_codes (code, username, expires_at) VALUES (?, ?, datetime('now', '+10 minutes'))").bind(code, s.username).run();
+    return { code: code.slice(0, 4) + "-" + code.slice(4), minutes: 10 };
+  },
+
+  async unlinkIspAgent(db, token, id) {
+    const s = await requireIspAccess(db, token);
+    const a = await db.prepare("SELECT username FROM isp_agents WHERE id = ? AND revoked = 0").bind(+id || 0).first();
+    if (!a) throw new Error("PC not found.");
+    if (s.role !== "Super Admin" && a.username !== s.username) throw new Error("ACCESS_DENIED: You can only unlink your own PC.");
+    await db.prepare("UPDATE isp_agents SET revoked = 1, status = 'idle' WHERE id = ?").bind(+id).run();
+    await db.prepare("UPDATE isp_jobs SET status = 'pending', agent_id = 0, agent_user = '' WHERE agent_id = ? AND status = 'running'").bind(+id).run();
+    return { success: true };
+  },
+
+  // ============================================================
+  // ISP CHECK — runner side (the credential is the agent token, not a login)
+  // ============================================================
+
+  // Public on purpose: the one-time code from the portal is the credential. Returns the agent token once.
+  async ispAgentLink(db, code, label, version) {
+    const c = String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (c.length !== 8) throw new Error("That code is not valid.");
+    const row = await db.prepare("SELECT username FROM isp_link_codes WHERE code = ? AND used = 0 AND expires_at >= datetime('now')").bind(c).first();
+    if (!row) throw new Error("That code is wrong or expired. Make a new one in the portal.");
+    const used = await db.prepare("UPDATE isp_link_codes SET used = 1 WHERE code = ? AND used = 0").bind(c).run();
+    if (!used.meta || !used.meta.changes) throw new Error("That code was already used.");
+    const raw = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+    await db.prepare("INSERT INTO isp_agents (username, label, token_hash, version, last_seen) VALUES (?, ?, ?, ?, datetime('now'))").bind(row.username, String(label || "").slice(0, 60), await sha256Hex(raw), String(version || "").slice(0, 20)).run();
+    return { success: true, token: raw, username: row.username };
+  },
+
+  // Heartbeat + network facts (every ~30 s). Says whether this PC may take jobs and how many are waiting for its ISP.
+  async ispAgentPing(db, token, info) {
+    const a = await requireIspAgent(db, token);
+    const j = ispJudge(info);
+    const net = info && info.mobile ? "mobile" : (info && info.override ? "override" : "fixed");
+    await db.prepare("UPDATE isp_agents SET isp = ?, ip = ?, net_type = ?, dns = ?, safe = ?, unsafe_reason = ?, last_seen = datetime('now'), version = COALESCE(NULLIF(?, ''), version), status = CASE WHEN ? = 0 THEN 'blocked' WHEN current_job > 0 THEN 'working' ELSE 'idle' END WHERE id = ?")
+      .bind(j.isp, String(info && info.ip || "").slice(0, 45), net, String(info && info.dns || "").slice(0, 120), j.safe, j.reason, String(info && info.version || ""), j.safe, a.id).run();
+    const p = j.safe ? await db.prepare("SELECT COUNT(*) n FROM isp_jobs WHERE status = 'pending' AND isp = ?").bind(j.isp).first() : { n: 0 };
+    return { success: true, username: a.username, safe: !!j.safe, isp: j.isp, reason: j.reason, pending: p ? p.n : 0 };
+  },
+
+  // Takes the oldest waiting job for this PC's ISP (only when the connection is a valid ISP line).
+  async ispAgentClaim(db, token, info) {
+    const a = await requireIspAgent(db, token);
+    const j = ispJudge(info);
+    if (!j.safe) return { success: true, job: null, blocked: j.reason };
+    // A job whose PC went quiet for 10 minutes goes back in the queue.
+    await db.prepare("UPDATE isp_jobs SET status = 'pending', agent_id = 0, agent_user = '' WHERE status = 'running' AND heartbeat < datetime('now', '-10 minutes')").run();
+    await db.prepare("UPDATE isp_agents SET current_job = 0, status = 'idle' WHERE current_job > 0 AND id != ? AND current_job NOT IN (SELECT id FROM isp_jobs WHERE status = 'running')").bind(a.id).run();
+    const mine = await db.prepare("SELECT id FROM isp_jobs WHERE status = 'running' AND agent_id = ? LIMIT 1").bind(a.id).first();
+    if (mine) return { success: true, job: await ispJobFor(db, mine.id) };
+    const netInfo = JSON.stringify({ isp: j.isp, ip: info.ip || "", type: info.mobile ? "mobile" : (info.override ? "override" : "fixed"), dns: info.dns || "", pc: a.label || "", at: new Date().toISOString() });
+    await db.prepare("UPDATE isp_jobs SET status = 'running', agent_id = ?, agent_user = ?, claimed_at = datetime('now'), heartbeat = datetime('now'), net_info = ? WHERE id = (SELECT id FROM isp_jobs WHERE status = 'pending' AND isp = ? ORDER BY id LIMIT 1) AND status = 'pending'")
+      .bind(a.id, a.username, netInfo, j.isp).run();
+    const got = await db.prepare("SELECT id FROM isp_jobs WHERE status = 'running' AND agent_id = ? ORDER BY id DESC LIMIT 1").bind(a.id).first();
+    if (!got) return { success: true, job: null };
+    await db.prepare("UPDATE isp_agents SET current_job = ?, status = 'working' WHERE id = ?").bind(got.id, a.id).run();
+    return { success: true, job: await ispJobFor(db, got.id) };
+  },
+
+  // The domains of the job the PC is running (the same list the old script asked for).
+  async ispAgentDomains(db, token, jobId) {
+    const a = await requireIspAgent(db, token);
+    const job = await db.prepare("SELECT * FROM isp_jobs WHERE id = ? AND agent_id = ? AND status = 'running'").bind(+jobId || 0, a.id).first();
+    if (!job) throw new Error("JOB_GONE: This job is not yours or was cancelled.");
+    const r = await actions.getDomainsToCheck(db, { target: job.target, batch: job.batch, isp: job.isp, retryOnly: job.mode === "retry" });
+    if (!r || !r.success) throw new Error((r && r.message) || "Could not read the domain list.");
+    await db.prepare("UPDATE isp_jobs SET total = ?, heartbeat = datetime('now') WHERE id = ?").bind(r.domains.length, job.id).run();
+    return { success: true, domains: r.domains };
+  },
+
+  // One finished domain. Written exactly like the old script did, with the PC's linked account as the operator.
+  async ispAgentSubmit(db, token, jobId, result) {
+    const a = await requireIspAgent(db, token);
+    const job = await db.prepare("SELECT * FROM isp_jobs WHERE id = ? AND agent_id = ?").bind(+jobId || 0, a.id).first();
+    if (!job) throw new Error("JOB_GONE: This job is not yours.");
+    if (job.status !== "running") return { success: true, stop: true };
+    result = result || {};
+    const u = await db.prepare("SELECT team FROM users WHERE username = ?").bind(a.username).first();
+    const r = await actions.submitDomainCheckResult(db, {
+      target: job.target, batch: job.batch, brand: job.target === "brand" ? job.batch : undefined, domain: result.domain, isp: job.isp,
+      status: result.status, remarks: result.remarks, redirectedUrl: result.redirectedUrl, operatorUsername: a.username, operatorTeam: (u && u.team) || ""
+    });
+    const ok = r && r.success !== false;
+    await db.prepare("UPDATE isp_jobs SET done = done + ?, failed = failed + ?, heartbeat = datetime('now') WHERE id = ?").bind(ok ? 1 : 0, ok ? 0 : 1, job.id).run();
+    return { success: ok, message: ok ? "" : (r && r.message) || "Could not save.", stop: false };
+  },
+
+  async ispAgentFinish(db, token, jobId, note) {
+    const a = await requireIspAgent(db, token);
+    await db.prepare("UPDATE isp_jobs SET status = CASE WHEN status = 'running' THEN 'done' ELSE status END, finished_at = datetime('now'), note = ? WHERE id = ? AND agent_id = ?").bind(String(note || "").slice(0, 200), +jobId || 0, a.id).run();
+    await db.prepare("UPDATE isp_agents SET current_job = 0, status = 'idle' WHERE id = ?").bind(a.id).run();
+    return { success: true };
   },
 
   // ---- GoDaddy forwarding checklist ----
