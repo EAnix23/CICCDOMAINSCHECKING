@@ -222,3 +222,18 @@ function ispLinkRender() {
         '<p class="text-[11px] text-subtle mt-3">Or by hand, in a terminal in that folder:</p><pre class="mt-1 p-3 rounded-xl bg-app border border-theme text-[11px] font-mono text-body overflow-auto">node runner.js --link ' + ispEsc(l.code) + '\nnode runner.js --drive      (once, signs in to Google Drive)\nstart.bat                  (starts the runner)</pre><p class="text-[11px] text-subtle mt-3">Waiting for the PC to link... this window updates by itself.</p>';
     ispShell('Link this PC', 'Connects a computer to ' + ispEsc(me) + '.', '', body, '<span></span><button onclick="ispModalClose()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">' + (l.linked ? 'Done' : 'Close') + '</button>', 620);
 }
+
+// ---------- from a brand page: "Run ISP check" (all ISPs) or a click on one ISP column ----------
+function ispRunBrand(brand, isp) {
+    ispInjectCss();
+    var open = function () {
+        var b = (ISPC.data.brands || []).filter(function (x) { return String(x.name).toLowerCase() === String(brand).toLowerCase(); })[0];
+        if (!b) { ispToast('Nothing to check', 'This brand has no domains yet.', 'warning'); return; }
+        var picked = {}; picked[b.name] = true;
+        ISPC.wiz = { step: 2, target: 'brand', picked: picked, q: '', isps: isp ? [isp] : ISPC_LIST.map(function (x) { return x[0]; }), mode: 'all', busy: false, res: null };
+        ispWizRender();
+    };
+    if (ISPC.data) { open(); ispLoad(false); return; }
+    google.script.run.withSuccessHandler(function (d) { ISPC.data = d; open(); })
+        .withFailureHandler(function (e) { ispToast('Could not open', (e && e.message) || 'Try again.', 'error'); }).listIspCheck(currentSessionToken);
+}

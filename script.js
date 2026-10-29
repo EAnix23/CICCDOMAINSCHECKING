@@ -3287,7 +3287,8 @@ function switchBrandTab(tabName, brandName) {
                 '</div>',
                 '<div class="flex justify-between items-center mb-4 flex-shrink-0">',
                 '    <div class="relative"><i data-lucide="search" class="absolute left-3 top-2.5 h-4 w-4 text-subtle"></i><input type="text" id="localSearchInput" onkeyup="filterBrandTable()" placeholder="Search in ' + brandName + '..." class="pl-9 pr-4 py-2 border border-theme bg-panel rounded-lg text-sm text-body focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64 transition-all shadow-sm"></div>',
-                '    <button onclick="openDomainModal()" class="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 shadow-sm"><i data-lucide="plus" class="h-4 w-4"></i> Add Domain</button>',
+                '    <div class="flex items-center gap-2">' + ((currentUserRole === 'Super Admin' || currentUserTeam) && typeof ispRunBrand === 'function' ? '<button onclick="ispRunBrand(currentBrandName)" class="px-4 py-2 bg-panel border border-theme text-body text-sm font-medium rounded-lg hover:bg-app transition-colors flex items-center gap-2 shadow-sm"><i data-lucide="radar" class="h-4 w-4"></i> Run ISP check</button>' : '') +
+                '    <button onclick="openDomainModal()" class="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 shadow-sm"><i data-lucide="plus" class="h-4 w-4"></i> Add Domain</button></div>',
                 '</div>',
                 '<div class="panel-card flex flex-col overflow-hidden">',
                 '    <div class="overflow-x-auto custom-scrollbar relative bg-panel">',
@@ -3301,10 +3302,10 @@ function switchBrandTab(tabName, brandName) {
                 '                    <th class="px-4 py-3">Notes</th>',
                 '                    <th class="px-4 py-3 cursor-pointer hover:opacity-80 transition-colors" onclick="sortBrandTable(\'agent\')">Agent <i data-lucide="chevrons-up-down" class="h-3 w-3 inline opacity-50"></i></th>',
                 '                    <th class="px-4 py-3">Redirects To</th>',
-                '                    <th class="px-4 py-3 text-center border-l border-theme text-red-500">PLDT</th>',
-                '                    <th class="px-4 py-3 text-center border-l border-theme text-blue-500">GLOBE</th>',
-                '                    <th class="px-4 py-3 text-center border-l border-theme text-orange-500">CONV</th>',
-                '                    <th class="px-4 py-3 text-center border-l border-theme text-purple-500">DITO</th>',
+                ispHeadCell('pldt', 'PLDT', 'text-red-500'),
+                ispHeadCell('globe', 'GLOBE', 'text-blue-500'),
+                ispHeadCell('converge', 'CONV', 'text-orange-500'),
+                ispHeadCell('dito', 'DITO', 'text-purple-500'),
                 '                    <th class="px-4 py-3 text-center border-l border-theme cursor-pointer hover:opacity-80 transition-colors" onclick="sortBrandTable(\'health\')">Health Score % <i data-lucide="chevrons-up-down" class="h-3 w-3 inline opacity-50"></i></th>',
                 '                    <th class="px-4 py-3 text-center border-l border-theme bg-app sticky right-0">Actions</th>',
                 '                </tr>',
@@ -6586,4 +6587,10 @@ function createProxyHandler(successCb, failureCb) {
             };
         }
     });
+}
+
+// Column header of an ISP on a brand page. Super Admin / team members can click it to run that ISP's check for the brand.
+function ispHeadCell(isp, label, color) {
+    var can = (currentUserRole === 'Super Admin' || currentUserTeam) && typeof ispRunBrand === 'function';
+    return '                    <th class="px-4 py-3 text-center border-l border-theme ' + color + (can ? ' cursor-pointer hover:opacity-80" title="Run a ' + label + ' check for this brand" onclick="ispRunBrand(currentBrandName,\'' + isp + '\')' : '') + '">' + label + '</th>';
 }
