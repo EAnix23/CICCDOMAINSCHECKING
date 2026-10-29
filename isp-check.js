@@ -144,14 +144,15 @@ function ispWizRender() {
         footer = '<div class="flex items-center gap-3"><button onclick="ispModalClose()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Cancel</button><span id="ispWizCnt" class="text-[11px] text-subtle">' + cnt + ' selected</span></div><button id="ispWizNext" ' + (cnt ? '' : 'disabled style="opacity:.4"') + ' onclick="ISPC.wiz.step=2;ispWizRender()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Next: ISP and mode</button>';
     } else if (w.step === 2) {
         var m = ispModel();
-        body = '<p class="text-xs font-black text-heading mb-2">Which ISPs?</p><div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' + ISPC_LIST.map(function (x) {
+        var fixedRow = w.fixed ? (ISPC.data.brands || []).filter(function (x) { return w.picked[x.name]; })[0] : null;
+        body = (fixedRow ? '<div class="mb-4 p-3 rounded-xl bg-app border border-theme text-xs text-body">Checking <b class="text-heading">' + ispEsc(fixedRow.name) + '</b> &middot; ' + fixedRow.total + ' domains</div>' : '') + '<p class="text-xs font-black text-heading mb-2">Which ISPs?</p><div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' + ISPC_LIST.map(function (x) {
             var on = w.isps.indexOf(x[0]) !== -1, p = m.per[x[0]];
             return '<label class="flex items-start gap-3 p-3 rounded-xl border ' + (on ? 'border-indigo-500/60 bg-indigo-500/5' : 'border-theme') + ' cursor-pointer"><input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="ispWizToggleIsp(\'' + x[0] + '\',this.checked)" class="mt-0.5"><span><b class="text-sm text-heading">' + x[1] + '</b><br><span class="text-[11px] ' + (p.online.length ? 'text-emerald-600' : 'text-amber-600') + '">' + (p.online.length ? p.online.length + ' PC online' : 'No PC online right now') + '</span></span></label>';
         }).join('') + '</div>' +
             '<p class="text-xs font-black text-heading mt-5 mb-2">Which domains?</p><div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' + [['all', 'All domains', 'Check every domain again.'], ['retry', 'Retry only', 'Only the ones with no result or NO_IMAGE for that ISP.']].map(function (t) {
                 return '<label class="flex items-start gap-3 p-3 rounded-xl border ' + (w.mode === t[0] ? 'border-indigo-500/60 bg-indigo-500/5' : 'border-theme') + ' cursor-pointer"><input type="radio" name="ispMode" ' + (w.mode === t[0] ? 'checked' : '') + ' onchange="ISPC.wiz.mode=\'' + t[0] + '\';ispWizRender()" class="mt-0.5"><span><b class="text-sm text-heading">' + t[1] + '</b><br><span class="text-[11px] text-subtle">' + t[2] + '</span></span></label>';
             }).join('') + '</div>';
-        footer = '<button onclick="ISPC.wiz.step=1;ispWizRender()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Back</button><button ' + (w.isps.length ? '' : 'disabled style="opacity:.4"') + ' onclick="ISPC.wiz.step=3;ispWizRender()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Next: review</button>';
+        footer = (w.fixed ? '<button onclick="ispModalClose()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Cancel</button>' : '<button onclick="ISPC.wiz.step=1;ispWizRender()" class="px-4 py-2.5 bg-panel border border-theme rounded-lg text-xs font-bold text-body hover:bg-app">Back</button>') + '<button ' + (w.isps.length ? '' : 'disabled style="opacity:.4"') + ' onclick="ISPC.wiz.step=3;ispWizRender()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Next: review</button>';
     } else if (w.step === 3) {
         var mm = ispModel(), rowsAll = (w.target === 'brand' ? ISPC.data.brands : ISPC.data.batches).filter(function (r) { return w.picked[r.name]; });
         var jobsN = 0, doms = 0;
@@ -230,7 +231,7 @@ function ispRunBrand(brand, isp) {
         var b = (ISPC.data.brands || []).filter(function (x) { return String(x.name).toLowerCase() === String(brand).toLowerCase(); })[0];
         if (!b) { ispToast('Nothing to check', 'This brand has no domains yet.', 'warning'); return; }
         var picked = {}; picked[b.name] = true;
-        ISPC.wiz = { step: 2, target: 'brand', picked: picked, q: '', isps: isp ? [isp] : ISPC_LIST.map(function (x) { return x[0]; }), mode: 'all', busy: false, res: null };
+        ISPC.wiz = { step: 2, fixed: true, target: 'brand', picked: picked, q: '', isps: isp ? [isp] : ISPC_LIST.map(function (x) { return x[0]; }), mode: 'all', busy: false, res: null };
         ispWizRender();
     };
     if (ISPC.data) { open(); ispLoad(false); return; }
