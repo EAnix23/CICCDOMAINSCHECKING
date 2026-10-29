@@ -216,6 +216,40 @@ async function gdSyncBrandExpiry(db) {
   return { filled, renewed };
 }
 
+// A brand is picked automatically only when it is the one clear match: the domain name (without a short prefix such as "www")
+// contains the brand name (5+ letters). If two different brands match, nobody is guessed and the domain waits in "No brand yet".
+function gdAutoBrand(domain, brands) {
+  const label = String(domain || "").toLowerCase().replace(/^[a-z0-9]{1,3}\./, "").split(".")[0].replace(/[^a-z0-9]/g, "");
+  const hits = [];
+  for (const b of brands) {
+    const n = String(b).toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (n.length >= 5 && label.indexOf(n) !== -1) hits.push({ name: b, n: n });
+  }
+  if (!hits.length) return "";
+  hits.sort(function (a, b) { return b.n.length - a.n.length; });
+  const best = hits[0];
+  return hits.every(function (h) { return best.n.indexOf(h.n) !== -1; }) ? best.name : "";
+}
+
+// New GoDaddy domains with one clear brand match go straight into that brand in Target Brands (logged as source 'auto').
+// Everything else stays in "No brand yet" for a person. At most 25 per run.
+async function gdAutoAssign(db, items) {
+  if (!items.length) return 0;
+  const { results: known } = await db.prepare("SELECT DISTINCT brand FROM domains WHERE brand != ''").all();
+  const brands = known.map(function (b) { return b.brand; });
+  const stmts = []; let n = 0;
+  for (const it of items.slice(0, 25)) {
+    const brand = gdAutoBrand(it.domain, brands); if (!brand) continue;
+    const dup = await db.prepare("SELECT 1 FROM domains WHERE " + GD_NORM_SQL + " = ? LIMIT 1").bind(it.domain).first();
+    if (dup) continue;
+    stmts.push(db.prepare("INSERT OR IGNORE INTO domains (brand, domain, account, expiration, notes) VALUES (?, ?, ?, ?, ?)").bind(brand, it.domain, it.account, gdBbcDate(it.expires), "Added automatically from the GoDaddy monitor (matched the brand name)"));
+    stmts.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'brand_assigned', '', ?, 'auto', 'auto')").bind(it.domain, it.account, brand));
+    n++;
+  }
+  for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+  return n;
+}
+
 async function syncGodaddyAccounts(db, env) {
   const accounts = gdAccounts(env);
   const names = Object.keys(accounts);
@@ -229,7 +263,7 @@ async function syncGodaddyAccounts(db, env) {
       const seen = new Set();
       const stmts = [];
       const counts = { added: 0, renewed: 0, expired: 0, ns: 0, status: 0, removed: 0 };
-      const toMove = [], toRestore = [];
+      const toMove = [], toRestore = [], toAuto = [];
       const ev = function (domain, type, oldV, newV) {
         stmts.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, source) VALUES (?, ?, ?, ?, ?, 'sync')").bind(domain, name, type, oldV || "", newV || ""));
       };
@@ -243,7 +277,7 @@ async function syncGodaddyAccounts(db, env) {
         let write = false;
         if (!old) {
           write = true;
-          if (!baseline) { ev(domain, "added", "", row.expires); counts.added++; }
+          if (!baseline) { ev(domain, "added", "", row.expires); counts.added++; if (row.status === "ACTIVE") toAuto.push({ domain: domain, account: name, expires: row.expires }); }
         } else {
           if (old.miss || old.expires !== row.expires || old.status !== row.status || old.name_servers !== row.ns || old.renew_auto !== row.auto || old.renewable !== row.renewable || old.locked !== row.locked || old.renew_deadline !== row.deadline) write = true;
           if (old.expires && row.expires && row.expires > old.expires && (new Date(row.expires.replace(" ", "T") + "Z") - new Date(old.expires.replace(" ", "T") + "Z")) > 30 * 86400000) { ev(domain, "renewed", old.expires, row.expires); counts.renewed++; }
@@ -284,6 +318,7 @@ async function syncGodaddyAccounts(db, env) {
       for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
       // Domains that just lapsed leave the Target Brand list on their own (a big batch at once is left for a person to confirm).
       if (toMove.length && toMove.length <= 25) counts.moved = await gdMoveLapsedOut(db, toMove, "sync");
+      if (toAuto.length && env.GD_AUTO_ASSIGN !== "off") { try { counts.auto = await gdAutoAssign(db, toAuto); } catch (e) {} }
       for (const d of toRestore) { if (await gdRestoreBrand(db, d, name)) counts.restored = (counts.restored || 0) + 1; }
       await db.prepare("INSERT INTO gd_accounts (account, domains, last_sync, ok, error) VALUES (?, ?, datetime('now'), 1, ?) ON CONFLICT(account) DO UPDATE SET domains=excluded.domains, last_sync=excluded.last_sync, ok=1, error=excluded.error").bind(name, fetched.length, warning).run();
       summary.push({ account: name, ok: true, domains: fetched.length, baseline: baseline, written: stmts.length, counts: counts });
