@@ -111,6 +111,7 @@ function ispJudge(info) {
   info = info || {};
   const isp = String(info.isp || "").toLowerCase();
   if (ISP_LIST.indexOf(isp) === -1) return { safe: 0, isp: "", reason: "The ISP of this connection is not one of PLDT, Globe, Converge or DITO" + (info.ispText ? " (" + String(info.ispText).slice(0, 60) + ")" : "") + "." };
+  if (!info.home) return { safe: 0, isp: isp, reason: "This PC is not confirmed as a HOME internet line. Run setup.bat again (or: node runner.js --confirm-home) and answer Y only if it is a home line, not an office or enterprise one." };
   if (info.proxy || info.hosting) return { safe: 0, isp: isp, reason: "A VPN, proxy or hosting network was detected. Turn it off." };
   if (info.dnsPublic) return { safe: 0, isp: isp, reason: "This PC uses a public DNS (" + String(info.dns || "").slice(0, 80) + "). Switch to the ISP's DNS so blocks show." };
   return { safe: 1, isp: isp, reason: "" };
@@ -1590,7 +1591,7 @@ const actions = {
   // Everything the ISP Check tab needs: PCs, jobs, and what still needs checking per brand / DPV batch and ISP.
   async listIspCheck(db, token) {
     await requireIspAccess(db, token);
-    const { results: agents } = await db.prepare("SELECT id, username, label, isp, ip, net_type netType, dns, safe, unsafe_reason unsafeReason, status, current_job currentJob, version, last_seen lastSeen, created_at createdAt, CASE WHEN last_seen != '' AND last_seen >= datetime('now', '-3 minutes') THEN 1 ELSE 0 END online FROM isp_agents WHERE revoked = 0 ORDER BY isp, username").all();
+    const { results: agents } = await db.prepare("SELECT id, username, label, isp, ip, net_type netType, dns, safe, unsafe_reason unsafeReason, status, current_job currentJob, version, last_seen lastSeen, created_at createdAt, home_confirmed_at homeConfirmedAt, CASE WHEN last_seen != '' AND last_seen >= datetime('now', '-3 minutes') THEN 1 ELSE 0 END online FROM isp_agents WHERE revoked = 0 ORDER BY isp, username").all();
     const { results: jobs } = await db.prepare("SELECT id, created_by createdBy, created_at createdAt, target, batch, isp, mode, status, total, done, failed, agent_user agentUser, claimed_at claimedAt, heartbeat, finished_at finishedAt, note, net_info netInfo FROM isp_jobs ORDER BY id DESC LIMIT 80").all();
     const need = function (col) { return "SUM(CASE WHEN COALESCE(" + col + "_remarks,'') = '' OR " + col + "_remarks LIKE '%NO_IMAGE%' THEN 1 ELSE 0 END) " + col; };
     const { results: brands } = await db.prepare("SELECT brand name, COUNT(*) total, " + ISP_LIST.map(need).join(", ") + " FROM domains WHERE brand != '' GROUP BY brand ORDER BY brand").all();
@@ -1671,8 +1672,8 @@ const actions = {
     const a = await requireIspAgent(db, token);
     const j = ispJudge(info);
     const net = info && info.mobile ? "mobile" : (info && info.override ? "override" : "fixed");
-    await db.prepare("UPDATE isp_agents SET isp = ?, ip = ?, net_type = ?, dns = ?, safe = ?, unsafe_reason = ?, last_seen = datetime('now'), version = COALESCE(NULLIF(?, ''), version), status = CASE WHEN ? = 0 THEN 'blocked' WHEN current_job > 0 THEN 'working' ELSE 'idle' END WHERE id = ?")
-      .bind(j.isp, String(info && info.ip || "").slice(0, 45), net, String(info && info.dns || "").slice(0, 120), j.safe, j.reason, String(info && info.version || ""), j.safe, a.id).run();
+    await db.prepare("UPDATE isp_agents SET isp = ?, ip = ?, net_type = ?, dns = ?, safe = ?, unsafe_reason = ?, last_seen = datetime('now'), version = COALESCE(NULLIF(?, ''), version), status = CASE WHEN ? = 0 THEN 'blocked' WHEN current_job > 0 THEN 'working' ELSE 'idle' END, home_confirmed_at = CASE WHEN ? = 1 AND home_confirmed_at = '' THEN datetime('now') ELSE home_confirmed_at END WHERE id = ?")
+      .bind(j.isp, String(info && info.ip || "").slice(0, 45), net, String(info && info.dns || "").slice(0, 120), j.safe, j.reason, String(info && info.version || ""), j.safe, info && info.home ? 1 : 0, a.id).run();
     const p = j.safe ? await db.prepare("SELECT COUNT(*) n FROM isp_jobs WHERE status = 'pending' AND isp = ?").bind(j.isp).first() : { n: 0 };
     return { success: true, username: a.username, safe: !!j.safe, isp: j.isp, reason: j.reason, pending: p ? p.n : 0 };
   },
