@@ -1685,8 +1685,10 @@ const actions = {
     // A job whose PC went quiet for 10 minutes goes back in the queue.
     await db.prepare("UPDATE isp_jobs SET status = 'pending', agent_id = 0, agent_user = '' WHERE status = 'running' AND heartbeat < datetime('now', '-10 minutes')").run();
     await db.prepare("UPDATE isp_agents SET current_job = 0, status = 'idle' WHERE current_job > 0 AND id != ? AND current_job NOT IN (SELECT id FROM isp_jobs WHERE status = 'running')").bind(a.id).run();
-    const mine = await db.prepare("SELECT id FROM isp_jobs WHERE status = 'running' AND agent_id = ? LIMIT 1").bind(a.id).first();
-    if (mine) return { success: true, job: await ispJobFor(db, mine.id) };
+    const mine = await db.prepare("SELECT id, isp FROM isp_jobs WHERE status = 'running' AND agent_id = ? LIMIT 1").bind(a.id).first();
+    if (mine && mine.isp === j.isp) return { success: true, job: await ispJobFor(db, mine.id) };
+    // The PC moved to another ISP while it held a job: that job goes back in the queue for a PC on its own ISP.
+    if (mine) await db.prepare("UPDATE isp_jobs SET status = 'pending', agent_id = 0, agent_user = '', note = 'Returned: the PC changed ISP' WHERE id = ?").bind(mine.id).run();
     const netInfo = JSON.stringify({ isp: j.isp, ip: info.ip || "", type: info.mobile ? "mobile" : (info.override ? "override" : "fixed"), dns: info.dns || "", pc: a.label || "", at: new Date().toISOString() });
     await db.prepare("UPDATE isp_jobs SET status = 'running', agent_id = ?, agent_user = ?, claimed_at = datetime('now'), heartbeat = datetime('now'), net_info = ? WHERE id = (SELECT id FROM isp_jobs WHERE status = 'pending' AND isp = ? ORDER BY id LIMIT 1) AND status = 'pending'")
       .bind(a.id, a.username, netInfo, j.isp).run();
