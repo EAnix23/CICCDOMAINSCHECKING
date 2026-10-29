@@ -189,6 +189,33 @@ async function fetchGdDomains(token) {
 // Pulls every account, compares with what is stored, writes only what changed and logs the differences
 // as events: renewed (expiry moved forward), expired (left ACTIVE), status_changed, ns_changed, added, removed.
 // The first time an account is seen it is stored as a baseline without events.
+// Target Brands keeps expiry as "D-MMM-YY" (the format the CSV import, the Sheet and the Telegram expiry report all use).
+const GD_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function gdBbcDate(stamp) {
+  const m = String(stamp || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? parseInt(m[3], 10) + "-" + GD_MONTHS[parseInt(m[2], 10) - 1] + "-" + m[1].slice(2) : "";
+}
+
+// Keeps the Target Brands expiry in line with GoDaddy: a blank expiry is filled, and an expiry that is more than 30 days
+// behind GoDaddy (the domain was renewed) is moved forward. Differences of a day or two (time zones) and dates that are
+// later than GoDaddy's are left alone, and so are dates the system cannot read. Runs after every sync.
+async function gdSyncBrandExpiry(db) {
+  const { results } = await db.prepare(
+    "SELECT d.id, d.expiration cur, MAX(g.expires) gd FROM domains d JOIN gd_domains g ON " + GD_NORM_SQL.replace(/domain/g, "d.domain") + " = g.domain WHERE g.status = 'ACTIVE' AND g.expires != '' GROUP BY d.id"
+  ).all();
+  const stmts = []; let filled = 0, renewed = 0;
+  for (const r of results) {
+    const next = gdBbcDate(r.gd); if (!next) continue;
+    const cur = String(r.cur || "").trim();
+    if (!cur) { stmts.push(db.prepare("UPDATE domains SET expiration = ?, updated_at = datetime('now') WHERE id = ?").bind(next, r.id)); filled++; continue; }
+    const curDate = parseExpirationDate(cur), gdDate = new Date(String(r.gd).replace(" ", "T") + "Z");
+    if (!curDate || isNaN(gdDate.getTime())) continue;
+    if (gdDate - curDate > 30 * 86400000) { stmts.push(db.prepare("UPDATE domains SET expiration = ?, updated_at = datetime('now') WHERE id = ?").bind(next, r.id)); renewed++; }
+  }
+  for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+  return { filled, renewed };
+}
+
 async function syncGodaddyAccounts(db, env) {
   const accounts = gdAccounts(env);
   const names = Object.keys(accounts);
@@ -266,7 +293,8 @@ async function syncGodaddyAccounts(db, env) {
       summary.push({ account: name, ok: false, error: msg });
     }
   }
-  return { success: true, syncedAt: new Date().toISOString(), accounts: summary };
+  let expiry = null; try { expiry = await gdSyncBrandExpiry(db); } catch (e) {}
+  return { success: true, syncedAt: new Date().toISOString(), accounts: summary, expiry: expiry };
 }
 
 // Reads the live nameservers of the `limit` active domains that were checked longest ago and logs any difference
@@ -1555,7 +1583,7 @@ const actions = {
       if (!g) { skipped.push({ domain: d, reason: "Not an active GoDaddy domain" }); continue; }
       const dup = await db.prepare("SELECT brand FROM domains WHERE LOWER(RTRIM(REPLACE(REPLACE(REPLACE(domain,'https://',''),'http://',''),'www.',''),'/')) = ? LIMIT 1").bind(d).first();
       if (dup) { skipped.push({ domain: d, reason: "Already under " + dup.brand }); continue; }
-      stmts.push(db.prepare("INSERT OR IGNORE INTO domains (brand, domain, account, expiration, notes) VALUES (?, ?, ?, ?, ?)").bind(name, d, g.account, String(g.expires || "").slice(0, 10), "Added from the GoDaddy monitor by " + s.username));
+      stmts.push(db.prepare("INSERT OR IGNORE INTO domains (brand, domain, account, expiration, notes) VALUES (?, ?, ?, ?, ?)").bind(name, d, g.account, gdBbcDate(g.expires), "Added from the GoDaddy monitor by " + s.username));
       stmts.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'brand_assigned', '', ?, ?, 'portal')").bind(d, g.account, name, s.username));
       added.push(d);
     }
@@ -2666,6 +2694,8 @@ const actions = {
 function parseExpirationDate(raw) {
   if (!raw) return null;
   var months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  var iso = String(raw).trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) { var di = new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3])); return isNaN(di.getTime()) ? null : di; }
   var m = String(raw).trim().match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
   if (!m) return null;
   var day = parseInt(m[1], 10);
