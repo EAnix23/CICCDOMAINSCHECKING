@@ -67,6 +67,7 @@ async function validateSession(db, token) {
 }
 // ---- ISP Check: PCs (agents) that run the domain checker, and the job queue ----
 const ISP_LIST = ["pldt", "globe", "converge", "dito"];
+const ISP_PART_SIZE = 100;   // a job with more domains than this is split into parts that different PCs can take
 async function sha256Hex(t) {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(t)));
   return Array.from(new Uint8Array(d)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
@@ -96,7 +97,7 @@ async function ispAutoQueue(db, brand, by, reason) {
   return made;
 }
 async function ispJobFor(db, id) {
-  const j = await db.prepare("SELECT id, target, batch, isp, mode, total, done FROM isp_jobs WHERE id = ?").bind(id).first();
+  const j = await db.prepare("SELECT id, target, batch, isp, mode, total, done, part_no partNo, parts FROM isp_jobs WHERE id = ?").bind(id).first();
   return j;
 }
 async function requireIspAgent(db, token) {
@@ -1592,7 +1593,7 @@ const actions = {
   async listIspCheck(db, token) {
     await requireIspAccess(db, token);
     const { results: agents } = await db.prepare("SELECT id, username, label, isp, ip, net_type netType, dns, safe, unsafe_reason unsafeReason, status, current_job currentJob, version, last_seen lastSeen, created_at createdAt, home_confirmed_at homeConfirmedAt, CASE WHEN last_seen != '' AND last_seen >= datetime('now', '-3 minutes') THEN 1 ELSE 0 END online FROM isp_agents WHERE revoked = 0 ORDER BY isp, username").all();
-    const { results: jobs } = await db.prepare("SELECT id, created_by createdBy, created_at createdAt, target, batch, isp, mode, status, total, done, failed, agent_user agentUser, claimed_at claimedAt, heartbeat, finished_at finishedAt, note, net_info netInfo FROM isp_jobs ORDER BY id DESC LIMIT 80").all();
+    const { results: jobs } = await db.prepare("SELECT id, created_by createdBy, created_at createdAt, target, batch, isp, mode, status, total, done, failed, agent_user agentUser, claimed_at claimedAt, heartbeat, finished_at finishedAt, note, net_info netInfo, part_no partNo, parts, group_id groupId FROM isp_jobs ORDER BY id DESC LIMIT 300").all();
     const need = function (col) { return "SUM(CASE WHEN COALESCE(" + col + "_remarks,'') = '' OR " + col + "_remarks LIKE '%NO_IMAGE%' THEN 1 ELSE 0 END) " + col; };
     const { results: brands } = await db.prepare("SELECT brand name, COUNT(*) total, " + ISP_LIST.map(need).join(", ") + " FROM domains WHERE brand != '' GROUP BY brand ORDER BY brand").all();
     const { results: batches } = await db.prepare("SELECT batch_id name, COUNT(*) total, " + ISP_LIST.map(need).join(", ") + " FROM dpv_records WHERE batch_id != '' GROUP BY batch_id ORDER BY batch_id").all();
@@ -1617,8 +1618,15 @@ const actions = {
         const r = await actions.getDomainsToCheck(db, { target: target, batch: b, isp: isp, retryOnly: mode === "retry" });
         const n = r && r.success ? r.domains.length : 0;
         if (!n) { skipped.push({ batch: b, isp: isp, reason: mode === "retry" ? "Nothing to retry" : "No domains found" }); continue; }
-        const res = await db.prepare("INSERT INTO isp_jobs (created_by, target, batch, isp, mode, total) VALUES (?, ?, ?, ?, ?, ?)").bind(s.username, target, b, isp, mode, n).run();
-        created.push({ id: res.meta.last_row_id, batch: b, isp: isp, total: n });
+        const all = r.domains, parts = Math.ceil(all.length / ISP_PART_SIZE);
+        let groupId = 0;
+        for (let k = 0; k < parts; k++) {
+          const slice = all.slice(k * ISP_PART_SIZE, (k + 1) * ISP_PART_SIZE);
+          const res = await db.prepare("INSERT INTO isp_jobs (created_by, target, batch, isp, mode, total, part_no, parts, group_id, domains) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(s.username, target, b, isp, mode, slice.length, parts > 1 ? k + 1 : 0, parts > 1 ? parts : 0, groupId, JSON.stringify(slice)).run();
+          if (k === 0) { groupId = res.meta.last_row_id; if (parts > 1) await db.prepare("UPDATE isp_jobs SET group_id = ? WHERE id = ?").bind(groupId, groupId).run(); }
+        }
+        created.push({ id: groupId, batch: b, isp: isp, total: n, parts: parts });
       }
     }
     return { created, skipped };
@@ -1626,7 +1634,10 @@ const actions = {
 
   async cancelIspJob(db, token, id) {
     await requireIspAccess(db, token);
-    const r = await db.prepare("UPDATE isp_jobs SET status = 'cancelled', finished_at = datetime('now') WHERE id = ? AND status IN ('pending','running')").bind(+id || 0).run();
+    const j = await db.prepare("SELECT group_id FROM isp_jobs WHERE id = ?").bind(+id || 0).first();
+    const r = j && j.group_id
+      ? await db.prepare("UPDATE isp_jobs SET status = 'cancelled', finished_at = datetime('now') WHERE group_id = ? AND status IN ('pending','running')").bind(j.group_id).run()
+      : await db.prepare("UPDATE isp_jobs SET status = 'cancelled', finished_at = datetime('now') WHERE id = ? AND status IN ('pending','running')").bind(+id || 0).run();
     return { success: true, cancelled: (r.meta && r.meta.changes) || 0 };
   },
 
@@ -1704,10 +1715,15 @@ const actions = {
     const a = await requireIspAgent(db, token);
     const job = await db.prepare("SELECT * FROM isp_jobs WHERE id = ? AND agent_id = ? AND status = 'running'").bind(+jobId || 0, a.id).first();
     if (!job) throw new Error("JOB_GONE: This job is not yours or was cancelled.");
-    const r = await actions.getDomainsToCheck(db, { target: job.target, batch: job.batch, isp: job.isp, retryOnly: job.mode === "retry" });
-    if (!r || !r.success) throw new Error((r && r.message) || "Could not read the domain list.");
-    await db.prepare("UPDATE isp_jobs SET total = ?, heartbeat = datetime('now') WHERE id = ?").bind(r.domains.length, job.id).run();
-    return { success: true, domains: r.domains };
+    let list = null;
+    if (job.domains) { try { list = JSON.parse(job.domains); } catch (e) { list = null; } }
+    if (!list) {
+      const r = await actions.getDomainsToCheck(db, { target: job.target, batch: job.batch, isp: job.isp, retryOnly: job.mode === "retry" });
+      if (!r || !r.success) throw new Error((r && r.message) || "Could not read the domain list.");
+      list = r.domains;
+    }
+    await db.prepare("UPDATE isp_jobs SET total = ?, heartbeat = datetime('now') WHERE id = ?").bind(list.length, job.id).run();
+    return { success: true, domains: list };
   },
 
   // One finished domain. Written exactly like the old script did, with the PC's linked account as the operator.
