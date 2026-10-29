@@ -78,6 +78,23 @@ async function requireIspAccess(db, token) {
   return s;
 }
 // Runner side: the agent token is the credential. A revoked or unknown token never gets through.
+// A new domain in a brand gets checked without anybody asking: one Retry job per ISP for that brand (Retry = only the domains that
+// have no result yet, which is exactly the new ones). A job of the same kind that is still waiting is not duplicated; one that is
+// already running is not reused, because its list was read before the new domain arrived.
+async function ispAutoQueue(db, brand, by, reason) {
+  brand = String(brand || "").trim(); if (!brand) return 0;
+  let made = 0;
+  for (const isp of ISP_LIST) {
+    const dup = await db.prepare("SELECT 1 FROM isp_jobs WHERE target = 'brand' AND batch = ? COLLATE NOCASE AND isp = ? AND mode = 'retry' AND status = 'pending' LIMIT 1").bind(brand, isp).first();
+    if (dup) continue;
+    const r = await actions.getDomainsToCheck(db, { target: "brand", batch: brand, isp: isp, retryOnly: true });
+    const n = r && r.success ? r.domains.length : 0;
+    if (!n) continue;
+    await db.prepare("INSERT INTO isp_jobs (created_by, target, batch, isp, mode, total, note) VALUES (?, 'brand', ?, ?, 'retry', ?, ?)").bind(by || "auto", brand, isp, n, reason || "New domain added").run();
+    made++;
+  }
+  return made;
+}
 async function ispJobFor(db, id) {
   const j = await db.prepare("SELECT id, target, batch, isp, mode, total, done FROM isp_jobs WHERE id = ?").bind(id).first();
   return j;
@@ -271,16 +288,17 @@ async function gdAutoAssign(db, items) {
   if (!items.length) return 0;
   const { results: known } = await db.prepare("SELECT DISTINCT brand FROM domains WHERE brand != ''").all();
   const brands = known.map(function (b) { return b.brand; });
-  const stmts = []; let n = 0;
+  const stmts = [], brandsDone = new Set(); let n = 0;
   for (const it of items.slice(0, 25)) {
     const brand = gdAutoBrand(it.domain, brands); if (!brand) continue;
     const dup = await db.prepare("SELECT 1 FROM domains WHERE " + GD_NORM_SQL + " = ? LIMIT 1").bind(it.domain).first();
     if (dup) continue;
     stmts.push(db.prepare("INSERT OR IGNORE INTO domains (brand, domain, account, expiration, notes) VALUES (?, ?, ?, ?, ?)").bind(brand, it.domain, it.account, gdBbcDate(it.expires), "Added automatically from the GoDaddy monitor (matched the brand name)"));
     stmts.push(db.prepare("INSERT INTO gd_events (domain, account, type, old_value, new_value, by_user, source) VALUES (?, ?, 'brand_assigned', '', ?, 'auto', 'auto')").bind(it.domain, it.account, brand));
-    n++;
+    brandsDone.add(brand); n++;
   }
   for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+  for (const b of brandsDone) { try { await ispAutoQueue(db, b, "auto", "New domain from GoDaddy"); } catch (e) {} }
   return n;
 }
 
@@ -551,7 +569,7 @@ const actions = {
   },
 
   async saveNewDomain(db, token, data) {
-    await checkSession(db, token);
+    const session = await checkSession(db, token);
     const existing = data.originalDomain ? await db.prepare("SELECT id FROM domains WHERE brand = ? AND domain = ?").bind(data.brand, data.originalDomain).first() : null;
     if (existing) {
       await db.prepare(`UPDATE domains SET brand=?, domain=?, agent=?, price=?, expiration=?, account=?, notes=?, redirected=?, updated_at=datetime('now') WHERE id=?`)
@@ -560,6 +578,7 @@ const actions = {
     }
     await db.prepare(`INSERT INTO domains (brand, domain, agent, price, expiration, account, notes, redirected) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(data.brand, data.domain, data.agent || "", data.price || "", data.expiration || "", data.account || "", data.notes || "", data.redirected || "").run();
+    try { await ispAutoQueue(db, data.brand, session.username, "New domain added"); } catch (e) {}
     return { success: true, message: "New domain successfully registered!" };
   },
 
@@ -1805,6 +1824,7 @@ const actions = {
       added.push(d);
     }
     for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+    if (added.length) { try { await ispAutoQueue(db, name, s.username, "New domain from GoDaddy"); } catch (e) {} }
     return { brand: name, added, skipped };
   },
 
